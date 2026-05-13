@@ -60,12 +60,9 @@ include/                       公共 C ABI（应用方唯一依赖）
   alg_types.h                  AlgResult / AlgObject / 子结构、错误码、像素格式
   alg_interface.h              AlgCreate / AlgRun / AlgDestroy / AlgFreeResult
 
-resources/                     示例 JSON 业务配置
-  face_only.json               单模型：纯检测
-  face_full.json               三段链：检测→关键点→属性
-  smoke_only.json              非人脸单模型示例
-  vehicle_plate.json           非人脸级联示例
-  face_and_vehicle.json        并行检测示例
+resources/                     示例 JSON 业务配置（本分支落地模型）
+  traffic_light.json           红绿灯：单阶段 YOLOX 4 类（416×416 RGB）
+  speed_limit.json             巴西限速牌：检测 + 双头分类（classify_into 过滤 < 0.7）
 
 src/
   interface/                   C ABI → C++ 实现的胶水层
@@ -84,9 +81,9 @@ src/
     solution/                  ChainSolution（多模型业务编排）+ CropFromBox
 
   models/                      每种模型类型一个目录
-    fcos_face/                 单类别 FCOS anchor-free 检测
-    pfld_landmark/             N 点关键点回归
-    face_attribute/            多任务分类/回归头
+    yolox_det/                 mmyolo YOLOXHead 多尺度（offset=0 grid，class-aware NMS）
+    yolov5_anchor_det/         单尺度 anchor + sigmoid decode（SpeedSignNet）
+    dualhead_classifier/       双头数字识别 + 装配规则 + joint 置信度阈值过滤
 
   backend/                     每种芯片一个目录
     backend_factory.h          MakeInferer() / BackendName() 入口（编译期绑定）
@@ -94,7 +91,7 @@ src/
     rk/                        Rockchip RKNN（桩示例）
 
 cmake/                         构建配置（按 ALG_PLATFORM + ALG_BACKEND 拼接）
-test/test_facedet.cpp          API 烟雾测试
+test/test_runner.cpp           通用 runner：./test_runner <solution.json> <image>
 ```
 
 ---
@@ -253,7 +250,7 @@ return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
 
 ## 5. 数据流
 
-### 5.1 一次 `AlgRun` 的全过程（以人脸全套为例）
+### 5.1 一次 `AlgRun` 的全过程（以限速牌二阶段为例）
 
 ```
 应用层调用 AlgRun(image)
@@ -261,38 +258,41 @@ return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
         ▼
 ChainSolution::Run(image, &objects)
         │
-        ├── stage "detector":
+        ├── stage "detector" (SpeedSignNet):
         │      ModelInstance::Run(image, &objs)
         │      ├── LetterboxPreprocessor::Apply ──┐
         │      │   image → xmm_input_tensor (零拷贝)│
         │      │   填 PreprocessState (scale/pad)   │
         │      ├── XmmInferer::Forward             │  ╲
-        │      │   flush input cache               │   ╲ 这里发生的所有事
-        │      │   xmedia_cl_graph_process         │    > 上层都不感知
+        │      │   flush input cache               │   ╲ 上层不感知
+        │      │   xmedia_cl_graph_process         │    >
         │      │   invalidate output cache         │   ╱
-        │      └── FcosFacePostprocessor::Apply ───┘
-        │          解码 cls/reg → NMS → 映射回原帧
-        │          → objs = [box, box, box]
+        │      └── Yolov5AnchorDetPostprocessor::Apply ──┘
+        │          sigmoid + (σ*2-0.5+grid)*stride 解码 → NMS → 映射回原帧
+        │          → objs = [box(label=0,score=det_conf), ...]
         │      state["detector"] = objs
         │
-        ├── stage "landmark":
-        │      for each obj in state["detector"]:
-        │          CropFromBox(image, obj.box, expand=1.25, square=true)
+        ├── stage "classifier" (SpeedSignClassifier, classify_into:detector):
+        │      for each obj in state["detector"] (跳过 obj.drop):
+        │          CropFromBox(image, obj.box, expand=1.5, square=true)
         │              → cropped_image + CropTransform xf
         │          ModelInstance::Run(cropped_image, &sub)
-        │              (同上 pre/infer/post)
-        │          MapBackToOriginal(sub, xf)
-        │          obj.keypoints  = sub[0].keypoints
-        │          obj.field_mask |= ALG_FIELD_KEYPOINTS
-        │
-        ├── stage "attribute":
-        │      for each obj in state["detector"]:
-        │          (同上，把 attributes 字段并回去)
+        │              (双头 softmax + 装配)
+        │          if sub.empty():           # joint_conf < 0.7
+        │              obj.drop = true
+        │          else:
+        │              obj.box.label = sub[0].box.label    # 9 类 idx
+        │              obj.box.score *= sub[0].box.score   # det × cls 联合
+        │              obj.attributes = sub[0].attributes
+        │              obj.field_mask |= ALG_FIELD_ATTRIBUTES
         │
         └── 汇总：所有 produces=="objects" 的 stage 输出 → out_objects
+                  跳过 obj.drop=true 的对象
                   → FillAlgResult(out_objects, &result)
                   → 应用层拿到 AlgResult.objects[]
 ```
+
+红绿灯单阶段更简单：只有 `stage "tld"`（YoloxDetPostprocessor），整个 classifier 段省略。
 
 ### 5.2 内存所有权时序
 
@@ -361,7 +361,12 @@ AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
 | `objects_from:s`          | `keypoints_into:s`           | 在 s 的每个 box 上做关键点回归              |
 | `objects_from:s`          | `attributes_into:s`          | 在 s 的每个 box 上做属性识别                |
 | `objects_from:s`          | `embedding_into:s`           | 在 s 的每个 box 上做特征提取                |
+| `objects_from:s`          | `classify_into:s`            | **在 s 的每个 box 上做识别**：合并 attributes，把 sub.box.label/score 写回 src.box（src.box.score *= sub.box.score 作联合置信度）；分类器返回空 → 直接 drop 掉这个 src 框 |
 | `objects_from:s`          | `objects`                    | 在 s 的每个 ROI 上再做检测（少见）           |
+
+`classify_into` 与 `attributes_into` 的差别：前者是**带过滤的识别器**——分类器
+`Apply` 返回空 vector 即视为「该框未通过识别」，ChainSolution 在最终聚合阶段
+跳过被标记 `drop` 的对象。典型用法是限速牌二阶段链路里 joint_conf < 0.7 的丢弃。
 
 ### 6.2 解析约束
 
@@ -452,7 +457,7 @@ AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
 
 ### 为什么业务编排走 JSON 而不是 C++ 子类
 
-替代方案是每个业务派生一个 `ISolution`（face_full / vehicle_plate / smoke_only），
+替代方案是每个业务派生一个 `ISolution`（traffic_light / speed_limit / ...），
 但实际上端侧业务的迭代频率比模型/芯片高一个数量级：
 
 - 检测阈值要 A/B 测试 → 改 JSON 不重编
@@ -477,7 +482,7 @@ C++ 侧只暴露**通用机制**（裁剪 + 字段合并 + 坐标反映射）。
 
 release 链接默认带 `-Wl,--gc-sections` + `-fdata-sections`。注册器是文件作用域的静态对象，
 对外**没有任何引用**（注册的副作用全靠构造函数），链接器会判定为死代码、丢掉整个 section，
-注册不发生，运行时 `Create("fcos_face")` 返回 `nullptr`。
+注册不发生，运行时 `Create("yolox_det")` 返回 `nullptr`。
 
 `__attribute__((used))` 告诉编译器"无论看上去有没有引用，都保留"。这是自注册工厂模式
 在 release 构建下的标准坑。

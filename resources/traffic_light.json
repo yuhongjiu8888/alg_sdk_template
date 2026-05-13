@@ -1,0 +1,34 @@
+{
+  "solution": {
+    "type": "chain",
+    "stages": [
+      { "name": "tld",
+        "model": "tld_cfg",
+        "input": "image",
+        "produces": "objects" }
+    ]
+  },
+  "models": {
+    "tld_cfg": {
+      "model_path": "/data/traffic_light_int8.xmm",
+      "preprocess": {
+        "input_size": [416, 416],
+        "color":      "RGB",
+        "resize":     "letterbox_tl",
+        "layout":     "NCHW",
+        "pad_value":  114
+      },
+      "postprocess": {
+        "type":           "yolox_det",
+        "category":       "traffic_light",
+        "num_classes":    4,
+        "strides":        [8, 16, 32],
+        "conf_threshold": 0.4,
+        "nms_threshold":  0.5,
+        "max_det":        100,
+        "obj_prefilter":  0.05,
+        "class_names":    ["red_light", "yellow_light", "green_light", "off_light"]
+      }
+    }
+  }
+}

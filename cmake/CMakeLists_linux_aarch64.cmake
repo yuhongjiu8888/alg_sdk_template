@@ -76,14 +76,19 @@ set(ALG_CORE_SRCS
 
 # -----------------------------------------------------------------------------
 # 模型（按类型注册的后处理）—— 加新模型在此处追加，无需改其它文件
+#
+# 当前分支聚焦：红绿灯检测 + 巴西限速牌识别
+#   - yolox_det           : mmyolo YOLOXHead 多尺度（红绿灯 4 类，stride 8/16/32）
+#   - yolov5_anchor_det   : 单尺度 anchor 解码（SpeedSignNet 1 类 stride=8 anchor=(36,36)）
+#   - dualhead_classifier : 双头数字识别 + 装配 + 0.7 置信度过滤（限速牌 9 类）
 # -----------------------------------------------------------------------------
 set(ALG_MODEL_SRCS
-    src/models/fcos_face/fcos_face_postprocessor.cpp
-    src/models/fcos_face/fcos_face_register.cpp
-    src/models/pfld_landmark/pfld_landmark_postprocessor.cpp
-    src/models/pfld_landmark/pfld_landmark_register.cpp
-    src/models/face_attribute/face_attribute_postprocessor.cpp
-    src/models/face_attribute/face_attribute_register.cpp
+    src/models/yolox_det/yolox_det_postprocessor.cpp
+    src/models/yolox_det/yolox_det_register.cpp
+    src/models/yolov5_anchor_det/yolov5_anchor_det_postprocessor.cpp
+    src/models/yolov5_anchor_det/yolov5_anchor_det_register.cpp
+    src/models/dualhead_classifier/dualhead_classifier_postprocessor.cpp
+    src/models/dualhead_classifier/dualhead_classifier_register.cpp
 )
 
 # -----------------------------------------------------------------------------
@@ -132,7 +137,7 @@ target_link_libraries(alg_sdk
 )
 
 # -----------------------------------------------------------------------------
-# 测试可执行
+# 测试可执行（通用 runner，跑哪个 solution 由 JSON 决定）
 # -----------------------------------------------------------------------------
-add_executable(test_facedet test/test_facedet.cpp)
-target_link_libraries(test_facedet alg_sdk pthread)
+add_executable(test_runner test/test_runner.cpp)
+target_link_libraries(test_runner alg_sdk pthread)

@@ -39,6 +39,10 @@ struct Object {
     std::vector<Attribute> attributes;
     Embedding              embedding;
 
+    /* 内部标记：被 classify_into stage 判定应丢弃。
+     * 不暴露到 C ABI，仅 ChainSolution 在最终聚合时跳过。 */
+    bool                   drop = false;
+
     bool has_box()        const { return field_mask & ALG_FIELD_BOX; }
     bool has_keypoints()  const { return field_mask & ALG_FIELD_KEYPOINTS; }
     bool has_attributes() const { return field_mask & ALG_FIELD_ATTRIBUTES; }

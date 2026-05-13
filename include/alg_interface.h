@@ -7,7 +7,7 @@
  *
  * 使用：
  *   AlgHandle h = NULL;
- *   AlgCreate(&h, "/data/face_full.json");
+ *   AlgCreate(&h, "/data/traffic_light.json");   // 或 speed_limit.json
  *   AlgRun(h, &image, &result);
  *   AlgFreeResult(&result);
  *   AlgDestroy(h);

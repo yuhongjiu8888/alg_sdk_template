@@ -39,6 +39,9 @@ enum class StageOutputKind {
     kFillKeypoints,    /* 本 stage 的产物填到 target_stage 已产 objects 的 keypoints 字段 */
     kFillAttributes,   /* 同上，attributes 字段 */
     kFillEmbedding,    /* 同上，embedding 字段 */
+    kClassifyInto,     /* 分类器：合并 attributes，并把 sub.box.label/score 写回 src.box；
+                          子模型若返回空（典型：joint_conf 低于阈值）则丢弃 src 框。
+                          典型用法：detector → ROI classifier 二阶段，把识别置信度低的框过滤掉。 */
 };
 
 struct CropConfig {

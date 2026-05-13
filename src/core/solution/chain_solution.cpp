@@ -110,6 +110,17 @@ void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
             dst->embedding  = std::move(src.embedding);
             dst->field_mask |= ALG_FIELD_EMBEDDING;
             break;
+        case StageOutputKind::kClassifyInto:
+            /* 分类器：用 sub.box 的 label/score 覆盖 src.box，并把 sub.box.score 当
+             * 联合置信度乘到 src.box.score（detector_score × classifier_conf）；
+             * attributes 全量并过来给 C API 透出。 */
+            dst->box.label = src.box.label;
+            dst->box.score = dst->box.score * src.box.score;
+            if (!src.attributes.empty()) {
+                dst->attributes = std::move(src.attributes);
+                dst->field_mask |= ALG_FIELD_ATTRIBUTES;
+            }
+            break;
         case StageOutputKind::kCreateObjects:
             break;
     }
@@ -120,6 +131,7 @@ void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
 void ResetStageObjects(std::vector<Object>& v) {
     for (auto& o : v) {
         o.field_mask = 0;
+        o.drop = false;
         o.keypoints.x.clear();
         o.keypoints.y.clear();
         o.keypoints.score.clear();
@@ -157,17 +169,30 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
     std::vector<Object> sub;  /* 子模型一次产出（通常 1 个对象），栈对象，小 */
 
     for (auto& src : src_objs) {
+        if (src.drop) continue;
         if (!src.has_box()) continue;
-        if (!CropFromDecoded(decoded_bgr, src.box, rs.cfg.crop, &roi_holder, &cropped, &xf))
+        if (!CropFromDecoded(decoded_bgr, src.box, rs.cfg.crop, &roi_holder, &cropped, &xf)) {
+            /* 框完全在画外或裁出空 ROI；classify_into 视为分类失败 → drop。 */
+            if (rs.cfg.output_kind == StageOutputKind::kClassifyInto) src.drop = true;
             continue;
+        }
 
         sub.clear();
         Status r = mi->Run(cropped, &sub);
         if (r != ALG_OK) return r;
-        MapBackToOriginal(&sub, xf);
+        /* classify_into 用的是 box.label/box.score 覆盖语义，sub.box 是 ROI 内坐标
+         * （分类器一般不输出真实 box），跳过坐标反映射避免污染 src.box。 */
+        if (rs.cfg.output_kind != StageOutputKind::kClassifyInto)
+            MapBackToOriginal(&sub, xf);
 
         if (rs.cfg.output_kind == StageOutputKind::kCreateObjects) {
             for (auto& o : sub) out_bucket.push_back(std::move(o));
+        } else if (rs.cfg.output_kind == StageOutputKind::kClassifyInto) {
+            if (sub.empty()) {
+                src.drop = true;
+            } else {
+                MergeFields(&src, std::move(sub.front()), rs.cfg.output_kind);
+            }
         } else {
             if (!sub.empty())
                 MergeFields(&src, std::move(sub.front()), rs.cfg.output_kind);
@@ -198,8 +223,10 @@ Status ChainSolution::Run(const AlgImage& image, std::vector<Object>* out_object
     out_objects->clear();
     for (size_t i = 0; i < stages_.size(); ++i) {
         if (stages_[i].cfg.output_kind != StageOutputKind::kCreateObjects) continue;
-        for (auto& o : stage_produces_[i].objects)
+        for (auto& o : stage_produces_[i].objects) {
+            if (o.drop) continue;  /* classify_into 已标记应丢弃的框 */
             out_objects->push_back(std::move(o));
+        }
     }
     return ALG_OK;
 }
