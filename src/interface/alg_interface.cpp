@@ -20,12 +20,6 @@ struct Context {
     alg::ChainSolution solution;
 };
 
-void FreeAttributes(AlgAttributes* attrs) {
-    if (!attrs) return;
-    std::free(attrs->items);
-    std::free(attrs);
-}
-
 }  // namespace
 
 extern "C" {
@@ -77,15 +71,16 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result) {
 
 void AlgFreeResult(AlgResult* result) {
     if (!result) return;
-    if (result->objects) {
-        for (int i = 0; i < result->object_count; ++i) {
-            AlgObject& o = result->objects[i];
-            FreeAttributes(o.attributes);  o.attributes = nullptr;
-        }
-        std::free(result->objects);
-        result->objects = nullptr;
+    if (result->traffic_lights) {
+        std::free(result->traffic_lights);
+        result->traffic_lights = nullptr;
     }
-    result->object_count = 0;
+    if (result->speed_limits) {
+        std::free(result->speed_limits);
+        result->speed_limits = nullptr;
+    }
+    result->traffic_light_count = 0;
+    result->speed_limit_count   = 0;
 }
 
 const char* AlgVersion(void) {

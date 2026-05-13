@@ -57,7 +57,7 @@ LetterboxPreprocessor          XmmInferer / RkInferer / ...      YoloxDet / Yolo
 
 ```
 include/                       公共 C ABI（应用方唯一依赖）
-  alg_types.h                  AlgResult / AlgObject / 子结构、错误码、像素格式
+  alg_types.h                  AlgResult / AlgTrafficLight / AlgSpeedLimit / 错误码、像素格式
   alg_interface.h              AlgCreate / AlgRun / AlgDestroy / AlgFreeResult
 
 resources/                     示例 JSON 业务配置（本分支落地模型）
@@ -236,15 +236,18 @@ return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
 
 并行检测（场景 C，多个 `produces:"objects"` 的 stage）天然就在最后那行 ⋃ 处合并。
 
-### 4.7 `Object` ↔ `AlgObject` —— 内外两套类型
+### 4.7 内部 `Object` ↔ 外部 `AlgResult.traffic_lights[] / speed_limits[]`
 
-| 内部 (`alg::Object`)            | 外部 (`AlgObject`)              |
-|---------------------------------|---------------------------------|
-| C++，std::vector/string         | C ABI，裸指针 + count           |
-| Solution / postprocessor 操作    | 应用层看到的最终结构             |
+| 内部 (`alg::Object`)                        | 外部 (强类型 ABI)                                |
+|---------------------------------------------|--------------------------------------------------|
+| C++，统一形态：box + attributes + drop      | C ABI，按业务分桶：AlgTrafficLight / AlgSpeedLimit |
+| Solution / postprocessor 操作               | 应用层看到的最终结构                              |
 
-边界翻译只在 C API 出口 `FillAlgResult()` 做一次：
-- malloc 数组、深拷贝向量 → 应用通过 `AlgFreeResult()` 一次释放全部。
+`FillAlgResult()` 在 C API 边界做一次翻译：
+- 按 `attributes["category"].value_str` 分桶到 `traffic_lights[]` / `speed_limits[]`
+- `box.label`（JSON class_names 下标）+1 映射到强类型 enum（0 留给 INVALID）
+- 限速牌另外查表得到 `value_kmh`
+- malloc 出来的两个数组由用户通过 `AlgFreeResult()` 一次释放
 
 ---
 
@@ -289,7 +292,7 @@ ChainSolution::Run(image, &objects)
         └── 汇总：所有 produces=="objects" 的 stage 输出 → out_objects
                   跳过 obj.drop=true 的对象
                   → FillAlgResult(out_objects, &result)
-                  → 应用层拿到 AlgResult.objects[]
+                  → 应用层拿到 AlgResult.traffic_lights[] / speed_limits[]
 ```
 
 红绿灯单阶段更简单：只有 `stage "tld"`（YoloxDetPostprocessor），整个 classifier 段省略。
@@ -304,7 +307,7 @@ NPU 输入/输出张量        XmmInferer (MMZ)        IInferer 析构
 前处理临时 Mat（cv::Mat）LetterboxPreprocessor   按帧覆盖（复用）
 裁剪 ROI（cv::Mat）      ChainSolution           按对象一次性
 内部 Object/Keypoints   std::vector            ChainSolution::Run 内
-AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
+AlgTrafficLight[]/AlgSpeedLimit[]  malloc (C API 出口)  用户 AlgFreeResult 释放
 ```
 
 ---

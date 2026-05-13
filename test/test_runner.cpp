@@ -1,12 +1,11 @@
 /**
  * @file test_runner.cpp
- * @brief 通用 SDK 烟雾测试：传入 JSON solution 配置 + 一张图，跑完打印结果。
+ * @brief 通用 SDK 烟雾测试：传入 JSON solution + 一张图，跑完打印强类型结果。
  *
  * 同一个二进制可跑：
  *   ./test_runner resources/traffic_light.json   /data/test.jpg out/
  *   ./test_runner resources/speed_limit.json     /data/test.jpg out/
- *
- * 业务编排细节都在 JSON 里，不需要写新代码。
+ *   ./test_runner resources/all.json             /data/test.jpg out/
  */
 
 #include <cstdio>
@@ -22,36 +21,47 @@
 
 namespace {
 
-void DrawResult(cv::Mat& img, const AlgResult& r) {
-    static const cv::Scalar kColors[] = {
-        cv::Scalar(  0,   0, 255), cv::Scalar(  0, 215, 255),
-        cv::Scalar(  0, 200,   0), cv::Scalar(160, 160, 160),
-        cv::Scalar(255,   0,   0), cv::Scalar(255,   0, 255),
-        cv::Scalar(  0, 255, 255), cv::Scalar(255, 255,   0),
-        cv::Scalar(128,   0, 255),
-    };
-    const int max_w = img.cols, max_h = img.rows;
-    for (int i = 0; i < r.object_count; ++i) {
-        const AlgObject& o = r.objects[i];
-        if (!(o.field_mask & ALG_FIELD_BOX)) continue;
-        const AlgBox& b = o.box;
-        const cv::Scalar& c = kColors[(b.label >= 0 ? b.label : 0) %
-                                       (int)(sizeof(kColors)/sizeof(kColors[0]))];
-        cv::Rect rect(b.xmin, b.ymin, b.xmax - b.xmin, b.ymax - b.ymin);
-        rect &= cv::Rect(0, 0, max_w, max_h);
-        if (rect.width <= 0 || rect.height <= 0) continue;
-        cv::rectangle(img, rect, c, 2);
+const char* TLCName(AlgTrafficLightColor c) {
+    switch (c) {
+        case TLC_RED:    return "red";
+        case TLC_YELLOW: return "yellow";
+        case TLC_GREEN:  return "green";
+        case TLC_OFF:    return "off";
+        case TLC_INVALID:
+        default:         return "invalid";
+    }
+}
 
-        char buf[96];
-        const char* cls_str = (o.attributes && o.attributes->count > 0)
-                                  ? o.attributes->items[0].value_str
-                                  : "";
-        if (cls_str && *cls_str)
-            std::snprintf(buf, sizeof(buf), "%s %.2f", cls_str, b.score);
-        else
-            std::snprintf(buf, sizeof(buf), "label=%d %.2f", b.label, b.score);
-        cv::putText(img, buf, cv::Point(rect.x, std::max(15, rect.y - 4)),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, c, 1);
+cv::Scalar TLCColor(AlgTrafficLightColor c) {
+    switch (c) {
+        case TLC_RED:    return cv::Scalar(  0,   0, 255);
+        case TLC_YELLOW: return cv::Scalar(  0, 215, 255);
+        case TLC_GREEN:  return cv::Scalar(  0, 200,   0);
+        case TLC_OFF:    return cv::Scalar(160, 160, 160);
+        default:         return cv::Scalar(255,   0, 255);
+    }
+}
+
+void DrawBoxLabel(cv::Mat& img, const AlgBox& b, const char* text, cv::Scalar c) {
+    cv::Rect rect(b.xmin, b.ymin, b.xmax - b.xmin, b.ymax - b.ymin);
+    rect &= cv::Rect(0, 0, img.cols, img.rows);
+    if (rect.width <= 0 || rect.height <= 0) return;
+    cv::rectangle(img, rect, c, 2);
+    cv::putText(img, text, cv::Point(rect.x, std::max(15, rect.y - 4)),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, c, 1);
+}
+
+void DrawResult(cv::Mat& img, const AlgResult& r) {
+    char buf[64];
+    for (int i = 0; i < r.traffic_light_count; ++i) {
+        const AlgTrafficLight& t = r.traffic_lights[i];
+        std::snprintf(buf, sizeof(buf), "TL.%s %.2f", TLCName(t.color), t.box.score);
+        DrawBoxLabel(img, t.box, buf, TLCColor(t.color));
+    }
+    for (int i = 0; i < r.speed_limit_count; ++i) {
+        const AlgSpeedLimit& s = r.speed_limits[i];
+        std::snprintf(buf, sizeof(buf), "SL.%d %.2f", s.value_kmh, s.box.score);
+        DrawBoxLabel(img, s.box, buf, cv::Scalar(255, 0, 0));
     }
 }
 
@@ -63,9 +73,9 @@ int main(int argc, char** argv) {
             "usage: %s <solution.json> <image.jpg> [out_dir]\n", argv[0]);
         return 1;
     }
-    const char* json_path = argv[1];
+    const char* json_path  = argv[1];
     const char* image_path = argv[2];
-    const char* out_dir = argc >= 4 ? argv[3] : "out";
+    const char* out_dir    = argc >= 4 ? argv[3] : "out";
 
     cv::Mat bgr = cv::imread(image_path, cv::IMREAD_COLOR);
     if (bgr.empty()) { std::fprintf(stderr, "imread failed: %s\n", image_path); return 1; }
@@ -92,22 +102,21 @@ int main(int argc, char** argv) {
         return s;
     }
 
-    std::printf("[result] frame_id=%lld objects=%d\n",
-                (long long)r.frame_id, r.object_count);
-    for (int i = 0; i < r.object_count; ++i) {
-        const AlgObject& o = r.objects[i];
-        const AlgBox& b = o.box;
-        std::printf("  [%d] label=%d score=%.3f box=(%d,%d)-(%d,%d)",
-                    i, b.label, b.score, b.xmin, b.ymin, b.xmax, b.ymax);
-        if (o.attributes && o.attributes->count > 0) {
-            const AlgAttribute& a = o.attributes->items[0];
-            std::printf("  attr[0]={name=%s,int=%d,float=%.3f,str=%s}",
-                        a.name, a.value_int, a.value_float, a.value_str);
-        }
-        std::printf("\n");
+    std::printf("[result] frame_id=%lld  traffic_lights=%d  speed_limits=%d\n",
+                (long long)r.frame_id, r.traffic_light_count, r.speed_limit_count);
+    for (int i = 0; i < r.traffic_light_count; ++i) {
+        const AlgTrafficLight& t = r.traffic_lights[i];
+        std::printf("  TL[%d] color=%s score=%.3f  box=(%d,%d)-(%d,%d)\n",
+                    i, TLCName(t.color), t.box.score,
+                    t.box.xmin, t.box.ymin, t.box.xmax, t.box.ymax);
+    }
+    for (int i = 0; i < r.speed_limit_count; ++i) {
+        const AlgSpeedLimit& sl = r.speed_limits[i];
+        std::printf("  SL[%d] %d km/h score=%.3f  box=(%d,%d)-(%d,%d)\n",
+                    i, sl.value_kmh, sl.box.score,
+                    sl.box.xmin, sl.box.ymin, sl.box.xmax, sl.box.ymax);
     }
 
-    /* 画框落盘。 */
     mkdir(out_dir, 0755);
     DrawResult(bgr, r);
     std::string out_path = std::string(out_dir) + "/result.jpg";

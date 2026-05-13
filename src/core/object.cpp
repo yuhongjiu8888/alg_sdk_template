@@ -2,51 +2,101 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "alg_interface.h"
+#include "core/logger.h"
 
 namespace alg {
 
 namespace {
 
-AlgAttributes* NewAttributes(const std::vector<Attribute>& attrs) {
-    auto* out = static_cast<AlgAttributes*>(std::calloc(1, sizeof(AlgAttributes)));
-    if (!out) return nullptr;
-    out->count = static_cast<int>(attrs.size());
-    if (out->count == 0) return out;
-    out->items = static_cast<AlgAttribute*>(std::calloc(out->count, sizeof(AlgAttribute)));
-    if (!out->items) { std::free(out); return nullptr; }
-    for (int i = 0; i < out->count; ++i) {
-        const Attribute& a = attrs[i];
-        std::strncpy(out->items[i].name, a.name.c_str(), sizeof(out->items[i].name) - 1);
-        out->items[i].value_int = a.value_int;
-        out->items[i].value_float = a.value_float;
-        std::strncpy(out->items[i].value_str, a.value_str.c_str(),
-                     sizeof(out->items[i].value_str) - 1);
+/* 在 attributes 里找指定 name 的条目；找不到返回空。 */
+const Attribute* FindAttr(const std::vector<Attribute>& attrs, const char* name) {
+    for (const auto& a : attrs) {
+        if (a.name == name) return &a;
     }
-    return out;
+    return nullptr;
 }
+
+/* 把内部 box 拷到 ABI box（外加 score）。 */
+inline void CopyBox(const AlgBox& src, AlgBox* dst) {
+    dst->xmin  = src.xmin;
+    dst->ymin  = src.ymin;
+    dst->xmax  = src.xmax;
+    dst->ymax  = src.ymax;
+    dst->score = src.score;
+}
+
+/* JSON 里 class_names 顺序约定 →  enum 编号对照（详见 alg_types.h）。 */
+constexpr int kSpeedLimitKmh[10] = {0, 10, 20, 30, 40, 50, 60, 70, 80, 100};
 
 }  // namespace
 
 int FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
     AlgFreeResult(result);
-    result->object_count = static_cast<int>(objs.size());
-    if (objs.empty()) {
-        result->objects = nullptr;
-        return 0;
-    }
-    result->objects =
-        static_cast<AlgObject*>(std::calloc(objs.size(), sizeof(AlgObject)));
-    if (!result->objects) { result->object_count = 0; return -1; }
 
-    for (size_t i = 0; i < objs.size(); ++i) {
-        const Object& src = objs[i];
-        AlgObject& dst = result->objects[i];
-        dst.field_mask = src.field_mask;
-        dst.box = src.box;
-        if (src.has_attributes()) dst.attributes = NewAttributes(src.attributes);
+    /* 第一遍：按 category attribute 分桶计数。 */
+    int tl_n = 0, sl_n = 0;
+    for (const auto& o : objs) {
+        if (!o.has_box() || !o.has_attributes()) continue;
+        const Attribute* cat = FindAttr(o.attributes, "category");
+        if (!cat) continue;
+        if (cat->value_str == "traffic_light") ++tl_n;
+        else if (cat->value_str == "speed_limit") ++sl_n;
+        else ALG_LOGW("FillAlgResult: 未知 category '%s'，丢弃", cat->value_str.c_str());
     }
+
+    if (tl_n > 0) {
+        result->traffic_lights = static_cast<AlgTrafficLight*>(
+            std::calloc(tl_n, sizeof(AlgTrafficLight)));
+        if (!result->traffic_lights) return -1;
+    }
+    if (sl_n > 0) {
+        result->speed_limits = static_cast<AlgSpeedLimit*>(
+            std::calloc(sl_n, sizeof(AlgSpeedLimit)));
+        if (!result->speed_limits) {
+            std::free(result->traffic_lights);
+            result->traffic_lights = nullptr;
+            return -1;
+        }
+    }
+
+    /* 第二遍：填强类型字段。label 保持 JSON 里 class_names 的下标（0-based），
+     * 映射到 enum 时统一 +1（0 留给 INVALID）。 */
+    int ti = 0, si = 0;
+    for (const auto& o : objs) {
+        if (!o.has_box() || !o.has_attributes()) continue;
+        const Attribute* cat = FindAttr(o.attributes, "category");
+        if (!cat) continue;
+
+        if (cat->value_str == "traffic_light") {
+            AlgTrafficLight& dst = result->traffic_lights[ti++];
+            CopyBox(o.box, &dst.box);
+            int idx = o.box.label;
+            if (idx >= 0 && idx <= 3) {
+                dst.color = static_cast<AlgTrafficLightColor>(idx + 1);
+            } else {
+                dst.color = TLC_INVALID;
+                ALG_LOGW("traffic_light: label=%d 越界 (期望 0..3)", idx);
+            }
+        } else if (cat->value_str == "speed_limit") {
+            AlgSpeedLimit& dst = result->speed_limits[si++];
+            CopyBox(o.box, &dst.box);
+            int idx = o.box.label;
+            if (idx >= 0 && idx <= 8) {
+                dst.value     = static_cast<AlgSpeedLimitValue>(idx + 1);
+                dst.value_kmh = kSpeedLimitKmh[idx + 1];
+            } else {
+                dst.value     = SLV_INVALID;
+                dst.value_kmh = 0;
+                ALG_LOGW("speed_limit: label=%d 越界 (期望 0..8)", idx);
+            }
+        }
+    }
+
+    result->traffic_light_count = ti;
+    result->speed_limit_count   = si;
     return 0;
 }
 

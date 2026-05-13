@@ -11,12 +11,19 @@
 - **二合一并行 (`all.json`)** — 上面两个 solution 在同一份配置里跑；ChainSolution 把
   多个 `produces:"objects"` 的 stage 在最终聚合处取并集，两个检测器互不依赖。
 
-应用区分两个检测器的输出统一通过 attributes：
+**强类型 C ABI**：`AlgResult` 直接给两个有类型的数组，应用不需要查 attribute 字符串：
 
-| attribute name | value_str 示例                              | 含义                              |
-|----------------|---------------------------------------------|-----------------------------------|
-| `category`     | `"traffic_light"` / `"speed_limit"`         | 这个框是哪个检测器产出的           |
-| `class`        | `"red_light"` / `"green_light"` / `"60"`     | 实际类别名（避开 box.label 命名空间冲突） |
+```c
+typedef struct AlgResult_ {
+    long long           frame_id;
+    int                 traffic_light_count;
+    AlgTrafficLight*    traffic_lights;     // color: TLC_RED/YELLOW/GREEN/OFF
+    int                 speed_limit_count;
+    AlgSpeedLimit*      speed_limits;       // value: SLV_10..SLV_100, value_kmh: 10..100
+} AlgResult;
+```
+
+应用代码通过强类型字段直接判断，无需 string 比较。
 
 三个变化维度仍然全部解耦：
 
@@ -37,7 +44,8 @@ resources/
 src/
   interface/                   C API → ChainSolution 胶水层
   core/
-    object.h/cpp               内部 C++ Object（box + attributes + drop 标记）
+    object.h/cpp               内部 C++ Object（box + attributes + drop 标记）+
+                               FillAlgResult 把它按 category attribute 分桶到强类型 ABI
     tensor.h                   芯片中立的 TensorView
     status.h logger.h
     config/                    JSON → SolutionConfig 解析层
@@ -66,19 +74,26 @@ test/test_runner.cpp           通用 runner：./test_runner <solution.json> <im
 
 ```c
 AlgHandle h = NULL;
-AlgCreate(&h, "/data/traffic_light.json");           // 或 speed_limit.json
-AlgRun(h, &image, &result);
+AlgCreate(&h, "/data/all.json");           // 或 traffic_light.json / speed_limit.json
+AlgResult r = {0};
+AlgRun(h, &image, &r);
 
-for (int i = 0; i < result.object_count; ++i) {
-    AlgObject* o = &result.objects[i];
-    if (o->field_mask & ALG_FIELD_BOX)        use_box(&o->box);
-    if (o->field_mask & ALG_FIELD_ATTRIBUTES) use_attrs(o->attributes);
-    /* 限速牌：box.label = 9 类 idx，box.score = det × cls 联合置信度，
-     *         attributes[0] = { name="class",    value_str="60",            value_int=5, ... }
-     *         attributes[1] = { name="category", value_str="speed_limit",   ...           } */
+for (int i = 0; i < r.traffic_light_count; ++i) {
+    AlgTrafficLight* tl = &r.traffic_lights[i];
+    if (tl->color == TLC_RED) handle_red_light(&tl->box);
+    /* tl->box: xmin/ymin/xmax/ymax + score
+     * tl->color: TLC_RED / TLC_YELLOW / TLC_GREEN / TLC_OFF */
+}
+for (int i = 0; i < r.speed_limit_count; ++i) {
+    AlgSpeedLimit* sl = &r.speed_limits[i];
+    printf("%d km/h limit @ (%d,%d) score=%.2f\n",
+           sl->value_kmh, sl->box.xmin, sl->box.ymin, sl->box.score);
+    /* sl->value:     SLV_10 .. SLV_100
+     * sl->value_kmh: 10/20/.../100 (实际 km/h 数值)
+     * sl->box.score: det × cls 联合置信度 */
 }
 
-AlgFreeResult(&result);
+AlgFreeResult(&r);
 AlgDestroy(h);
 ```
 
