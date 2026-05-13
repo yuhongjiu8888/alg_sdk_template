@@ -53,8 +53,7 @@ class YoloxDetPostprocessor : public IPostprocessor {
     int                      max_det_        = 100;
     float                    obj_prefilter_  = 0.05f;
     /* class_names 可选；提供时会给每个 Object 加一个 "class" attribute（value_str=类名,
-     * value_int=label, value_float=score），便于多检测器并行 solution 里统一通过
-     * attributes[0].value_str 识别类别，避开 box.label 在不同检测器间的命名空间冲突。 */
+     * value_int=label, value_float=score），方便排错；ABI 层最终走 enum，不依赖此字段。 */
     std::vector<std::string> class_names_;
     /* category 可选；提供时再加一个 "category" attribute（value_str=本检测器类别名，
      * 比如 "traffic_light" / "speed_limit"），让应用一眼分辨是哪个检测器的产物。 */

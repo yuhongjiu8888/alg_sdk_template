@@ -18,7 +18,7 @@
  *
  * Object 输出（成功时）：
  *   - field_mask = ALG_FIELD_BOX | ALG_FIELD_ATTRIBUTES
- *   - box.label = cls_id, box.score = joint_conf  （ChainSolution 会用这两项更新 src.box）
+ *   - label = cls_id, box.score = joint_conf  （ChainSolution 用这两项更新 src）
  *   - attributes[0] = { name="class", value_int=cls_id, value_str=class_name,
  *                       value_float=joint_conf }
  *

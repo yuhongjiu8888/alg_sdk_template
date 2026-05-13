@@ -73,24 +73,22 @@ int FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
         if (cat->value_str == "traffic_light") {
             AlgTrafficLight& dst = result->traffic_lights[ti++];
             CopyBox(o.box, &dst.box);
-            int idx = o.box.label;
-            if (idx >= 0 && idx <= 3) {
-                dst.color = static_cast<AlgTrafficLightColor>(idx + 1);
+            if (o.label >= 0 && o.label <= 3) {
+                dst.color = static_cast<AlgTrafficLightColor>(o.label + 1);
             } else {
                 dst.color = TLC_INVALID;
-                ALG_LOGW("traffic_light: label=%d 越界 (期望 0..3)", idx);
+                ALG_LOGW("traffic_light: label=%d 越界 (期望 0..3)", o.label);
             }
         } else if (cat->value_str == "speed_limit") {
             AlgSpeedLimit& dst = result->speed_limits[si++];
             CopyBox(o.box, &dst.box);
-            int idx = o.box.label;
-            if (idx >= 0 && idx <= 8) {
-                dst.value     = static_cast<AlgSpeedLimitValue>(idx + 1);
-                dst.value_kmh = kSpeedLimitKmh[idx + 1];
+            if (o.label >= 0 && o.label <= 8) {
+                dst.value     = static_cast<AlgSpeedLimitValue>(o.label + 1);
+                dst.value_kmh = kSpeedLimitKmh[o.label + 1];
             } else {
                 dst.value     = SLV_INVALID;
                 dst.value_kmh = 0;
-                ALG_LOGW("speed_limit: label=%d 越界 (期望 0..8)", idx);
+                ALG_LOGW("speed_limit: label=%d 越界 (期望 0..8)", o.label);
             }
         }
     }

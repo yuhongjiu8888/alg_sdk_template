@@ -180,7 +180,7 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
         Object o;
         o.field_mask = ALG_FIELD_BOX;
         o.box.score = p.score;
-        o.box.label = p.label;
+        o.label     = p.label;
         int x1 = static_cast<int>((p.x1 - state.pad_left) * inv_s + 0.5f);
         int y1 = static_cast<int>((p.y1 - state.pad_top)  * inv_s + 0.5f);
         int x2 = static_cast<int>((p.x2 - state.pad_left) * inv_s + 0.5f);

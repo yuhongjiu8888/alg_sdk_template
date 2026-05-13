@@ -97,10 +97,10 @@ void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
             dst->field_mask |= ALG_FIELD_ATTRIBUTES;
             break;
         case StageOutputKind::kClassifyInto:
-            /* 分类器：用 sub.box 的 label/score 覆盖 src.box，并把 sub.box.score 当
-             * 联合置信度乘到 src.box.score（detector_score × classifier_conf）；
+            /* 分类器：用 sub 的 label 覆盖 src，把 sub.box.score 当分类置信度乘到
+             * src.box.score（detector_score × classifier_conf = 联合置信度）；
              * attributes 全量并过来给 C API 透出。 */
-            dst->box.label = src.box.label;
+            dst->label     = src.label;
             dst->box.score = dst->box.score * src.box.score;
             if (!src.attributes.empty()) {
                 dst->attributes = std::move(src.attributes);
@@ -117,7 +117,8 @@ void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
 void ResetStageObjects(std::vector<Object>& v) {
     for (auto& o : v) {
         o.field_mask = 0;
-        o.drop = false;
+        o.label      = 0;
+        o.drop       = false;
         o.attributes.clear();
     }
     v.clear();  /* size=0, capacity 保留 */
@@ -162,7 +163,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
         sub.clear();
         Status r = mi->Run(cropped, &sub);
         if (r != ALG_OK) return r;
-        /* classify_into 用的是 box.label/box.score 覆盖语义，sub.box 是 ROI 内坐标
+        /* classify_into 用的是 label / box.score 覆盖语义，sub.box 是 ROI 内坐标
          * （分类器一般不输出真实 box），跳过坐标反映射避免污染 src.box。 */
         if (rs.cfg.output_kind != StageOutputKind::kClassifyInto)
             MapBackToOriginal(&sub, xf);

@@ -161,7 +161,7 @@ AlgDestroy(h);
 |----------------------------------|--------------------------------------------------------|
 | `"objects"`                      | 本 stage 自己产生 top-level 对象                        |
 | `"attributes_into:<stage>"`      | 把属性数组合并到上游 stage 的 box                       |
-| **`"classify_into:<stage>"`**    | **分类器：合并 attributes 到 src，box.label 改成分类 id，box.score 乘以分类置信度；分类器返回空（如低于阈值）→ 直接 drop 掉这个 src 框** |
+| **`"classify_into:<stage>"`**    | **分类器：合并 attributes 到 src，src 的内部 label 改成分类 id，box.score 乘以分类置信度作联合得分；分类器返回空（如低于阈值）→ 直接 drop 掉这个 src 框** |
 
 `classify_into:` 是本分支为支持「检测 + 识别 + 阈值过滤」二阶段链路新增的语义，
 框架最小改动：

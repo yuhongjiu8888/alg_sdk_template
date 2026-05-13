@@ -219,7 +219,7 @@ Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSta
         Object o;
         o.field_mask = ALG_FIELD_BOX;
         o.box.score = p.score;
-        o.box.label = p.label;
+        o.label     = p.label;
         int x1 = static_cast<int>((p.x1 - state.pad_left) * inv_s + 0.5f);
         int y1 = static_cast<int>((p.y1 - state.pad_top)  * inv_s + 0.5f);
         int x2 = static_cast<int>((p.x2 - state.pad_left) * inv_s + 0.5f);
@@ -234,10 +234,10 @@ Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSta
             if (emit_class_attr) {
                 Attribute a;
                 a.name = "class";
-                a.value_int = p.label;
+                a.value_int = o.label;
                 a.value_float = p.score;
-                if (p.label >= 0 && p.label < static_cast<int>(class_names_.size()))
-                    a.value_str = class_names_[p.label];
+                if (o.label >= 0 && o.label < static_cast<int>(class_names_.size()))
+                    a.value_str = class_names_[o.label];
                 o.attributes.push_back(std::move(a));
             }
             if (emit_category_attr) {

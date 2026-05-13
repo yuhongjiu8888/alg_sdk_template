@@ -146,7 +146,7 @@ Status DualheadClassifierPostprocessor::Apply(const IInferer& inferer,
 
     Object o;
     o.field_mask = ALG_FIELD_BOX | ALG_FIELD_ATTRIBUTES;
-    o.box.label = cls_id;
+    o.label     = cls_id;
     o.box.score = joint_conf;
     o.box.xmin = o.box.ymin = o.box.xmax = o.box.ymax = 0;  /* ROI 内坐标，ChainSolution 不会用 */
 

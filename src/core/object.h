@@ -30,14 +30,16 @@ struct Attribute {
 
 /* 单个目标的内部表示。
  *
- * - box.label  : JSON 里 class_names 的下标（0-based），FillAlgResult 转 ABI 时 +1 → enum
- * - box.score  : 检测置信度；二阶段链路里被 classify_into 改写成 det × cls 联合
+ * - box        : 公共 AlgBox（xyxy + score），是给最终 ABI 的几何 + 置信度
+ * - label      : JSON 里 class_names 的下标（0-based）。仅内部用，FillAlgResult
+ *                把它 +1 映射成 ABI 里的强类型 enum（0 留给 INVALID）
  * - attributes : 至少包含一条 "category" 条目（"traffic_light" 或 "speed_limit"），
  *                FillAlgResult 据此分桶；二阶段也会带 "class" 条目（信息冗余，便于排错）
  * - drop       : classify_into 标记的「分类置信度低于阈值，最终聚合时跳过」 */
 struct Object {
     int                    field_mask = 0;
     AlgBox                 box{};
+    int                    label = 0;
     std::vector<Attribute> attributes;
     bool                   drop = false;
 

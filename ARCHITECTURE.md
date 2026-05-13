@@ -229,7 +229,7 @@ for stage in stages:
             if stage.produces == "objects":
                 state[stage.name].append(sub_objs)
             else:  // attributes_into / classify_into
-                merge sub_objs[0]'s field into object (classify_into 还会更新 box.label/score 或 drop)
+                merge sub_objs[0]'s field into object (classify_into 还会更新 label / box.score 或 drop)
 
 return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
 ```
@@ -245,7 +245,7 @@ return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
 
 `FillAlgResult()` 在 C API 边界做一次翻译：
 - 按 `attributes["category"].value_str` 分桶到 `traffic_lights[]` / `speed_limits[]`
-- `box.label`（JSON class_names 下标）+1 映射到强类型 enum（0 留给 INVALID）
+- 内部 `Object.label`（JSON class_names 下标）+1 映射到强类型 enum（0 留给 INVALID）
 - 限速牌另外查表得到 `value_kmh`
 - malloc 出来的两个数组由用户通过 `AlgFreeResult()` 一次释放
 
@@ -284,7 +284,7 @@ ChainSolution::Run(image, &objects)
         │          if sub.empty():           # joint_conf < 0.7
         │              obj.drop = true
         │          else:
-        │              obj.box.label = sub[0].box.label    # 9 类 idx
+        │              obj.label     = sub[0].label        # 9 类 idx
         │              obj.box.score *= sub[0].box.score   # det × cls 联合
         │              obj.attributes = sub[0].attributes
         │              obj.field_mask |= ALG_FIELD_ATTRIBUTES
@@ -361,7 +361,7 @@ AlgTrafficLight[]/AlgSpeedLimit[]  malloc (C API 出口)  用户 AlgFreeResult �
 | `image`                   | `objects`                    | 在原图上做检测                              |
 | `image`                   | `attributes_into:s`          | 全图分类（少见，但合法）                    |
 | `objects_from:s`          | `attributes_into:s`          | 在 s 的每个 box 上做属性识别                |
-| `objects_from:s`          | `classify_into:s`            | **在 s 的每个 box 上做识别**：合并 attributes，把 sub.box.label/score 写回 src.box（src.box.score *= sub.box.score 作联合置信度）；分类器返回空 → 直接 drop 掉这个 src 框 |
+| `objects_from:s`          | `classify_into:s`            | **在 s 的每个 box 上做识别**：合并 attributes，把 sub.label 写回 src.label，src.box.score *= sub.box.score 作联合置信度；分类器返回空 → 直接 drop 掉这个 src 框 |
 | `objects_from:s`          | `objects`                    | 在 s 的每个 ROI 上再做检测（少见）           |
 
 `classify_into` 与 `attributes_into` 的差别：前者是**带过滤的识别器**——分类器
