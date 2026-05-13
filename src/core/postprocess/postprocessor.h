@@ -1,6 +1,6 @@
 /**
  * @file postprocessor.h
- * @brief 模型后处理基类。每个模型类型派生一个实现（FCOS / PFLD / 分类网...）。
+ * @brief 模型后处理基类。每个模型类型派生一个实现（YOLOX / YOLOv5-anchor / 分类网...）。
  *
  * 关键区别于旧版本：
  *   1) Configure 接收 JSON 节点 → 阈值/步长/类目数都从配置文件来；

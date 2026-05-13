@@ -20,24 +20,10 @@ struct Context {
     alg::ChainSolution solution;
 };
 
-void FreeKeypoints(AlgKeypoints* kp) {
-    if (!kp) return;
-    std::free(kp->xs);
-    std::free(kp->ys);
-    std::free(kp->scores);
-    std::free(kp);
-}
-
 void FreeAttributes(AlgAttributes* attrs) {
     if (!attrs) return;
     std::free(attrs->items);
     std::free(attrs);
-}
-
-void FreeEmbedding(AlgEmbedding* e) {
-    if (!e) return;
-    std::free(e->values);
-    std::free(e);
 }
 
 }  // namespace
@@ -94,9 +80,7 @@ void AlgFreeResult(AlgResult* result) {
     if (result->objects) {
         for (int i = 0; i < result->object_count; ++i) {
             AlgObject& o = result->objects[i];
-            FreeKeypoints(o.keypoints);    o.keypoints = nullptr;
             FreeAttributes(o.attributes);  o.attributes = nullptr;
-            FreeEmbedding(o.embedding);    o.embedding = nullptr;
         }
         std::free(result->objects);
         result->objects = nullptr;

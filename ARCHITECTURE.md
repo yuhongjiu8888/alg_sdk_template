@@ -11,9 +11,9 @@
 |----------------------------|-------------------------------------------------------------------|
 | 移植芯片成本接近为零        | 换 NPU 厂商时只重写一个类，前/后处理、业务编排、C API 完全不动     |
 | 加模型类型成本接近为零      | 新模型 = 一个目录 + 一行注册；不改公共头、不改 C API、不改 Solution |
-| 业务编排无需重编            | 检测→关键点→属性→...的整条流水线写在 JSON 里                       |
+| 业务编排无需重编            | 检测→识别→...的整条流水线写在 JSON 里                              |
 | 参数调优无需重编            | 阈值、输入尺寸、均值方差等全部 JSON 化                              |
-| 同一个 .so 适配不同业务     | 人脸 SDK、车辆 SDK、烟火 SDK 共用一个二进制，只换 JSON              |
+| 同一个 .so 适配不同业务     | 红绿灯检测、限速牌识别、并行版共用一个二进制，只换 JSON               |
 | 零额外内存拷贝              | 前处理直接写进芯片输入张量，不走中间 buffer                         |
 
 ---
@@ -39,7 +39,7 @@
    ▼                               ▼                                  ▼
 IPreprocessor                  IInferer                          IPostprocessor
 (数据驱动)                     (每芯片一份)                       (每模型类型一份)
-LetterboxPreprocessor          XmmInferer / RkInferer / ...      FcosFace / Pfld / FaceAttr / ...
+LetterboxPreprocessor          XmmInferer / RkInferer / ...      YoloxDet / Yolov5AnchorDet / DualheadClassifier / ...
 ```
 
 | 变化轴                 | 抽象              | 源码位置                    | 用到的 C++ 特性                     |
@@ -228,8 +228,8 @@ for stage in stages:
             map_back_to_original(sub_objs, xf)
             if stage.produces == "objects":
                 state[stage.name].append(sub_objs)
-            else:  // keypoints_into / attributes_into / embedding_into
-                merge sub_objs[0]'s field into object
+            else:  // attributes_into / classify_into
+                merge sub_objs[0]'s field into object (classify_into 还会更新 box.label/score 或 drop)
 
 return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
 ```
@@ -324,9 +324,8 @@ AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
         "input": "image" | "objects_from:<earlier_stage>",
         "crop":  { "expand_ratio": <float>, "square": <bool> },
         "produces": "objects"
-                  | "keypoints_into:<earlier_stage>"
                   | "attributes_into:<earlier_stage>"
-                  | "embedding_into:<earlier_stage>"
+                  | "classify_into:<earlier_stage>"
       }
     ]
   },
@@ -358,9 +357,7 @@ AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
 |---------------------------|------------------------------|--------------------------------------------|
 | `image`                   | `objects`                    | 在原图上做检测                              |
 | `image`                   | `attributes_into:s`          | 全图分类（少见，但合法）                    |
-| `objects_from:s`          | `keypoints_into:s`           | 在 s 的每个 box 上做关键点回归              |
 | `objects_from:s`          | `attributes_into:s`          | 在 s 的每个 box 上做属性识别                |
-| `objects_from:s`          | `embedding_into:s`           | 在 s 的每个 box 上做特征提取                |
 | `objects_from:s`          | `classify_into:s`            | **在 s 的每个 box 上做识别**：合并 attributes，把 sub.box.label/score 写回 src.box（src.box.score *= sub.box.score 作联合置信度）；分类器返回空 → 直接 drop 掉这个 src 框 |
 | `objects_from:s`          | `objects`                    | 在 s 的每个 ROI 上再做检测（少见）           |
 
@@ -396,7 +393,7 @@ AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
 
 ### 7.2 加新模型类型
 
-1. `src/models/<type>/<type>_postprocessor.h/.cpp` 派生 `IPostprocessor`，在 `Apply()` 里把输出塞进 `Object` 的对应字段（box / keypoints / attributes / embedding），置 `field_mask`。
+1. `src/models/<type>/<type>_postprocessor.h/.cpp` 派生 `IPostprocessor`，在 `Apply()` 里把输出塞进 `Object` 的对应字段（box / attributes），置 `field_mask`。
 2. 同目录 `<type>_register.cpp`：
    ```cpp
    REGISTER_ALG_POST("<type_name>", []{
@@ -461,8 +458,8 @@ AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
 但实际上端侧业务的迭代频率比模型/芯片高一个数量级：
 
 - 检测阈值要 A/B 测试 → 改 JSON 不重编
-- 关键点裁剪扩边比例要调 → 改 JSON 不重编
-- 增加一个属性头 → 加一行 JSON
+- ROI 裁剪扩边比例要调 → 改 JSON 不重编
+- 增加一个识别头 → 加一行 JSON
 - 减少一个 stage → 删一行 JSON
 
 JSON 化让算法工程师不依赖 C++ 工程师就能完成产品迭代。
@@ -470,9 +467,12 @@ C++ 侧只暴露**通用机制**（裁剪 + 字段合并 + 坐标反映射）。
 
 ### 为什么 ABI 用 `field_mask` 而不是多个独立结构
 
-多模型组合的输出形态种类有限（box / kps / attrs / embedding），
-但每个对象**是否带某个字段**会随 solution 变化。
-- 用 union：要么很难表达"既有 box 又有 kps"，要么内部需要标签字段（等于 field_mask）
+输出形态由 solution 决定：
+- 单阶段检测：仅 box
+- 检测 + 识别：box + attributes（attributes 里再装 class / category / 联合置信度）
+
+用 `field_mask` + 可空 attributes 子指针的好处：
+- 用 union：要么很难表达"既有 box 又有 attributes"，要么内部需要标签字段（等于 field_mask）
 - 每业务一个独立的 result 结构：C API 爆炸，应用侧难写通用代码
 - 用 `field_mask` + 可空子指针：单一稳定 ABI，组合性自然
 

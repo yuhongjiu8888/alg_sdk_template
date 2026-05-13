@@ -2,8 +2,9 @@
  * @file alg_types.h
  * @brief 算法 SDK 的公共 C ABI 类型定义。
  *
- * SDK 是多模型 + 多后端组合：一个 AlgRun 可能跑完检测→关键点→属性整条链。
- * 因此 AlgResult 是"对象数组"，每个对象用 field_mask 表明带了哪些子结果。
+ * 本分支聚焦红绿灯检测 + 巴西限速牌识别，两个落地模型的输出形态都是
+ * 「检测框 + 可选属性」。AlgObject 用 field_mask 标明每个对象带了哪些子结果，
+ * 同一份 ABI 既能跑「只检测」也能跑「检测+识别」。
  */
 
 #ifndef ALG_TYPES_H
@@ -65,27 +66,23 @@ typedef struct AlgImage_ {
     const void*    data;
 } AlgImage;
 
-/* 原图坐标系下的 2D 框。 */
+/* 原图坐标系下的 2D 框。
+ * 二阶段链路（限速牌）里 box.label 会被分类器覆盖成最终类别 idx，
+ * box.score 会被乘以分类置信度作为联合置信度。 */
 typedef struct AlgBox_ {
     int   xmin, ymin, xmax, ymax;
     float score;
-    int   label; /* 类别 id，单类模型为 0 */
+    int   label;
 } AlgBox;
 
-/* 关键点集合，xs/ys/scores 都是长度 = count 的数组（scores 可空）。 */
-typedef struct AlgKeypoints_ {
-    int    count;
-    float* xs;
-    float* ys;
-    float* scores;
-} AlgKeypoints;
-
-/* 单个属性条目（性别 / 年龄 / 是否戴口罩 等）。 */
+/* 单个属性条目。本分支两种产出方式：
+ *   - { name="class",    value_int=类别 idx,     value_str=类名 (red_light / 60 / ...) }
+ *   - { name="category", value_str="traffic_light" 或 "speed_limit" } */
 typedef struct AlgAttribute_ {
     char  name[32];
-    int   value_int;     /* 离散属性的类别 id（如 gender=1 表示女） */
-    float value_float;   /* 连续属性的回归值（如 age=27.3） */
-    char  value_str[32]; /* 可读字符串（如 "female"） */
+    int   value_int;
+    float value_float;
+    char  value_str[32];
 } AlgAttribute;
 
 typedef struct AlgAttributes_ {
@@ -93,36 +90,24 @@ typedef struct AlgAttributes_ {
     AlgAttribute* items;
 } AlgAttributes;
 
-/* Embedding 向量（人脸特征等）。 */
-typedef struct AlgEmbedding_ {
-    int    dim;
-    float* values;
-} AlgEmbedding;
-
 /* AlgObject.field_mask 的位标志。 */
 typedef enum AlgObjectField_ {
     ALG_FIELD_BOX        = 1 << 0,
-    ALG_FIELD_KEYPOINTS  = 1 << 1,
-    ALG_FIELD_ATTRIBUTES = 1 << 2,
-    ALG_FIELD_EMBEDDING  = 1 << 3,
+    ALG_FIELD_ATTRIBUTES = 1 << 1,
 } AlgObjectField;
 
 /*
- * 一个被检测出来的"目标"。
+ * 一个被检测出来的目标。
  *
- * - 纯检测模型：仅 box 字段有效，field_mask = ALG_FIELD_BOX。
- * - 检测+关键点+属性的人脸全套：box | keypoints | attributes 都有效。
- * - 纯分类（无 box）：field_mask = ALG_FIELD_ATTRIBUTES，整个 AlgResult 只有一个 object。
+ * - 红绿灯单阶段：仅 box 有效，attributes 可选（如 JSON 配了 class_names / category 就会带上）。
+ * - 限速牌二阶段：box + attributes 都有效；attributes[0] 为 class，[1] 为 category。
  *
- * 所有 AlgKeypoints* / AlgAttributes* / AlgEmbedding* 由 SDK 持有；
- * 用户通过 AlgFreeResult 统一释放。
+ * AlgAttributes* 由 SDK 持有；用户通过 AlgFreeResult 一次性释放。
  */
 typedef struct AlgObject_ {
     int            field_mask;
     AlgBox         box;
-    AlgKeypoints*  keypoints;
     AlgAttributes* attributes;
-    AlgEmbedding*  embedding;
 } AlgObject;
 
 typedef struct AlgResult_ {

@@ -1,7 +1,7 @@
 # alg_sdk — 红绿灯检测 + 巴西限速牌识别
 
 面向端侧 CV 推理的 C++ SDK。本分支 (`tld_speedlimit`) 在 master 通用框架基础上裁掉
-所有人脸示例，接入两个落地模型：
+原通用示例，聚焦两个落地模型：
 
 - **红绿灯检测 (`traffic_light.json`)** — 单阶段 YOLOX，416×416 RGB，4 类
   red/yellow/green/off；对应训练侧 [`alg_traffic_light_detection`](../alg_traffic_light_detection/)。
@@ -37,7 +37,7 @@ resources/
 src/
   interface/                   C API → ChainSolution 胶水层
   core/
-    object.h/cpp               内部 C++ Object（多了 drop 标记，供 classify_into 用）
+    object.h/cpp               内部 C++ Object（box + attributes + drop 标记）
     tensor.h                   芯片中立的 TensorView
     status.h logger.h
     config/                    JSON → SolutionConfig 解析层
@@ -74,7 +74,8 @@ for (int i = 0; i < result.object_count; ++i) {
     if (o->field_mask & ALG_FIELD_BOX)        use_box(&o->box);
     if (o->field_mask & ALG_FIELD_ATTRIBUTES) use_attrs(o->attributes);
     /* 限速牌：box.label = 9 类 idx，box.score = det × cls 联合置信度，
-     *         attributes[0] = { name="class", value_str="60", value_int=5, ... } */
+     *         attributes[0] = { name="class",    value_str="60",            value_int=5, ... }
+     *         attributes[1] = { name="category", value_str="speed_limit",   ...           } */
 }
 
 AlgFreeResult(&result);
@@ -144,9 +145,7 @@ AlgDestroy(h);
 | produces 取值                    | 行为                                                   |
 |----------------------------------|--------------------------------------------------------|
 | `"objects"`                      | 本 stage 自己产生 top-level 对象                        |
-| `"keypoints_into:<stage>"`       | 把关键点合并到上游 stage 的 box                         |
 | `"attributes_into:<stage>"`      | 把属性数组合并到上游 stage 的 box                       |
-| `"embedding_into:<stage>"`       | 把 embedding 合并到上游 stage 的 box                    |
 | **`"classify_into:<stage>"`**    | **分类器：合并 attributes 到 src，box.label 改成分类 id，box.score 乘以分类置信度；分类器返回空（如低于阈值）→ 直接 drop 掉这个 src 框** |
 
 `classify_into:` 是本分支为支持「检测 + 识别 + 阈值过滤」二阶段链路新增的语义，
@@ -185,5 +184,6 @@ AlgDestroy(h);
 
 ## 如何加新模型 / 换芯片
 
-参考 `ARCHITECTURE.md`，三轴正交，本分支只是把 master 的人脸示例换成两个落地模型，
-框架本身（IInferer / IPostprocessor / IPreprocessor / ChainSolution / C API）一字未动。
+参考 `ARCHITECTURE.md`，三轴正交。本分支聚焦红绿灯 + 限速牌两个落地模型，C ABI 仅
+保留 box + attributes（不含 keypoints / embedding）；如需关键点 / embedding 等其它
+输出形态，回到 master 分支或基于 master 拉新分支扩展。

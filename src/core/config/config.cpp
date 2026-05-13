@@ -124,7 +124,7 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
     if (produces == "objects") {
         s->output_kind = StageOutputKind::kCreateObjects;
     } else {
-        /* "keypoints_into:<stage>" / "attributes_into:<stage>" / "embedding_into:<stage>" */
+        /* "attributes_into:<stage>" / "classify_into:<stage>" */
         auto parse_into = [&](const std::string& tag, StageOutputKind kind) -> int {
             const std::string prefix = tag + ":";
             if (produces.rfind(prefix, 0) != 0) return 0;
@@ -132,9 +132,7 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
             s->output_target = produces.substr(prefix.size());
             return 1;
         };
-        if (!parse_into("keypoints_into",  StageOutputKind::kFillKeypoints) &&
-            !parse_into("attributes_into", StageOutputKind::kFillAttributes) &&
-            !parse_into("embedding_into",  StageOutputKind::kFillEmbedding) &&
+        if (!parse_into("attributes_into", StageOutputKind::kFillAttributes) &&
             !parse_into("classify_into",   StageOutputKind::kClassifyInto)) {
             SetErr(err, "stage.produces unrecognized: " + produces);
             return false;

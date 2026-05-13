@@ -14,12 +14,6 @@
 
 namespace alg {
 
-struct Keypoints {
-    std::vector<float> x;
-    std::vector<float> y;
-    std::vector<float> score;
-};
-
 struct Attribute {
     std::string name;
     int         value_int = 0;
@@ -27,26 +21,18 @@ struct Attribute {
     std::string value_str;
 };
 
-struct Embedding {
-    std::vector<float> v;
-};
-
 /* 单个目标，内部表示，对应 C ABI 的 AlgObject。 */
 struct Object {
     int                    field_mask = 0;
     AlgBox                 box{};
-    Keypoints              keypoints;
     std::vector<Attribute> attributes;
-    Embedding              embedding;
 
     /* 内部标记：被 classify_into stage 判定应丢弃。
      * 不暴露到 C ABI，仅 ChainSolution 在最终聚合时跳过。 */
     bool                   drop = false;
 
     bool has_box()        const { return field_mask & ALG_FIELD_BOX; }
-    bool has_keypoints()  const { return field_mask & ALG_FIELD_KEYPOINTS; }
     bool has_attributes() const { return field_mask & ALG_FIELD_ATTRIBUTES; }
-    bool has_embedding()  const { return field_mask & ALG_FIELD_EMBEDDING; }
 };
 
 /**

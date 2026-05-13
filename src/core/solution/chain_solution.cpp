@@ -80,8 +80,6 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
 namespace {
 
 void MapBackToOriginal(std::vector<Object>* objs, const CropTransform& xf) {
-    const float dx = static_cast<float>(xf.offset_x);
-    const float dy = static_cast<float>(xf.offset_y);
     for (auto& o : *objs) {
         if (o.has_box()) {
             o.box.xmin += xf.offset_x;
@@ -89,26 +87,14 @@ void MapBackToOriginal(std::vector<Object>* objs, const CropTransform& xf) {
             o.box.ymin += xf.offset_y;
             o.box.ymax += xf.offset_y;
         }
-        if (o.has_keypoints()) {
-            for (auto& v : o.keypoints.x) v += dx;
-            for (auto& v : o.keypoints.y) v += dy;
-        }
     }
 }
 
 void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
     switch (kind) {
-        case StageOutputKind::kFillKeypoints:
-            dst->keypoints  = std::move(src.keypoints);
-            dst->field_mask |= ALG_FIELD_KEYPOINTS;
-            break;
         case StageOutputKind::kFillAttributes:
             dst->attributes = std::move(src.attributes);
             dst->field_mask |= ALG_FIELD_ATTRIBUTES;
-            break;
-        case StageOutputKind::kFillEmbedding:
-            dst->embedding  = std::move(src.embedding);
-            dst->field_mask |= ALG_FIELD_EMBEDDING;
             break;
         case StageOutputKind::kClassifyInto:
             /* 分类器：用 sub.box 的 label/score 覆盖 src.box，并把 sub.box.score 当
@@ -132,11 +118,7 @@ void ResetStageObjects(std::vector<Object>& v) {
     for (auto& o : v) {
         o.field_mask = 0;
         o.drop = false;
-        o.keypoints.x.clear();
-        o.keypoints.y.clear();
-        o.keypoints.score.clear();
         o.attributes.clear();
-        o.embedding.v.clear();
     }
     v.clear();  /* size=0, capacity 保留 */
 }

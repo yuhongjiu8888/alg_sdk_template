@@ -31,7 +31,7 @@ ALG_API AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* res
 
 /**
  * 释放 SDK 在 result 内部分配的所有内存（objects 数组本身、每个 object 的
- * keypoints / attributes / embedding 子结构）。对零值 result 调用安全。
+ * attributes 子结构）。对零值 result 调用安全。
  */
 ALG_API void AlgFreeResult(AlgResult* result);
 
