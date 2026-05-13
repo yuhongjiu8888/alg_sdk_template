@@ -1,0 +1,27 @@
+{
+  "solution": {
+    "type": "chain",
+    "stages": [
+      { "name": "smoke_det", "model": "smoke_cfg", "input": "image", "produces": "objects" }
+    ]
+  },
+  "models": {
+    "smoke_cfg": {
+      "model_path": "/data/smoke_det.xmm",
+      "preprocess": {
+        "input_size": [416, 416],
+        "color": "RGB",
+        "resize": "letterbox_center",
+        "layout": "NCHW",
+        "mean": [0, 0, 0],
+        "std":  [255, 255, 255]
+      },
+      "postprocess": {
+        "type": "fcos_face",
+        "conf_threshold": 0.45,
+        "nms_threshold":  0.5,
+        "strides": [8, 16, 32]
+      }
+    }
+  }
+}

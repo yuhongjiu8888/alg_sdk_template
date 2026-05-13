@@ -1,0 +1,47 @@
+{
+  "solution": {
+    "type": "chain",
+    "stages": [
+      { "name": "vehicle_det", "model": "vehicle_cfg",
+        "input": "image", "produces": "objects" },
+
+      { "name": "plate_det",   "model": "plate_det_cfg",
+        "input": "objects_from:vehicle_det",
+        "crop":  { "expand_ratio": 1.0, "square": false },
+        "produces": "keypoints_into:vehicle_det" },
+
+      { "name": "plate_ocr",   "model": "plate_ocr_cfg",
+        "input": "objects_from:vehicle_det",
+        "crop":  { "expand_ratio": 1.05, "square": false },
+        "produces": "attributes_into:vehicle_det" }
+    ]
+  },
+  "models": {
+    "vehicle_cfg": {
+      "model_path": "/data/vehicle_det.xmm",
+      "preprocess":  { "input_size": [640, 640], "color": "RGB",
+                       "resize": "letterbox_center", "layout": "NCHW",
+                       "mean": [0,0,0], "std": [255,255,255] },
+      "postprocess": { "type": "yolov5_det",
+                       "conf_threshold": 0.4, "nms_threshold": 0.5,
+                       "num_classes": 4,
+                       "labels": ["car","truck","bus","motorcycle"] }
+    },
+    "plate_det_cfg": {
+      "model_path": "/data/plate_corner.xmm",
+      "preprocess":  { "input_size": [192, 192], "color": "BGR",
+                       "resize": "stretch", "layout": "NCHW" },
+      "postprocess": { "type": "pfld_landmark",
+                       "num_points": 4, "interleaved": true }
+    },
+    "plate_ocr_cfg": {
+      "model_path": "/data/plate_ocr.xmm",
+      "preprocess":  { "input_size": [94, 24], "color": "BGR",
+                       "resize": "stretch", "layout": "NCHW",
+                       "mean": [127.5,127.5,127.5], "std": [128,128,128] },
+      "postprocess": { "type": "ctc_ocr",
+                       "blank_index": 0,
+                       "charset": "京津沪渝0123456789ABCDEFGHJKLMNPQRSTUVWXYZ" }
+    }
+  }
+}

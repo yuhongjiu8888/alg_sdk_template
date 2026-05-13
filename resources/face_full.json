@@ -1,0 +1,80 @@
+{
+  "solution": {
+    "type": "chain",
+    "stages": [
+      {
+        "name": "detector",
+        "model": "detector_cfg",
+        "input": "image",
+        "produces": "objects"
+      },
+      {
+        "name": "landmark",
+        "model": "landmark_cfg",
+        "input": "objects_from:detector",
+        "crop": { "expand_ratio": 1.25, "square": true },
+        "produces": "keypoints_into:detector"
+      },
+      {
+        "name": "attribute",
+        "model": "attribute_cfg",
+        "input": "objects_from:detector",
+        "crop": { "expand_ratio": 1.10, "square": true },
+        "produces": "attributes_into:detector"
+      }
+    ]
+  },
+
+  "models": {
+    "detector_cfg": {
+      "model_path": "/data/face_det.xmm",
+      "preprocess": {
+        "input_size": [320, 320],
+        "color": "BGR",
+        "resize": "letterbox_tl",
+        "layout": "NCHW"
+      },
+      "postprocess": {
+        "type": "fcos_face",
+        "conf_threshold": 0.6,
+        "nms_threshold": 0.4,
+        "strides": [4, 8, 16, 32]
+      }
+    },
+
+    "landmark_cfg": {
+      "model_path": "/data/face_landmark.xmm",
+      "preprocess": {
+        "input_size": [112, 112],
+        "color": "BGR",
+        "resize": "stretch",
+        "layout": "NCHW"
+      },
+      "postprocess": {
+        "type": "pfld_landmark",
+        "num_points": 5,
+        "interleaved": true
+      }
+    },
+
+    "attribute_cfg": {
+      "model_path": "/data/face_attr.xmm",
+      "preprocess": {
+        "input_size": [96, 96],
+        "color": "BGR",
+        "resize": "stretch",
+        "layout": "NCHW",
+        "mean": [127.5, 127.5, 127.5],
+        "std":  [127.5, 127.5, 127.5]
+      },
+      "postprocess": {
+        "type": "face_attribute",
+        "labels": [
+          { "name": "gender", "output_index": 0, "kind": "softmax", "classes": ["male", "female"] },
+          { "name": "mask",   "output_index": 1, "kind": "sigmoid", "threshold": 0.5, "classes": ["no_mask", "mask"] },
+          { "name": "age",    "output_index": 2, "kind": "regress" }
+        ]
+      }
+    }
+  }
+}
