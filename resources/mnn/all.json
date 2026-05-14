@@ -27,7 +27,7 @@
         "color":      "RGB",
         "resize":     "letterbox_tl",
         "layout":     "NCHW",
-        "pad_value":  114,
+        "pad_value":  0,
         "mean": [0, 0, 0],
         "std": [255, 255, 255]
       },
@@ -50,7 +50,7 @@
         "color":      "RGB",
         "resize":     "letterbox_center",
         "layout":     "NCHW",
-        "pad_value":  114,
+        "pad_value":  0,
         "mean": [0, 0, 0],
         "std": [255, 255, 255]
       },
@@ -72,7 +72,7 @@
         "color":      "RGB",
         "resize":     "stretch",
         "layout":     "NCHW",
-        "pad_value":  114,
+        "pad_value":  0,
         "mean": [0, 0, 0],
         "std": [255, 255, 255]
       },

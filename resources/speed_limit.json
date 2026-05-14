@@ -21,7 +21,7 @@
         "color":      "RGB",
         "resize":     "letterbox_center",
         "layout":     "NCHW",
-        "pad_value":  114
+        "pad_value":  0
       },
       "postprocess": {
         "type":           "yolov5_anchor_det",
@@ -41,7 +41,7 @@
         "color":      "RGB",
         "resize":     "stretch",
         "layout":     "NCHW",
-        "pad_value":  114
+        "pad_value":  0
       },
       "postprocess": {
         "type":                    "dualhead_classifier",
