@@ -1,55 +1,45 @@
 cmake_minimum_required(VERSION 3.10)
 
-if(DEFINED CMAKE_TOOLCHAIN_FILE)
-    set(LIBRARY_OUTPUT_PATH_ROOT ${CMAKE_BINARY_DIR}
-        CACHE PATH "library output root")
-    get_filename_component(_tc_name ${CMAKE_TOOLCHAIN_FILE} NAME)
-    find_file(CMAKE_TOOLCHAIN_FILE ${_tc_name} PATHS ${CMAKE_SOURCE_DIR} NO_DEFAULT_PATH)
-    message(STATUS "CMAKE_TOOLCHAIN_FILE = ${CMAKE_TOOLCHAIN_FILE}")
-endif()
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(CMAKE_BUILD_TYPE MATCHES "Release")
-    set(CMAKE_CXX_FLAGS "-s ${CMAKE_CXX_FLAGS}")
-    set(CMAKE_C_FLAGS   "-s ${CMAKE_C_FLAGS}")
+    set(CMAKE_CXX_FLAGS "-O3 -s -Wl,--gc-sections -ffunction-sections -fdata-sections -ffast-math ${CMAKE_CXX_FLAGS}")
+    set(CMAKE_C_FLAGS   "-O3 -s -Wl,--gc-sections -ffunction-sections -fdata-sections -ffast-math ${CMAKE_C_FLAGS}")
 elseif(CMAKE_BUILD_TYPE MATCHES "Debug")
-    set(CMAKE_CXX_FLAGS "-g3 ${CMAKE_CXX_FLAGS}")
-    set(CMAKE_C_FLAGS   "-g3 ${CMAKE_C_FLAGS}")
+    set(CMAKE_CXX_FLAGS "-g3 -O0 ${CMAKE_CXX_FLAGS}")
+    set(CMAKE_C_FLAGS   "-g3 -O0 ${CMAKE_C_FLAGS}")
 else()
     message(FATAL_ERROR "CMAKE_BUILD_TYPE must be Debug or Release")
 endif()
 
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-set(CMAKE_CXX_FLAGS "-std=c++14 -O3 -s -Wl,--gc-sections -Wall -fpermissive -fPIC -fvisibility=hidden -ffunction-sections -fdata-sections -ffast-math ${CMAKE_CXX_FLAGS}")
-set(CMAKE_C_FLAGS   "-fpermissive -O3 -s -Wl,--gc-sections -Wall -fPIC -fvisibility=hidden -ffunction-sections -fdata-sections -ffast-math ${CMAKE_C_FLAGS}")
+set(CMAKE_CXX_FLAGS "-std=c++14 -Wall -fpermissive -fPIC -fvisibility=hidden ${CMAKE_CXX_FLAGS}")
+set(CMAKE_C_FLAGS   "-Wall -fpermissive -fPIC -fvisibility=hidden ${CMAKE_C_FLAGS}")
 
 # -----------------------------------------------------------------------------
-# OpenCV
+# OpenCV (x86_64 host)
+# 用户可通过 -DOPENCV_ROOT=/path/to/opencv 覆盖
+# 期望布局: ${OPENCV_ROOT}/include/opencv4, ${OPENCV_ROOT}/lib
 # -----------------------------------------------------------------------------
-include_directories(/root/opensource/opencv-4.5.0/build_arm_sgk/install/include/opencv4)
-link_directories(
-    /root/opensource/opencv-4.5.0/build_arm_sgk/install/lib
-    /root/opensource/opencv-4.5.0/build_arm_sgk/install/lib/opencv4/3rdparty
-)
-set(OPENCV4_LIB_STATIC
-    libopencv_imgcodecs.a libopencv_imgproc.a libopencv_calib3d.a
-    libopencv_features2d.a libopencv_flann.a libopencv_videoio.a
-    libopencv_core.a liblibjpeg-turbo.a liblibopenjp2.a liblibpng.a
-    liblibwebp.a libade.a libzlib.a libIlmImf.a liblibtiff.a
-    libittnotify.a libquirc.a libzlib.a)
+if(NOT DEFINED OPENCV_ROOT)
+    set(OPENCV_ROOT "/usr" CACHE PATH "OpenCV install root")
+endif()
+message(STATUS "OPENCV_ROOT = ${OPENCV_ROOT}")
+
+include_directories(${OPENCV_ROOT}/local/include/opencv4)
+link_directories(${OPENCV_ROOT}/lib)
+set(OPENCV4_LIBS opencv_imgcodecs opencv_imgproc opencv_core)
 
 # -----------------------------------------------------------------------------
-# jsoncpp（用户可通过 -DJSONCPP_ROOT=/path/to/jsoncpp/install 覆盖）
-# 期望布局：${JSONCPP_ROOT}/include/json/json.h，${JSONCPP_ROOT}/lib/libjsoncpp.a
+# jsoncpp
 # -----------------------------------------------------------------------------
 # if(NOT DEFINED JSONCPP_ROOT)
-#     set(JSONCPP_ROOT "/root/opensource/jsoncpp/build_arm/install" CACHE PATH "jsoncpp install root")
+#     set(JSONCPP_ROOT "/usr" CACHE PATH "jsoncpp install root")
 # endif()
 # message(STATUS "JSONCPP_ROOT = ${JSONCPP_ROOT}")
 # include_directories(${JSONCPP_ROOT}/include)
 # link_directories(${JSONCPP_ROOT}/lib)
-# set(JSONCPP_LIB_STATIC libjsoncpp.a)
+# set(JSONCPP_LIB_STATIC jsoncpp)
 
 # -----------------------------------------------------------------------------
 # Public + internal include paths
@@ -75,12 +65,7 @@ set(ALG_CORE_SRCS
 )
 
 # -----------------------------------------------------------------------------
-# 模型（按类型注册的后处理）—— 加新模型在此处追加，无需改其它文件
-#
-# 当前分支聚焦：红绿灯检测 + 巴西限速牌识别
-#   - yolox_det           : mmyolo YOLOXHead 多尺度（红绿灯 4 类，stride 8/16/32）
-#   - yolov5_anchor_det   : 单尺度 anchor 解码（SpeedSignNet 1 类 stride=8 anchor=(36,36)）
-#   - dualhead_classifier : 双头数字识别 + 装配 + 0.7 置信度过滤（限速牌 9 类）
+# 模型
 # -----------------------------------------------------------------------------
 set(ALG_MODEL_SRCS
     src/models/yolox_det/yolox_det_postprocessor.cpp
@@ -95,32 +80,24 @@ set(ALG_MODEL_SRCS
 set(JSONCPP_SRCS src/json/jsoncpp.cpp)
 
 # -----------------------------------------------------------------------------
-# 后端（一份产物对应一种芯片）
+# 后端（x86_64 本地验证只支持 mnn）
 # -----------------------------------------------------------------------------
 set(ALG_BACKEND_SRCS)
 set(ALG_BACKEND_LIBS)
-if(ALG_BACKEND STREQUAL "xmm")
+if(ALG_BACKEND STREQUAL "mnn")
     set(ALG_BACKEND_SRCS
-        src/backend/xmm/xmm_inferer.cpp
-        src/backend/xmm/xmm_backend.cpp
+        src/backend/mnn/mnn_inferer.cpp
+        src/backend/mnn/mnn_backend.cpp
     )
-    include_directories(${CMAKE_SOURCE_DIR}/include/xmm_sdk
-                        /root/sgk-sdk/include /root/project/sgk/deploy/sgk-sdk/include)
-    link_directories(${CMAKE_SOURCE_DIR}/lib/static
-                     /root/sgk-sdk/lib/static /root/project/sgk/deploy/sgk-sdk/lib/static)
-    set(ALG_BACKEND_LIBS
-        libxmedia_cl.a
-        libxmedia_npu.a
-        libxmedia_common.a
-        libxmedia_flatcc.a
-    )
-elseif(ALG_BACKEND STREQUAL "rk")
-    set(ALG_BACKEND_SRCS
-        src/backend/rk/rk_inferer.cpp
-        src/backend/rk/rk_backend.cpp
-    )
+    if(NOT DEFINED MNN_ROOT)
+        set(MNN_ROOT "/root/opensource/mnn" CACHE PATH "MNN install root")
+    endif()
+    message(STATUS "MNN_ROOT = ${MNN_ROOT}")
+    include_directories(${MNN_ROOT}/V2.5.1/include)
+    link_directories(${MNN_ROOT}/V2.5.1/lib/linux_x86_64)
+    set(ALG_BACKEND_LIBS MNN)
 else()
-    message(FATAL_ERROR "Unknown ALG_BACKEND: ${ALG_BACKEND} (expected xmm or rk)")
+    message(FATAL_ERROR "x86_64 platform only supports ALG_BACKEND=mnn, got: ${ALG_BACKEND}")
 endif()
 
 # -----------------------------------------------------------------------------
@@ -134,8 +111,7 @@ add_library(alg_sdk SHARED
 )
 target_compile_definitions(alg_sdk PRIVATE ALG_BUILDING_SDK=1)
 target_link_libraries(alg_sdk
-    ${OPENCV4_LIB_STATIC}
-    # ${JSONCPP_LIB_STATIC}
+    ${OPENCV4_LIBS}
     ${ALG_BACKEND_LIBS}
     rt dl pthread
 )

@@ -13,6 +13,7 @@
 #include <cstring>
 #include <string>
 #include <sys/stat.h>
+#include <sys/time.h>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -83,8 +84,13 @@ int main(int argc, char** argv) {
     std::printf("[sdk   ] %s\n", AlgVersion());
 
     AlgHandle h = nullptr;
+    timeval t0, t1;
+    gettimeofday(&t0, nullptr);
     AlgStatus s = AlgCreate(&h, json_path);
+    gettimeofday(&t1, nullptr);
     if (s != ALG_OK) { std::fprintf(stderr, "AlgCreate err %d\n", s); return s; }
+    std::printf("[init  ] %.2f ms\n",
+                (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0);
 
     AlgImage img;
     img.format   = ALG_PIX_BGR;
@@ -95,13 +101,17 @@ int main(int argc, char** argv) {
     img.data     = bgr.data;
 
     AlgResult r{};
+    gettimeofday(&t0, nullptr);
     s = AlgRun(h, &img, &r);
+    gettimeofday(&t1, nullptr);
     if (s != ALG_OK) {
         std::fprintf(stderr, "AlgRun err %d\n", s);
         AlgDestroy(h);
         return s;
     }
 
+    std::printf("[infer ] %.2f ms\n",
+                (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0);
     std::printf("[result] frame_id=%lld  traffic_lights=%d  speed_limits=%d\n",
                 (long long)r.frame_id, r.traffic_light_count, r.speed_limit_count);
     for (int i = 0; i < r.traffic_light_count; ++i) {

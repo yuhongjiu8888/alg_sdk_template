@@ -26,8 +26,8 @@ DataType MapDtype(int xmm_dtype) {
         case XMEDIA_CL_UINT8:   return DataType::kU8;
         case XMEDIA_CL_INT8:    return DataType::kI8;
         case XMEDIA_CL_INT16:   return DataType::kI16;
-        case XMEDIA_CL_FLOAT16: return DataType::kF16;
-        case XMEDIA_CL_FLOAT32: return DataType::kF32;
+        case XMEDIA_CL_UINT16:  return DataType::kU16;
+        case XMEDIA_CL_INT32:   return DataType::kI32;
         default:                return DataType::kU8;
     }
 }
