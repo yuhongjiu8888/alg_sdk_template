@@ -19,6 +19,8 @@
  * JSON 参数：
  *   { "type": "yolox_det",
  *     "num_classes":    4,
+ *     "bbox_channels":  4,                         // 可选，默认 4；bbox 通道数
+ *     "obj_channels":   1,                         // 可选，默认 1；objectness 通道数
  *     "strides":        [8, 16, 32],
  *     "conf_threshold": 0.4,
  *     "nms_threshold":  0.5,
@@ -47,6 +49,9 @@ class YoloxDetPostprocessor : public IPostprocessor {
 
   private:
     int                      num_classes_    = 1;
+    int                      bbox_channels_  = 4;
+    int                      obj_channels_   = 1;
+    int                      cls_offset_     = 5;    /* bbox_channels_ + obj_channels_ */
     std::vector<int>         strides_        = {8, 16, 32};
     float                    conf_threshold_ = 0.4f;
     float                    nms_threshold_  = 0.5f;
@@ -55,6 +60,7 @@ class YoloxDetPostprocessor : public IPostprocessor {
     /* class_names 可选；提供时会给每个 Object 加一个 "class" attribute（value_str=类名,
      * value_int=label, value_float=score），方便排错；ABI 层最终走 enum，不依赖此字段。 */
     std::vector<std::string> class_names_;
+    std::vector<int>         class_values_;   /* class_names 映射到的业务 enum 值 */
     /* category 可选；提供时再加一个 "category" attribute（value_str=本检测器类别名，
      * 比如 "traffic_light" / "speed_limit"），让应用一眼分辨是哪个检测器的产物。 */
     std::string              category_;

@@ -67,6 +67,8 @@ inline float ReadElem(const TensorView& t, int idx) {
 
 Status Yolov5AnchorDetPostprocessor::Configure(const IInferer& inferer, const Json::Value& params) {
     num_classes_    = params.get("num_classes", 1).asInt();
+    bbox_channels_  = params.get("bbox_channels", 4).asInt();
+    obj_channels_   = params.get("obj_channels", 1).asInt();
     stride_         = params.get("stride", 8).asInt();
     conf_threshold_ = params.get("conf_threshold", 0.25f).asFloat();
     nms_threshold_  = params.get("nms_threshold", 0.45f).asFloat();
@@ -83,6 +85,15 @@ Status Yolov5AnchorDetPostprocessor::Configure(const IInferer& inferer, const Js
                  num_classes_, stride_);
         return ALG_E_POSTPROCESS;
     }
+    if (bbox_channels_ <= 0) {
+        ALG_LOGE("yolov5_anchor_det: bbox_channels must be > 0 (got %d)", bbox_channels_);
+        return ALG_E_POSTPROCESS;
+    }
+    if (obj_channels_ < 0) {
+        ALG_LOGE("yolov5_anchor_det: obj_channels must be >= 0 (got %d)", obj_channels_);
+        return ALG_E_POSTPROCESS;
+    }
+    cls_offset_ = bbox_channels_ + obj_channels_;
     if (inferer.NumOutputs() < 1) {
         ALG_LOGE("yolov5_anchor_det: need at least 1 output");
         return ALG_E_POSTPROCESS;
@@ -98,7 +109,7 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
     out->clear();
 
     const TensorView& t = inferer.OutputView(0);
-    const int channels = 4 + 1 + num_classes_;
+    const int channels = cls_offset_ + num_classes_;
 
     if (t.shape.ndims != 4 || t.shape.dims[0] != 1) {
         ALG_LOGE("yolov5_anchor_det: %s ndims=%d dims[0]=%d, expect 4D batch=1",
@@ -135,13 +146,13 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
     const float fs = static_cast<float>(stride_);
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
-            float obj = Sigmoid(ReadElem(t, idx_at(4, y, x)));
+            float obj = Sigmoid(ReadElem(t, idx_at(bbox_channels_, y, x)));
             if (obj < obj_prefilter_) continue;
 
             float best_cls = -1.f;
             int   best_idx = 0;
             for (int c = 0; c < num_classes_; ++c) {
-                float s = Sigmoid(ReadElem(t, idx_at(5 + c, y, x)));
+                float s = Sigmoid(ReadElem(t, idx_at(cls_offset_ + c, y, x)));
                 if (s > best_cls) { best_cls = s; best_idx = c; }
             }
             float score = obj * best_cls;

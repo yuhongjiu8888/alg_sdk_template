@@ -2,91 +2,157 @@
   "solution": {
     "type": "chain",
     "stages": [
-      { "name": "tld",
+      {
+        "name": "tld",
         "model": "tld_cfg",
         "input": "image",
-        "produces": "objects" },
-
-      { "name": "ssn_det",
+        "produces": "objects"
+      },
+      {
+        "name": "ssn_det",
         "model": "ssn_cfg",
         "input": "image",
-        "produces": "objects" },
-
-      { "name": "ssn_cls",
+        "produces": "objects"
+      },
+      {
+        "name": "ssn_cls",
         "model": "cls_cfg",
         "input": "objects_from:ssn_det",
-        "crop":  { "expand_ratio": 1.5, "square": true },
-        "produces": "classify_into:ssn_det" }
+        "crop": {
+          "expand_ratio": 1.5,
+          "square": true
+        },
+        "produces": "classify_into:ssn_det"
+      }
     ]
   },
   "models": {
     "tld_cfg": {
       "model_path": "model/traffic_light.mnn",
       "preprocess": {
-        "input_size": [416, 416],
-        "color":      "RGB",
-        "resize":     "letterbox_tl",
-        "layout":     "NCHW",
-        "pad_value":  0,
-        "mean": [0, 0, 0],
-        "std": [255, 255, 255]
+        "input_size": [
+          416,
+          416
+        ],
+        "color": "RGB",
+        "resize": "letterbox_tl",
+        "layout": "NCHW",
+        "pad_value": 0,
+        "mean": [
+          0,
+          0,
+          0
+        ],
+        "std": [
+          255,
+          255,
+          255
+        ]
       },
       "postprocess": {
-        "type":           "yolox_det",
-        "category":       "traffic_light",
-        "num_classes":    4,
-        "strides":        [8, 16, 32],
+        "type": "yolox_det",
+        "category": "traffic_light",
+        "num_classes": 4,
+        "bbox_channels": 4,
+        "obj_channels": 1,
+        "strides": [
+          8,
+          16,
+          32
+        ],
         "conf_threshold": 0.4,
-        "nms_threshold":  0.5,
-        "max_det":        100,
-        "obj_prefilter":  0.05,
-        "class_names":    ["red_light", "yellow_light", "green_light", "off_light"]
+        "nms_threshold": 0.5,
+        "max_det": 100,
+        "obj_prefilter": 0.05,
+        "class_names": [
+          "red_light",
+          "yellow_light",
+          "green_light",
+          "off_light"
+        ]
       }
     },
     "ssn_cfg": {
       "model_path": "model/speedsignnet.mnn",
       "preprocess": {
-        "input_size": [576, 320],
-        "color":      "RGB",
-        "resize":     "letterbox_center",
-        "layout":     "NCHW",
-        "pad_value":  0,
-        "mean": [0, 0, 0],
-        "std": [255, 255, 255]
+        "input_size": [
+          576,
+          320
+        ],
+        "color": "RGB",
+        "resize": "letterbox_center",
+        "layout": "NCHW",
+        "pad_value": 0,
+        "mean": [
+          0,
+          0,
+          0
+        ],
+        "std": [
+          255,
+          255,
+          255
+        ]
       },
       "postprocess": {
-        "type":           "yolov5_anchor_det",
-        "num_classes":    1,
-        "stride":         8,
-        "anchor":         [36, 36],
+        "type": "yolov5_anchor_det",
+        "num_classes": 1,
+        "bbox_channels": 4,
+        "obj_channels": 1,
+        "stride": 8,
+        "anchor": [
+          36,
+          36
+        ],
         "conf_threshold": 0.25,
-        "nms_threshold":  0.45,
-        "max_det":        64,
-        "obj_prefilter":  0.05
+        "nms_threshold": 0.45,
+        "max_det": 64,
+        "obj_prefilter": 0.05
       }
     },
     "cls_cfg": {
       "model_path": "model/classifier.mnn",
       "preprocess": {
-        "input_size": [64, 64],
-        "color":      "RGB",
-        "resize":     "stretch",
-        "layout":     "NCHW",
-        "pad_value":  0,
-        "mean": [0, 0, 0],
-        "std": [255, 255, 255]
+        "input_size": [
+          64,
+          64
+        ],
+        "color": "RGB",
+        "resize": "stretch",
+        "layout": "NCHW",
+        "pad_value": 0,
+        "mean": [
+          0,
+          0,
+          0
+        ],
+        "std": [
+          255,
+          255,
+          255
+        ]
       },
       "postprocess": {
-        "type":                    "dualhead_classifier",
-        "category":                "speed_limit",
-        "head_a_index":            0,
-        "head_b_index":            1,
-        "head_a_classes":          8,
-        "head_b_classes":          2,
-        "is_3digit_class":         1,
+        "type": "dualhead_classifier",
+        "category": "speed_limit",
+        "head_a_index": 0,
+        "head_b_index": 1,
+        "head_a_classes": 8,
+        "head_b_classes": 2,
+        "is_3digit_class": 1,
         "three_digit_class_index": 8,
-        "conf_threshold":          0.7,
-        "class_names":             ["10", "20", "30", "40", "50", "60", "70", "80", "100"]
+        "conf_threshold": 0.7,
+        "class_names": [
+          "10",
+          "20",
+          "30",
+          "40",
+          "50",
+          "60",
+          "70",
+          "80",
+          "100"
+        ]
       }
     }
   }

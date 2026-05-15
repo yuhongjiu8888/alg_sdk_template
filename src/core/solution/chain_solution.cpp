@@ -96,6 +96,14 @@ void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
             dst->attributes = std::move(src.attributes);
             dst->field_mask |= ALG_FIELD_ATTRIBUTES;
             break;
+        case StageOutputKind::kKeypointsInto:
+            dst->keypoints = std::move(src.keypoints);
+            dst->field_mask |= ALG_FIELD_KEYPOINTS;
+            break;
+        case StageOutputKind::kMaskInto:
+            dst->mask = std::move(src.mask);
+            dst->field_mask |= ALG_FIELD_MASK;
+            break;
         case StageOutputKind::kClassifyInto:
             /* 分类器：用 sub 的 label 覆盖 src，把 sub.box.score 当分类置信度乘到
              * src.box.score（detector_score × classifier_conf = 联合置信度）；

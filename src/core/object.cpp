@@ -28,9 +28,6 @@ inline void CopyBox(const AlgBox& src, AlgBox* dst) {
     dst->score = src.score;
 }
 
-/* JSON 里 class_names 顺序约定 →  enum 编号对照（详见 alg_types.h）。 */
-constexpr int kSpeedLimitKmh[10] = {0, 10, 20, 30, 40, 50, 60, 70, 80, 100};
-
 }  // namespace
 
 int FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
@@ -62,8 +59,8 @@ int FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
         }
     }
 
-    /* 第二遍：填强类型字段。label 保持 JSON 里 class_names 的下标（0-based），
-     * 映射到 enum 时统一 +1（0 留给 INVALID）。 */
+    /* 第二遍：填强类型字段。value 由后处理器在 Configure 时从
+     * class_names 推导，此处直接读取，不再硬编码映射表。 */
     int ti = 0, si = 0;
     for (const auto& o : objs) {
         if (!o.has_box() || !o.has_attributes()) continue;
@@ -73,23 +70,13 @@ int FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
         if (cat->value_str == "traffic_light") {
             AlgTrafficLight& dst = result->traffic_lights[ti++];
             CopyBox(o.box, &dst.box);
-            if (o.label >= 0 && o.label <= 3) {
-                dst.color = static_cast<AlgTrafficLightColor>(o.label + 1);
-            } else {
-                dst.color = TLC_INVALID;
-                ALG_LOGW("traffic_light: label=%d 越界 (期望 0..3)", o.label);
-            }
+            dst.color = (o.value >= TLC_RED && o.value <= TLC_OFF)
+                        ? static_cast<AlgTrafficLightColor>(o.value) : TLC_INVALID;
         } else if (cat->value_str == "speed_limit") {
             AlgSpeedLimit& dst = result->speed_limits[si++];
             CopyBox(o.box, &dst.box);
-            if (o.label >= 0 && o.label <= 8) {
-                dst.value     = static_cast<AlgSpeedLimitValue>(o.label + 1);
-                dst.value_kmh = kSpeedLimitKmh[o.label + 1];
-            } else {
-                dst.value     = SLV_INVALID;
-                dst.value_kmh = 0;
-                ALG_LOGW("speed_limit: label=%d 越界 (期望 0..8)", o.label);
-            }
+            dst.value = (o.value >= SLV_10 && o.value <= SLV_120)
+                        ? static_cast<AlgSpeedLimitValue>(o.value) : SLV_INVALID;
         }
     }
 

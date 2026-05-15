@@ -149,6 +149,7 @@ Status DualheadClassifierPostprocessor::Apply(const IInferer& inferer,
     o.label     = cls_id;
     o.box.score = joint_conf;
     o.box.xmin = o.box.ymin = o.box.xmax = o.box.ymax = 0;  /* ROI 内坐标，ChainSolution 不会用 */
+    o.value     = cls_id + 1;  /* enum: 0=INVALID, 1=第一个类, ... */
 
     Attribute attr;
     attr.name        = "class";

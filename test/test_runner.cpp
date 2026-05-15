@@ -33,6 +33,14 @@ const char* TLCName(AlgTrafficLightColor c) {
     }
 }
 
+int SLKmh(AlgSpeedLimitValue v) {
+    if (v >= SLV_10 && v <= SLV_80)  return static_cast<int>(v) * 10;
+    if (v == SLV_100) return 100;
+    if (v == SLV_110) return 110;
+    if (v == SLV_120) return 120;
+    return 0;
+}
+
 cv::Scalar TLCColor(AlgTrafficLightColor c) {
     switch (c) {
         case TLC_RED:    return cv::Scalar(  0,   0, 255);
@@ -61,7 +69,7 @@ void DrawResult(cv::Mat& img, const AlgResult& r) {
     }
     for (int i = 0; i < r.speed_limit_count; ++i) {
         const AlgSpeedLimit& s = r.speed_limits[i];
-        std::snprintf(buf, sizeof(buf), "SL.%d %.2f", s.value_kmh, s.box.score);
+        std::snprintf(buf, sizeof(buf), "SL.%d %.2f", SLKmh(s.value), s.box.score);
         DrawBoxLabel(img, s.box, buf, cv::Scalar(255, 0, 0));
     }
 }
@@ -123,7 +131,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < r.speed_limit_count; ++i) {
         const AlgSpeedLimit& sl = r.speed_limits[i];
         std::printf("  SL[%d] %d km/h score=%.3f  box=(%d,%d)-(%d,%d)\n",
-                    i, sl.value_kmh, sl.box.score,
+                    i, SLKmh(sl.value), sl.box.score,
                     sl.box.xmin, sl.box.ymin, sl.box.xmax, sl.box.ymax);
     }
 

@@ -133,7 +133,9 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
             return 1;
         };
         if (!parse_into("attributes_into", StageOutputKind::kFillAttributes) &&
-            !parse_into("classify_into",   StageOutputKind::kClassifyInto)) {
+            !parse_into("classify_into",   StageOutputKind::kClassifyInto) &&
+            !parse_into("keypoints_into",  StageOutputKind::kKeypointsInto) &&
+            !parse_into("mask_into",       StageOutputKind::kMaskInto)) {
             SetErr(err, "stage.produces unrecognized: " + produces);
             return false;
         }

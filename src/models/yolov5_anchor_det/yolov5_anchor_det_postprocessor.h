@@ -18,6 +18,8 @@
  * JSON 参数：
  *   { "type": "yolov5_anchor_det",
  *     "num_classes":    1,
+ *     "bbox_channels":  4,                         // 可选，默认 4；bbox 通道数
+ *     "obj_channels":   1,                         // 可选，默认 1；objectness 通道数
  *     "stride":         8,
  *     "anchor":         [36, 36],
  *     "conf_threshold": 0.25,
@@ -45,6 +47,9 @@ class Yolov5AnchorDetPostprocessor : public IPostprocessor {
 
   private:
     int   num_classes_    = 1;
+    int   bbox_channels_  = 4;
+    int   obj_channels_   = 1;
+    int   cls_offset_     = 5;    /* bbox_channels_ + obj_channels_ */
     int   stride_         = 8;
     float anchor_w_       = 36.0f;
     float anchor_h_       = 36.0f;

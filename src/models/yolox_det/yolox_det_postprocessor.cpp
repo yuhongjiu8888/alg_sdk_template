@@ -107,18 +107,18 @@ inline int FlatIndex(const LevelView& v, int c, int y, int x) {
     return (y * v.W + x) * v.channels + c;
 }
 
-void DecodeLevel(const LevelView& v, int num_classes, float obj_prefilter,
-                 float score_thresh, std::vector<Proposal>* out) {
+void DecodeLevel(const LevelView& v, int num_classes, int obj_offset, int cls_offset,
+                 float obj_prefilter, float score_thresh, std::vector<Proposal>* out) {
     const float stride = static_cast<float>(v.stride);
     for (int y = 0; y < v.H; ++y) {
         for (int x = 0; x < v.W; ++x) {
-            float obj = Sigmoid(ReadElem(*v.t, FlatIndex(v, 4, y, x)));
+            float obj = Sigmoid(ReadElem(*v.t, FlatIndex(v, obj_offset, y, x)));
             if (obj < obj_prefilter) continue;
 
             float best_cls = -1.f;
             int   best_idx = 0;
             for (int c = 0; c < num_classes; ++c) {
-                float s = Sigmoid(ReadElem(*v.t, FlatIndex(v, 5 + c, y, x)));
+                float s = Sigmoid(ReadElem(*v.t, FlatIndex(v, cls_offset + c, y, x)));
                 if (s > best_cls) { best_cls = s; best_idx = c; }
             }
             float score = obj * best_cls;
@@ -151,6 +151,8 @@ void DecodeLevel(const LevelView& v, int num_classes, float obj_prefilter,
 
 Status YoloxDetPostprocessor::Configure(const IInferer& inferer, const Json::Value& params) {
     num_classes_    = params.get("num_classes", 1).asInt();
+    bbox_channels_  = params.get("bbox_channels", 4).asInt();
+    obj_channels_   = params.get("obj_channels", 1).asInt();
     conf_threshold_ = params.get("conf_threshold", 0.4f).asFloat();
     nms_threshold_  = params.get("nms_threshold", 0.5f).asFloat();
     max_det_        = params.get("max_det", 100).asInt();
@@ -162,11 +164,22 @@ Status YoloxDetPostprocessor::Configure(const IInferer& inferer, const Json::Val
             strides_.push_back(params["strides"][i].asInt());
     }
     class_names_.clear();
+    class_values_.clear();
     if (params.isMember("class_names") && params["class_names"].isArray()) {
         for (Json::ArrayIndex i = 0; i < params["class_names"].size(); ++i)
             class_names_.push_back(params["class_names"][i].asString());
     }
     category_ = params.get("category", "").asString();
+    /* traffic_light 类别：从 class_names 推导颜色 enum 值 */
+    if (category_ == "traffic_light") {
+        for (const auto& name : class_names_) {
+            if (name == "red" || name == "red_light")         class_values_.push_back(1);
+            else if (name == "yellow" || name == "yellow_light") class_values_.push_back(2);
+            else if (name == "green" || name == "green_light")   class_values_.push_back(3);
+            else if (name == "off" || name == "off_light")       class_values_.push_back(4);
+            else                                                  class_values_.push_back(0);
+        }
+    }
     if (strides_.empty()) {
         ALG_LOGE("yolox_det: strides empty");
         return ALG_E_POSTPROCESS;
@@ -175,6 +188,15 @@ Status YoloxDetPostprocessor::Configure(const IInferer& inferer, const Json::Val
         ALG_LOGE("yolox_det: num_classes must be > 0 (got %d)", num_classes_);
         return ALG_E_POSTPROCESS;
     }
+    if (bbox_channels_ <= 0) {
+        ALG_LOGE("yolox_det: bbox_channels must be > 0 (got %d)", bbox_channels_);
+        return ALG_E_POSTPROCESS;
+    }
+    if (obj_channels_ < 0) {
+        ALG_LOGE("yolox_det: obj_channels must be >= 0 (got %d)", obj_channels_);
+        return ALG_E_POSTPROCESS;
+    }
+    cls_offset_ = bbox_channels_ + obj_channels_;
     if (inferer.NumOutputs() < static_cast<int>(strides_.size())) {
         ALG_LOGE("yolox_det: need %zu outputs, got %d",
                  strides_.size(), inferer.NumOutputs());
@@ -190,7 +212,7 @@ Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSta
     if (!out) return ALG_E_INVALID_ARG;
     out->clear();
 
-    const int channels = 4 + 1 + num_classes_;
+    const int channels = cls_offset_ + num_classes_;
     props_.clear();
     if (props_.capacity() < 256) props_.reserve(256);
 
@@ -200,7 +222,8 @@ Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSta
         if (BuildLevelView(inferer.OutputView(static_cast<int>(i)),
                            strides_[i], channels, &v) != 0)
             return ALG_E_POSTPROCESS;
-        DecodeLevel(v, num_classes_, obj_prefilter_, conf_threshold_, &props_);
+        DecodeLevel(v, num_classes_, bbox_channels_, cls_offset_,
+                    obj_prefilter_, conf_threshold_, &props_);
     }
 
     Nms(props_, nms_threshold_, &nms_scratch_);
@@ -220,6 +243,8 @@ Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSta
         o.field_mask = ALG_FIELD_BOX;
         o.box.score = p.score;
         o.label     = p.label;
+        if (p.label >= 0 && p.label < static_cast<int>(class_values_.size()))
+            o.value = class_values_[p.label];
         int x1 = static_cast<int>((p.x1 - state.pad_left) * inv_s + 0.5f);
         int y1 = static_cast<int>((p.y1 - state.pad_top)  * inv_s + 0.5f);
         int x2 = static_cast<int>((p.x2 - state.pad_left) * inv_s + 0.5f);

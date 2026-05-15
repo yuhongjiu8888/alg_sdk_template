@@ -37,6 +37,8 @@
         "type": "yolox_det",
         "category": "traffic_light",
         "num_classes": 4,
+        "bbox_channels": 4,
+        "obj_channels": 1,
         "strides": [
           8,
           16,

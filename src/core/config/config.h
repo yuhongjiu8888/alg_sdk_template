@@ -41,6 +41,8 @@ enum class StageOutputKind {
                           src.box.score 乘以 sub.box.score（联合置信度）；
                           子模型若返回空（典型：joint_conf 低于阈值）则丢弃 src 框。
                           典型用法：detector → ROI classifier 二阶段，把识别置信度低的框过滤掉。 */
+    kKeypointsInto,    /* 关键点回归：把 sub.keypoints 写回 src.keypoints（内部预留） */
+    kMaskInto,         /* 分割掩码：把 sub.mask 写回 src.mask（内部预留） */
 };
 
 struct CropConfig {

@@ -108,12 +108,13 @@ typedef struct AlgTrafficLight_ {
 /*                   限速牌识别 (speed limit sign)                  */
 /* ============================================================== */
 
-/* 限速牌类别。value_kmh 为对应实际数值（km/h），便于直接打印 / 上报。
+/* 限速牌类别。枚举编号即隐含 km/h 值（SLV_10=1→10km/h, ..., SLV_120=11→120km/h），
+ * 应用可直接用 value 做 switch 或查表。
  *
  * 枚举值 = JSON 中 cls_cfg.postprocess.class_names[label] 的下标 + 1，0 留作 INVALID。
  * 顺序约定：class_names 必须按
  *     ["10","20","30","40","50","60","70","80","100"]
- * 排列，否则 value 与 value_kmh 会错位。 */
+ * 排列，否则 value 会错位。 */
 typedef enum AlgSpeedLimitValue_ {
     SLV_INVALID = 0,    /* 二阶段分类置信度 < 阈值的框已由 SDK 内部 drop，正常不出现 */
     SLV_10      = 1,
@@ -125,13 +126,14 @@ typedef enum AlgSpeedLimitValue_ {
     SLV_70      = 7,
     SLV_80      = 8,
     SLV_100     = 9,
+    SLV_110     = 10,
+    SLV_120     = 11,
 } AlgSpeedLimitValue;
 
 /* 单个限速牌识别结果。 */
 typedef struct AlgSpeedLimit_ {
     AlgBox              box;          /* 原图坐标系下的框，box.score = det × cls 联合置信度 */
-    AlgSpeedLimitValue  value;        /* 限速值类别（enum） */
-    int                 value_kmh;    /* 限速值 km/h（10/20/.../100），SLV_INVALID 时为 0 */
+    AlgSpeedLimitValue  value;        /* 限速值类别（enum），编号即隐含 km/h */
 } AlgSpeedLimit;
 
 /* ============================================================== */
