@@ -109,6 +109,7 @@ void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
              * src.box.score（detector_score × classifier_conf = 联合置信度）；
              * attributes 全量并过来给 C API 透出。 */
             dst->label     = src.label;
+            dst->value     = src.value;
             dst->box.score = dst->box.score * src.box.score;
             if (!src.attributes.empty()) {
                 dst->attributes = std::move(src.attributes);

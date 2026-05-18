@@ -28,7 +28,7 @@
   },
   "models": {
     "tld_cfg": {
-      "model_path": "model/traffic_light.mnn",
+      "model_path": "../resources/model/traffic_light.mnn",
       "preprocess": {
         "input_size": [
           416,
@@ -73,7 +73,7 @@
       }
     },
     "ssn_cfg": {
-      "model_path": "model/speedsignnet.mnn",
+      "model_path": "../resources/model/speed_limit_dectect.mnn",
       "preprocess": {
         "input_size": [
           576,
@@ -111,7 +111,7 @@
       }
     },
     "cls_cfg": {
-      "model_path": "model/classifier.mnn",
+      "model_path": "../resources/model/speed_limit_classifier.mnn",
       "preprocess": {
         "input_size": [
           64,
@@ -135,8 +135,8 @@
       "postprocess": {
         "type": "dualhead_classifier",
         "category": "speed_limit",
-        "head_a_index": 0,
-        "head_b_index": 1,
+        "head_a_index": 1,
+        "head_b_index": 0,
         "head_a_classes": 8,
         "head_b_classes": 2,
         "is_3digit_class": 1,
