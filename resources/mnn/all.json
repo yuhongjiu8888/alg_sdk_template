@@ -6,12 +6,24 @@
         "name": "tld",
         "model": "tld_cfg",
         "input": "image",
+        "roi": {
+          "x": 600,
+          "y": 0,
+          "width": 900,
+          "height": 400
+        },
         "produces": "objects"
       },
       {
         "name": "ssn_det",
         "model": "ssn_cfg",
         "input": "image",
+        "roi": {
+          "x": 1240,
+          "y": 0,
+          "width": 280,
+          "height": 280
+        },
         "produces": "objects"
       },
       {

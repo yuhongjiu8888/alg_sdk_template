@@ -119,6 +119,14 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
         s->crop.expand_ratio = v["crop"].get("expand_ratio", 1.0f).asFloat();
         s->crop.square       = v["crop"].get("square", false).asBool();
     }
+    if (v.isMember("roi") && v["roi"].isObject()) {
+        const Json::Value& r = v["roi"];
+        s->roi.enabled = true;
+        s->roi.x      = r.get("x", 0).asInt();
+        s->roi.y      = r.get("y", 0).asInt();
+        s->roi.width  = r.get("width", 0).asInt();
+        s->roi.height = r.get("height", 0).asInt();
+    }
 
     std::string produces = v.get("produces", "objects").asString();
     if (produces == "objects") {
@@ -200,6 +208,10 @@ AlgStatus LoadSolutionConfig(const std::string& path, SolutionConfig* out, std::
             !seen_stage_names.count(s.input_stage)) {
             SetErr(err_msg, "stage '" + s.name + "' inputs from unknown earlier stage '" +
                                 s.input_stage + "'");
+            return ALG_E_CONFIG;
+        }
+        if (s.roi.enabled && s.input_kind != StageInputKind::kImage) {
+            SetErr(err_msg, "stage '" + s.name + "': roi is only valid for input='image'");
             return ALG_E_CONFIG;
         }
         if (s.output_kind != StageOutputKind::kCreateObjects &&

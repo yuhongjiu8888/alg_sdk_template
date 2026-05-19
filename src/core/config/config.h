@@ -50,12 +50,22 @@ struct CropConfig {
     bool  square = false;       /* 是否扩为正方形 */
 };
 
+/* 固定 ROI 区域：在原图上按像素坐标裁剪后再送模型检测。 */
+struct RoiConfig {
+    bool enabled = false;
+    int x = 0;       /* 左上角 x（像素） */
+    int y = 0;       /* 左上角 y（像素） */
+    int width = 0;   /* 裁剪宽度 */
+    int height = 0;  /* 裁剪高度 */
+};
+
 struct StageConfig {
     std::string     name;
     std::string     model_ref;       /* 引用 ModelInstanceConfig.name */
     StageInputKind  input_kind;
     std::string     input_stage;     /* input_kind == kObjectsFromStage 时引用的 stage */
     CropConfig      crop;
+    RoiConfig       roi;
     StageOutputKind output_kind;
     std::string     output_target;   /* output_kind != kCreateObjects 时引用的 stage */
 };

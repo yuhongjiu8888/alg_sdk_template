@@ -63,10 +63,11 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
     }
     stage_produces_.assign(stages_.size(), {});
 
-    /* 3) 提前判定是否需要解码原图（有任何 ROI 子模型）。 */
+    /* 3) 提前判定是否需要解码原图（有 ROI 子模型或固定 ROI 裁剪）。 */
     needs_decoded_bgr_ = false;
     for (const auto& rs : stages_) {
-        if (rs.cfg.input_kind == StageInputKind::kObjectsFromStage) {
+        if (rs.cfg.input_kind == StageInputKind::kObjectsFromStage ||
+            (rs.cfg.input_kind == StageInputKind::kImage && rs.cfg.roi.enabled)) {
             needs_decoded_bgr_ = true;
             break;
         }
@@ -145,6 +146,35 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
 
     if (rs.cfg.input_kind == StageInputKind::kImage) {
         ResetStageObjects(out_bucket);
+
+        if (rs.cfg.roi.enabled) {
+            /* 固定 ROI 裁剪：在原图上裁出指定区域再送模型。 */
+            if (decoded_bgr.empty()) {
+                ALG_LOGE("ChainSolution: stage '%s' needs roi but decoded_bgr is empty",
+                         rs.cfg.name.c_str());
+                return ALG_E_PREPROCESS;
+            }
+            cv::Mat roi_holder;
+            AlgImage cropped;
+            CropTransform xf;
+            AlgBox roi_box;
+            roi_box.xmin = rs.cfg.roi.x;
+            roi_box.ymin = rs.cfg.roi.y;
+            roi_box.xmax = rs.cfg.roi.x + rs.cfg.roi.width;
+            roi_box.ymax = rs.cfg.roi.y + rs.cfg.roi.height;
+            CropConfig crop_cfg;  /* expand_ratio=1, square=false：不做扩展 */
+            if (!CropFromDecoded(decoded_bgr, roi_box, crop_cfg,
+                                 &roi_holder, &cropped, &xf)) {
+                ALG_LOGE("ChainSolution: stage '%s' roi crop failed", rs.cfg.name.c_str());
+                return ALG_E_PREPROCESS;
+            }
+            Status r = mi->Run(cropped, &out_bucket);
+            if (r != ALG_OK) return r;
+            /* 后处理输出的是裁剪图坐标，映射回原图。 */
+            MapBackToOriginal(&out_bucket, xf);
+            return ALG_OK;
+        }
+
         return mi->Run(image, &out_bucket);
     }
 
