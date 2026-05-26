@@ -128,6 +128,7 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
         s->roi.width  = r.get("width", 0).asInt();
         s->roi.height = r.get("height", 0).asInt();
     }
+    s->score_threshold = v.get("score_threshold", 0.0f).asFloat();
 
     std::string produces = v.get("produces", "objects").asString();
     if (produces == "objects") {

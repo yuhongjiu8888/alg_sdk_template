@@ -214,6 +214,11 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
                 src.drop = true;
             } else {
                 MergeFields(&src, std::move(sub.front()), rs.cfg.output_kind);
+                /* 联合分阈值：MergeFields 后 src.box.score = det×cls（最终对外分数）。
+                 * 检测/分类各自的 conf_threshold 只卡各自分数，两头都勉强过线时乘积仍可能偏低，
+                 * 这里按联合分兜底过滤（0 = 关闭）。 */
+                if (rs.cfg.score_threshold > 0.0f && src.box.score < rs.cfg.score_threshold)
+                    src.drop = true;
             }
         } else {
             if (!sub.empty())

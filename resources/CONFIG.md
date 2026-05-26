@@ -32,6 +32,7 @@ Both keys are required.
 | `crop.square` | bool | no | `false` | Expand crop to square |
 | `crop.pad_value` | int | no | `-1` | `>=0`：扩边框越界处用该灰度值填充、保正方不形变（等价训练端 `cv2.warpAffine(borderValue=…)`）；`-1`：旧行为，clamp 到图内（越界时 ROI 非正方，下游 resize 会形变）。逐位 OCR 等对裁剪几何敏感的分类器应设为训练裁剪用的灰边值（限速牌为 `114`） |
 | `produces` | string | no | `"objects"` | Output routing (see below) |
+| `score_threshold` | float | no | `0.0` | 仅 `classify_into:`：合并后联合分 `det_score × cls_conf`（最终对外 `box.score`）低于此值则 drop。检测/分类各自的 `conf_threshold` 只卡各自分数，两头都勉强过线时乘积仍可能偏低，此项按联合分兜底过滤。`0` = 关闭 |
 
 `produces` 可选值：
 - `"objects"` -- 产出新的顶层检测框

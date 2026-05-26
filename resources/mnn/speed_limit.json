@@ -17,6 +17,7 @@
           "square": true,
           "pad_value": 114
         },
+        "score_threshold": 0.5,
         "produces": "classify_into:detector"
       }
     ]

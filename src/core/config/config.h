@@ -70,6 +70,8 @@ struct StageConfig {
     RoiConfig       roi;
     StageOutputKind output_kind;
     std::string     output_target;   /* output_kind != kCreateObjects 时引用的 stage */
+    float           score_threshold = 0.0f;  /* classify_into：合并后联合分(det×cls)低于此值则 drop；
+                                                 0（默认）= 不过滤。卡的是各阶段阈值卡不到的两阶段乘积。 */
 };
 
 /* 整份 JSON 配置。 */
