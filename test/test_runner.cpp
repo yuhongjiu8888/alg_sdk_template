@@ -34,10 +34,9 @@ const char* TLCName(AlgTrafficLightColor c) {
 }
 
 int SLKmh(AlgSpeedLimitValue v) {
-    if (v >= SLV_10 && v <= SLV_80)  return static_cast<int>(v) * 10;
-    if (v == SLV_100) return 100;
-    if (v == SLV_110) return 110;
-    if (v == SLV_120) return 120;
+    /* 新枚举按 km/h÷10 连续编号（SLV_10=1 … SLV_90=9 … SLV_120=12），value×10 即 km/h。
+     * 旧实现漏了 SLV_90，落到 return 0 → 90 显示成 0。 */
+    if (v >= SLV_10 && v <= SLV_120) return static_cast<int>(v) * 10;
     return 0;
 }
 
