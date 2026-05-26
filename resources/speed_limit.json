@@ -45,7 +45,7 @@
           36,
           36
         ],
-        "conf_threshold": 0.25,
+        "conf_threshold": 0.6,
         "nms_threshold": 0.45,
         "max_det": 64,
         "obj_prefilter": 0.05
@@ -79,7 +79,7 @@
           1,
           2
         ],
-        "conf_threshold": 0.5,
+        "conf_threshold": 0.6,
         "class_names": [
           "10",
           "20",
