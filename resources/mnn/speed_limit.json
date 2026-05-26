@@ -22,7 +22,7 @@
   },
   "models": {
     "ssn_cfg": {
-      "model_path": "model/speedsignnet.mnn",
+      "model_path": "../resources/model/speed_limit_dectect.mnn",
       "preprocess": {
         "input_size": [
           576,
@@ -60,7 +60,7 @@
       }
     },
     "cls_cfg": {
-      "model_path": "model/classifier.mnn",
+      "model_path": "../resources/model/speed_limit_classifier.mnn",
       "preprocess": {
         "input_size": [
           64,
