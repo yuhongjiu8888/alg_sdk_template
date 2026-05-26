@@ -77,16 +77,19 @@ set(ALG_CORE_SRCS
 # -----------------------------------------------------------------------------
 # 模型（按类型注册的后处理）—— 加新模型在此处追加，无需改其它文件
 #
-# 当前分支聚焦：红绿灯检测 + 巴西限速牌识别
+# 当前分支聚焦：红绿灯检测 + 巴西限速牌识别（v3.4 OCR）
 #   - yolox_det           : mmyolo YOLOXHead 多尺度（红绿灯 4 类，stride 8/16/32）
 #   - yolov5_anchor_det   : 单尺度 anchor 解码（SpeedSignNet 1 类 stride=8 anchor=(36,36)）
-#   - dualhead_classifier : 双头数字识别 + 装配 + 0.7 置信度过滤（限速牌 9 类）
+#   - ocr_classifier      : 三头逐位数字 OCR + class_names 驱动解码 + 置信度过滤（限速牌 12 类）
+#   - dualhead_classifier : 旧双头数字识别（限速牌 9 类）；保留向后兼容，新配置走 ocr_classifier
 # -----------------------------------------------------------------------------
 set(ALG_MODEL_SRCS
     src/models/yolox_det/yolox_det_postprocessor.cpp
     src/models/yolox_det/yolox_det_register.cpp
     src/models/yolov5_anchor_det/yolov5_anchor_det_postprocessor.cpp
     src/models/yolov5_anchor_det/yolov5_anchor_det_register.cpp
+    src/models/ocr_classifier/ocr_classifier_postprocessor.cpp
+    src/models/ocr_classifier/ocr_classifier_register.cpp
     src/models/dualhead_classifier/dualhead_classifier_postprocessor.cpp
     src/models/dualhead_classifier/dualhead_classifier_register.cpp
 )

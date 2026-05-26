@@ -5,9 +5,9 @@
 
 - **红绿灯检测 (`traffic_light.json`)** — 单阶段 YOLOX，416×416 RGB，4 类
   red/yellow/green/off；对应训练侧 [`alg_traffic_light_detection`](../alg_traffic_light_detection/)。
-- **巴西限速牌识别 (`speed_limit.json`)** — 二阶段 SpeedSignNet 检测 + 双头数字识别
-  装配 9 类 10/20/.../80/100；对应训练侧 [`alg_speed_limit`](../alg_speed_limit/)。
-  分类置信度 < 0.7 的框由 `classify_into:` 语义直接 drop。
+- **巴西限速牌识别 (`speed_limit.json`)** — 二阶段 SpeedSignNet 检测 + OCR 三头逐位识别
+  12 类 10/20/.../80/90/100/110/120；对应训练侧 [`alg_speed_limit`](../alg_speed_limit/) v3.4。
+  字符组合非法或分类置信度低于阈值的框由 `classify_into:` 语义直接 drop。
 - **二合一并行 (`all.json`)** — 上面两个 solution 在同一份配置里跑；ChainSolution 把
   多个 `produces:"objects"` 的 stage 在最终聚合处取并集，两个检测器互不依赖。
 
@@ -38,7 +38,7 @@ typedef struct AlgResult_ {
 include/                       公共 C ABI（alg_types.h, alg_interface.h）
 resources/
   traffic_light.json           红绿灯检测：单阶段 YOLOX
-  speed_limit.json             限速牌：检测 + 双头分类（带 classify_into 过滤）
+  speed_limit.json             限速牌：检测 + OCR 三头识别（带 classify_into 过滤）
   all.json                     上述两条 solution 合并的并行版本（一份配置跑两件事）
 
 src/
@@ -60,7 +60,8 @@ src/
   models/                      每种模型类型一个目录
     yolox_det/                 mmyolo YOLOXHead 多尺度（红绿灯）
     yolov5_anchor_det/         单尺度 anchor + sigmoid 解码（SpeedSignNet）
-    dualhead_classifier/       双头数字识别 + 装配 + 0.7 置信度过滤
+    ocr_classifier/            三头逐位数字 OCR + class_names 驱动解码 + 置信度过滤（12 类）
+    dualhead_classifier/       旧双头数字识别（9 类，保留向后兼容）
 
   backend/                     每种芯片一个目录
     xmm/                       XMM（xmedia_cl + MMZ）
@@ -120,7 +121,7 @@ AlgDestroy(h);
 }
 ```
 
-### 限速牌（检测 + 双头分类，带 classify_into 过滤）
+### 限速牌（检测 + OCR 三头识别，带 classify_into 过滤）
 
 ```json
 {
@@ -145,11 +146,11 @@ AlgDestroy(h);
       "model_path": "/data/classifier.xmm",
       "preprocess":  { "input_size": [64, 64], "color": "RGB",
                        "resize": "stretch" },
-      "postprocess": { "type": "dualhead_classifier",
-                       "head_a_classes": 8, "head_b_classes": 2,
-                       "is_3digit_class": 1, "three_digit_class_index": 8,
-                       "conf_threshold": 0.7,
-                       "class_names": ["10","20","30","40","50","60","70","80","100"] }
+      "postprocess": { "type": "ocr_classifier", "category": "speed_limit",
+                       "num_positions": 3, "num_chars": 11, "blank_index": 10,
+                       "head_names": ["logits_h","logits_t","logits_u"],
+                       "head_indices": [0,1,2], "conf_threshold": 0.5,
+                       "class_names": ["10","20","30","40","50","60","70","80","100","90","110","120"] }
     }
   }
 }
@@ -184,9 +185,9 @@ AlgDestroy(h);
 
 ## 训练侧契约对照
 
-| 项                  | 红绿灯 (yolox_det)              | 限速牌 (yolov5_anchor_det + dualhead_classifier) |
+| 项                  | 红绿灯 (yolox_det)              | 限速牌 (yolov5_anchor_det + ocr_classifier)      |
 |---------------------|---------------------------------|---------------------------------------------------|
-| 训练框架            | mmyolo 0.6.0                    | 自研（YOLOv5 风格 head + 双头分类）               |
+| 训练框架            | mmyolo 0.6.0                    | 自研（YOLOv5 风格 head + OCR 三头逐位识别）       |
 | 输入分辨率          | 416×416 RGB                     | 320×576 RGB（检测）/ 64×64 RGB（分类）            |
 | letterbox pad_value | 114                             | 114                                               |
 | 归一化              | NPU 入口 scale=255 内部完成      | (x-mean)/std 烘进量化模型                         |
@@ -195,7 +196,7 @@ AlgDestroy(h);
 | 解码 wh             | `exp(w_log) * stride`           | `(σ(t)*2)^2 * anchor`                             |
 | score 公式          | `σ(obj) * σ(max(cls))`          | `σ(obj) * σ(cls)`                                 |
 | NMS                 | class-aware                     | class-aware                                       |
-| 默认阈值            | conf 0.4 / iou 0.5              | conf 0.25 / iou 0.45（检测）+ joint 0.7（分类）    |
+| 默认阈值            | conf 0.4 / iou 0.5              | conf 0.25 / iou 0.45（检测）+ min(三头) 0.5（分类）|
 
 ## 如何加新模型 / 换芯片
 

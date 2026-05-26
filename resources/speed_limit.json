@@ -62,15 +62,22 @@
         "pad_value": 0
       },
       "postprocess": {
-        "type": "dualhead_classifier",
+        "type": "ocr_classifier",
         "category": "speed_limit",
-        "head_a_index": 0,
-        "head_b_index": 1,
-        "head_a_classes": 8,
-        "head_b_classes": 2,
-        "is_3digit_class": 1,
-        "three_digit_class_index": 8,
-        "conf_threshold": 0.7,
+        "num_positions": 3,
+        "num_chars": 11,
+        "blank_index": 10,
+        "head_names": [
+          "logits_h",
+          "logits_t",
+          "logits_u"
+        ],
+        "head_indices": [
+          0,
+          1,
+          2
+        ],
+        "conf_threshold": 0.5,
         "class_names": [
           "10",
           "20",
@@ -80,7 +87,10 @@
           "60",
           "70",
           "80",
-          "100"
+          "100",
+          "90",
+          "110",
+          "120"
         ]
       }
     }

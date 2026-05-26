@@ -120,7 +120,36 @@ channel 布局：`[bbox_channels..., obj_channels..., num_classes...]`
 | `max_det` | int | `64` | NMS 后最大保留数 |
 | `obj_prefilter` | float | `0.05` | objectness 早剪枝阈值 |
 
-### type: "dualhead_classifier" -- 双头 softmax 分类器
+### type: "ocr_classifier" -- 定长多位字符 OCR 分类器（限速牌 v3.4，当前方案）
+
+逐位读数字的 OCR 网络后处理：期望 P 个输出 tensor（P = 位数，默认 3 = 百/十/个位），
+每个形状 `(1, num_chars)`（默认 11 = `'0'..'9'` + blank）。对接训练侧
+`alg_speed_limit/src/classifier_src/classifier.py` 的 SpeedSignOCR 三头。
+
+解码完全由 `class_names` 推导（**不硬编码**字符表）：每个类名按数字串右对齐拆成 P 位字符
+（缺位补 blank），如 `"90"→(blank,9,0)`、`"120"→(1,2,0)`，据此构建解码 LUT；推理时三头各
+`softmax + argmax` 得 `(h,t,u)`，查 LUT 得 `cls_id`，非法组合（含个位非 `'0'`）→ 拒识。
+联合置信度 `cls_conf = min(三头 max-prob)`，`< conf_threshold` → 丢弃（开放集兜底）。
+输出 Object 的 `value = 类名数值 ÷ 10`（即 `AlgSpeedLimitValue`），与 `class_names` 排列顺序无关。
+
+> 三头同形状 `(1,11)`，无法靠 size 区分。后处理**优先按输出张量 name 匹配**（`head_names`），
+> name 不可用（如 XMM 输出名为空）时退回 `head_indices`。MNN 会按张量名保留输出，故
+> name 匹配可覆盖 MNN 输出顺序被打乱的情况。
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `num_positions` | int | 由 `class_names` 最长位数推导 | 位数 = 头数（高位→低位） |
+| `num_chars` | int | `11` | 每头类别数（`'0'..'9'` + blank） |
+| `blank_index` | int | `10` | 占位符在字符表中的下标 |
+| `head_names` | `[str]` | `[]` | 按名匹配各位对应的输出张量（高位→低位），推荐填 |
+| `head_indices` | `[int]` | `[0,1,..]` | name 不可用时的索引兜底（高位→低位） |
+| `conf_threshold` | float | `0.5` | `min(三头 prob)` 低于此值 → drop |
+| `class_names` | `[str]` | **必填** | 类名列表（限速字符串，解码 LUT 与 value 的唯一来源） |
+| `category` | string | `""` | 分类器类别标签（如 `"speed_limit"`） |
+
+### type: "dualhead_classifier" -- 双头 softmax 分类器（旧方案，保留向后兼容）
+
+> v3.4 起限速牌改用 `ocr_classifier`（支持 90/110/120）。本类型仍注册可用，仅作向后兼容。
 
 期望 2 个输出 tensor（head_a: 首位数字, head_b: 位数判断）。
 

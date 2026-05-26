@@ -7,7 +7,7 @@
 alg_sdk_template 是一个面向边缘端 CV 推理的 C++ SDK，当前支持两个业务模型：
 
 - **红绿灯检测** — 单阶段 YOLOX，416x416 RGB，4 类 (red/yellow/green/off)
-- **巴西限速牌识别** — 两阶段流水线：SpeedSignNet 检测 + 双头数字分类，9 类 (10~100 km/h)
+- **巴西限速牌识别** — 两阶段流水线：SpeedSignNet 检测 + OCR 三头逐位识别，12 类 (10~120 km/h)
 
 SDK 对外暴露 **强类型 C ABI**（6 个函数），内部通过 JSON 配置驱动整个推理流水线，切换模型/调参不需要重新编译 C++ 代码。
 
@@ -127,8 +127,8 @@ AlgRun(h, &image, &result)
   |
   +---> FillAlgResult(objs, result)           // Object[] -> 强类型 C 结构体
   |       按 category attribute 分桶:
-  |         "traffic_light" -> AlgTrafficLight[]  (label+1 -> enum)
-  |         "speed_limit"   -> AlgSpeedLimit[]    (label+1 -> enum, value_kmh)
+  |         "traffic_light" -> AlgTrafficLight[]  (Object.value -> color enum)
+  |         "speed_limit"   -> AlgSpeedLimit[]    (Object.value -> SLV enum, value×10=km/h)
   v
 result 返回给用户
 
@@ -167,7 +167,8 @@ ModelInstance::Run(image, &objects)
 |-----------------------|-------------------------------------------------------------|------------------------|
 | `yolox_det`           | `src/models/yolox_det/yolox_det_postprocessor.cpp`          | 红绿灯检测 (多尺度 YOLOX head) |
 | `yolov5_anchor_det`   | `src/models/yolov5_anchor_det/yolov5_anchor_det_postprocessor.cpp` | 限速牌检测 (anchor-based YOLOv5) |
-| `dualhead_classifier` | `src/models/dualhead_classifier/dualhead_classifier_postprocessor.cpp` | 限速数字分类 (双头 softmax) |
+| `ocr_classifier`      | `src/models/ocr_classifier/ocr_classifier_postprocessor.cpp` | 限速数字识别 (OCR 三头逐位 + class_names 解码，12 类) |
+| `dualhead_classifier` | `src/models/dualhead_classifier/dualhead_classifier_postprocessor.cpp` | 旧限速数字分类 (双头 softmax，9 类，保留向后兼容) |
 
 注册机制：编译期通过 `__attribute__((used))` 保证静态注册不被 `--gc-sections` 丢弃，运行期 `ModelInstance::Init` 通过 `PostprocessorRegistry::Create(cfg.post_type)` 按名字查找。
 
@@ -197,8 +198,8 @@ ChainSolution 编排
     v
 FillAlgResult()
     |  按 category attribute 分桶:
-    |    "traffic_light" -> AlgTrafficLight[]  (label+1 -> enum)
-    |    "speed_limit"   -> AlgSpeedLimit[]    (label+1 -> enum, value_kmh)
+    |    "traffic_light" -> AlgTrafficLight[]  (Object.value -> color enum)
+    |    "speed_limit"   -> AlgSpeedLimit[]    (Object.value -> SLV enum, value×10=km/h)
     v
 AlgResult (强类型 C 结构体, 用户直接访问)
 ```
@@ -280,9 +281,9 @@ AlgResult (强类型 C 结构体, 用户直接访问)
            +------------------+------------------+
            |                  |                  |
   +--------v-------+ +-------v--------+ +------v--------------+
-  | YoloxDet       | | Yolov5Anchor   | | DualheadClassifier  |
+  | YoloxDet       | | Yolov5Anchor   | | OcrClassifier       |
   | Postprocessor  | | DetPostprocessor| | Postprocessor       |
-  | (红绿灯)       | | (限速牌检测)    | | (限速数字分类)       |
+  | (红绿灯)       | | (限速牌检测)    | | (限速数字 OCR)       |
   +----------------+ +----------------+ +---------------------+
 
                      +------------------+
@@ -356,7 +357,8 @@ for (int i = 0; i < r.traffic_light_count; i++)
     printf("灯: %d, 置信度: %.2f\n", r.traffic_lights[i].color, r.traffic_lights[i].box.score);
 
 for (int i = 0; i < r.speed_limit_count; i++)
-    printf("限速: %d km/h, 置信度: %.2f\n", r.speed_limits[i].value_kmh, r.speed_limits[i].box.score);
+    // value 是 AlgSpeedLimitValue 枚举，value × 10 == km/h（SLV_60=6 → 60 km/h）
+    printf("限速: %d km/h, 置信度: %.2f\n", r.speed_limits[i].value * 10, r.speed_limits[i].box.score);
 
 // 5. 释放
 AlgFreeResult(&r);

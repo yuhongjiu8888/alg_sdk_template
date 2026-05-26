@@ -73,7 +73,7 @@ typedef struct AlgImage_ {
 /* 原图坐标系下的 2D 检测框。
  * score 含义：
  *   - 红绿灯：检测置信度
- *   - 限速牌：联合置信度 = 检测置信度 × 双头分类置信度
+ *   - 限速牌：联合置信度 = 检测置信度 × OCR 分类置信度
  * 应用统一只看这一个分数即可。 */
 typedef struct AlgBox_ {
     int   xmin, ymin, xmax, ymax;
@@ -108,15 +108,14 @@ typedef struct AlgTrafficLight_ {
 /*                   限速牌识别 (speed limit sign)                  */
 /* ============================================================== */
 
-/* 限速牌类别。枚举编号即隐含 km/h 值（SLV_10=1→10km/h, ..., SLV_120=11→120km/h），
- * 应用可直接用 value 做 switch 或查表。
+/* 限速牌类别。枚举编号即 km/h ÷ 10（SLV_10=1→10km/h, ..., SLV_120=12→120km/h），
+ * 限速值都是 10 的倍数，故 value × 10 == km/h，应用可直接换算或 switch / 查表。
  *
- * 枚举值 = JSON 中 cls_cfg.postprocess.class_names[label] 的下标 + 1，0 留作 INVALID。
- * 顺序约定：class_names 必须按
- *     ["10","20","30","40","50","60","70","80","100"]
- * 排列，否则 value 会错位。 */
+ * value 由后处理器从 cls_cfg.postprocess.class_names 推导（解析类名数值 ÷ 10），
+ * 不依赖 class_names 的排列顺序（v3.4 OCR 的 class_names 是"追加排序"而非数值序）。
+ * 0 留作 INVALID。 */
 typedef enum AlgSpeedLimitValue_ {
-    SLV_INVALID = 0,    /* 二阶段分类置信度 < 阈值的框已由 SDK 内部 drop，正常不出现 */
+    SLV_INVALID = 0,    /* 二阶段分类置信度 < 阈值 / 字符组合非法的框已由 SDK 内部 drop，正常不出现 */
     SLV_10      = 1,
     SLV_20      = 2,
     SLV_30      = 3,
@@ -125,9 +124,10 @@ typedef enum AlgSpeedLimitValue_ {
     SLV_60      = 6,
     SLV_70      = 7,
     SLV_80      = 8,
-    SLV_100     = 9,
-    SLV_110     = 10,
-    SLV_120     = 11,
+    SLV_90      = 9,
+    SLV_100     = 10,
+    SLV_110     = 11,
+    SLV_120     = 12,
 } AlgSpeedLimitValue;
 
 /* 单个限速牌识别结果。 */

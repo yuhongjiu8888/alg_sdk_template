@@ -62,7 +62,7 @@ include/                       公共 C ABI（应用方唯一依赖）
 
 resources/                     示例 JSON 业务配置（本分支落地模型）
   traffic_light.json           红绿灯：单阶段 YOLOX 4 类（416×416 RGB）
-  speed_limit.json             巴西限速牌：检测 + 双头分类（classify_into 过滤 < 0.7）
+  speed_limit.json             巴西限速牌：检测 + OCR 三头逐位识别（classify_into 过滤低置信）
 
 src/
   interface/                   C ABI → C++ 实现的胶水层
@@ -83,7 +83,8 @@ src/
   models/                      每种模型类型一个目录
     yolox_det/                 mmyolo YOLOXHead 多尺度（offset=0 grid，class-aware NMS）
     yolov5_anchor_det/         单尺度 anchor + sigmoid decode（SpeedSignNet）
-    dualhead_classifier/       双头数字识别 + 装配规则 + joint 置信度阈值过滤
+    ocr_classifier/            三头逐位数字 OCR + class_names 驱动解码 + 置信度过滤（限速牌 12 类）
+    dualhead_classifier/       旧双头数字识别（限速牌 9 类，保留向后兼容）
 
   backend/                     每种芯片一个目录
     backend_factory.h          MakeInferer() / BackendName() 入口（编译期绑定）
@@ -245,8 +246,8 @@ return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
 
 `FillAlgResult()` 在 C API 边界做一次翻译：
 - 按 `attributes["category"].value_str` 分桶到 `traffic_lights[]` / `speed_limits[]`
-- 内部 `Object.label`（JSON class_names 下标）+1 映射到强类型 enum（0 留给 INVALID）
-- 限速牌另外查表得到 `value_kmh`
+- 读取后处理器写入的 `Object.value`（业务 enum 编号，0 留给 INVALID）填强类型字段；
+  红绿灯取颜色 enum，限速牌取 `AlgSpeedLimitValue`（ocr_classifier 由 class_names 解析数值 ÷ 10 得出）
 - malloc 出来的两个数组由用户通过 `AlgFreeResult()` 一次释放
 
 ---
@@ -275,16 +276,17 @@ ChainSolution::Run(image, &objects)
         │          → objs = [box(label=0,score=det_conf), ...]
         │      state["detector"] = objs
         │
-        ├── stage "classifier" (SpeedSignClassifier, classify_into:detector):
+        ├── stage "classifier" (SpeedSignOCR, classify_into:detector):
         │      for each obj in state["detector"] (跳过 obj.drop):
         │          CropFromBox(image, obj.box, expand=1.5, square=true)
         │              → cropped_image + CropTransform xf
         │          ModelInstance::Run(cropped_image, &sub)
-        │              (双头 softmax + 装配)
-        │          if sub.empty():           # joint_conf < 0.7
+        │              (三头逐位 softmax+argmax → class_names LUT 解码 + 拒识)
+        │          if sub.empty():           # 字符组合非法 或 min(三头 prob) < conf_threshold
         │              obj.drop = true
         │          else:
-        │              obj.label     = sub[0].label        # 9 类 idx
+        │              obj.label     = sub[0].label        # 12 类 idx
+        │              obj.value     = sub[0].value        # AlgSpeedLimitValue（km/h÷10）
         │              obj.box.score *= sub[0].box.score   # det × cls 联合
         │              obj.attributes = sub[0].attributes
         │              obj.field_mask |= ALG_FIELD_ATTRIBUTES
@@ -366,7 +368,7 @@ AlgTrafficLight[]/AlgSpeedLimit[]  malloc (C API 出口)  用户 AlgFreeResult �
 
 `classify_into` 与 `attributes_into` 的差别：前者是**带过滤的识别器**——分类器
 `Apply` 返回空 vector 即视为「该框未通过识别」，ChainSolution 在最终聚合阶段
-跳过被标记 `drop` 的对象。典型用法是限速牌二阶段链路里 joint_conf < 0.7 的丢弃。
+跳过被标记 `drop` 的对象。典型用法是限速牌二阶段链路里字符组合非法或分类置信度低于阈值的丢弃。
 
 ### 6.2 解析约束
 
