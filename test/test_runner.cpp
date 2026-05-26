@@ -50,6 +50,17 @@ cv::Scalar TLCColor(AlgTrafficLightColor c) {
     }
 }
 
+/* 限速牌按速度上色：越慢越绿、越快越红（绿→黄→红渐变），便于一眼区分不同限速。 */
+cv::Scalar SLColor(AlgSpeedLimitValue v) {
+    if (v < SLV_10 || v > SLV_120) return cv::Scalar(160, 160, 160);  /* 异常/INVALID：灰 */
+    float t = static_cast<float>(static_cast<int>(v) - SLV_10) /
+              static_cast<float>(SLV_120 - SLV_10);                   /* 10km/h→0 … 120km/h→1 */
+    int g, r;
+    if (t < 0.5f) { r = static_cast<int>(255 * t / 0.5f);            g = 255; }  /* 绿→黄 */
+    else          { r = 255; g = static_cast<int>(255 * (1.0f - (t - 0.5f) / 0.5f)); }  /* 黄→红 */
+    return cv::Scalar(0, g, r);  /* BGR */
+}
+
 void DrawBoxLabel(cv::Mat& img, const AlgBox& b, const char* text, cv::Scalar c) {
     cv::Rect rect(b.xmin, b.ymin, b.xmax - b.xmin, b.ymax - b.ymin);
     rect &= cv::Rect(0, 0, img.cols, img.rows);
@@ -69,7 +80,7 @@ void DrawResult(cv::Mat& img, const AlgResult& r) {
     for (int i = 0; i < r.speed_limit_count; ++i) {
         const AlgSpeedLimit& s = r.speed_limits[i];
         std::snprintf(buf, sizeof(buf), "SL.%d %.2f", SLKmh(s.value), s.box.score);
-        DrawBoxLabel(img, s.box, buf, cv::Scalar(255, 0, 0));
+        DrawBoxLabel(img, s.box, buf, SLColor(s.value));
     }
 }
 
