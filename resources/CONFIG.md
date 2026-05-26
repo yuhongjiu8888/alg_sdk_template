@@ -30,6 +30,7 @@ Both keys are required.
 | `crop` | object | no | - | Crop config, only for `objects_from:` input |
 | `crop.expand_ratio` | float | no | `1.0` | Bbox expansion factor before cropping |
 | `crop.square` | bool | no | `false` | Expand crop to square |
+| `crop.pad_value` | int | no | `-1` | `>=0`：扩边框越界处用该灰度值填充、保正方不形变（等价训练端 `cv2.warpAffine(borderValue=…)`）；`-1`：旧行为，clamp 到图内（越界时 ROI 非正方，下游 resize 会形变）。逐位 OCR 等对裁剪几何敏感的分类器应设为训练裁剪用的灰边值（限速牌为 `114`） |
 | `produces` | string | no | `"objects"` | Output routing (see below) |
 
 `produces` 可选值：
@@ -108,6 +109,10 @@ channel 布局：`[bbox_channels..., obj_channels..., num_classes...]`
 
 期望 1 个输出 tensor，channel 布局同 yolox_det。
 
+打分（与训练 `model_src/postprocess.py` 一致）：`score = sigmoid(obj) × softmax(cls)`。
+cls 分支用 **softmax**（非 sigmoid）：单类时 softmax 恒为 1 → `score = sigmoid(obj)`；
+该 cls 通道在单类下 CE 梯度为 0、从未被训练，若误用 sigmoid 会乘上任意值把分数压低导致漏检。
+
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `num_classes` | int | `1` | 检测类别数 |
@@ -115,7 +120,7 @@ channel 布局：`[bbox_channels..., obj_channels..., num_classes...]`
 | `obj_channels` | int | `1` | objectness 通道数 |
 | `stride` | int | `8` | 特征图步长（标量） |
 | `anchor` | `[w, h]` | `[36, 36]` | 锚框尺寸（像素） |
-| `conf_threshold` | float | `0.25` | 置信度阈值 |
+| `conf_threshold` | float | `0.25` | 置信度阈值（对 `sigmoid(obj)×softmax(cls)`） |
 | `nms_threshold` | float | `0.45` | NMS IoU 阈值 |
 | `max_det` | int | `64` | NMS 后最大保留数 |
 | `obj_prefilter` | float | `0.05` | objectness 早剪枝阈值 |

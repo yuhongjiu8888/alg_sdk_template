@@ -19,7 +19,7 @@ typedef struct AlgResult_ {
     int                 traffic_light_count;
     AlgTrafficLight*    traffic_lights;     // color: TLC_RED/YELLOW/GREEN/OFF
     int                 speed_limit_count;
-    AlgSpeedLimit*      speed_limits;       // value: SLV_10..SLV_100, value_kmh: 10..100
+    AlgSpeedLimit*      speed_limits;       // value: SLV_10..SLV_120（value*10 = km/h）
 } AlgResult;
 ```
 
@@ -88,9 +88,8 @@ for (int i = 0; i < r.traffic_light_count; ++i) {
 for (int i = 0; i < r.speed_limit_count; ++i) {
     AlgSpeedLimit* sl = &r.speed_limits[i];
     printf("%d km/h limit @ (%d,%d) score=%.2f\n",
-           sl->value_kmh, sl->box.xmin, sl->box.ymin, sl->box.score);
-    /* sl->value:     SLV_10 .. SLV_100
-     * sl->value_kmh: 10/20/.../100 (实际 km/h 数值)
+           sl->value * 10, sl->box.xmin, sl->box.ymin, sl->box.score);
+    /* sl->value:     SLV_10 .. SLV_120（枚举编号 = km/h ÷ 10，故 value*10 即 km/h）
      * sl->box.score: det × cls 联合置信度 */
 }
 
@@ -130,7 +129,7 @@ AlgDestroy(h);
       "produces": "objects" },
     { "name": "classifier", "model": "cls_cfg",
       "input": "objects_from:detector",
-      "crop":  { "expand_ratio": 1.5, "square": true },
+      "crop":  { "expand_ratio": 1.5, "square": true, "pad_value": 114 },
       "produces": "classify_into:detector" }
   ]},
   "models": {
@@ -194,7 +193,7 @@ AlgDestroy(h);
 | 检测 head channels  | 9 = 4(box) + 1(obj) + 4(cls)    | 6 = 4(box) + 1(obj) + 1(cls)                      |
 | 解码 grid offset    | 0（mmdet `MlvlPointGenerator`） | YOLOv5 `(σ*2-0.5+grid)*stride`                    |
 | 解码 wh             | `exp(w_log) * stride`           | `(σ(t)*2)^2 * anchor`                             |
-| score 公式          | `σ(obj) * σ(max(cls))`          | `σ(obj) * σ(cls)`                                 |
+| score 公式          | `σ(obj) * σ(max(cls))`          | `σ(obj) * softmax(cls)` = `σ(obj)`（单类）         |
 | NMS                 | class-aware                     | class-aware                                       |
 | 默认阈值            | conf 0.4 / iou 0.5              | conf 0.25 / iou 0.45（检测）+ min(三头) 0.5（分类）|
 

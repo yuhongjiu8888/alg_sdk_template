@@ -272,7 +272,7 @@ ChainSolution::Run(image, &objects)
         │      │   xmedia_cl_graph_process         │    >
         │      │   invalidate output cache         │   ╱
         │      └── Yolov5AnchorDetPostprocessor::Apply ──┘
-        │          sigmoid + (σ*2-0.5+grid)*stride 解码 → NMS → 映射回原帧
+        │          score=σ(obj)×softmax(cls)；box=(σ*2-0.5+grid)*stride 解码 → NMS → 映射回原帧
         │          → objs = [box(label=0,score=det_conf), ...]
         │      state["detector"] = objs
         │
@@ -327,7 +327,7 @@ AlgTrafficLight[]/AlgSpeedLimit[]  malloc (C API 出口)  用户 AlgFreeResult �
         "name": "<stage_id>",
         "model": "<key in models map>",
         "input": "image" | "objects_from:<earlier_stage>",
-        "crop":  { "expand_ratio": <float>, "square": <bool> },
+        "crop":  { "expand_ratio": <float>, "square": <bool>, "pad_value": <int> },
         "produces": "objects"
                   | "attributes_into:<earlier_stage>"
                   | "classify_into:<earlier_stage>"
