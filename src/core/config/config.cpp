@@ -118,6 +118,7 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
     if (v.isMember("crop") && v["crop"].isObject()) {
         s->crop.expand_ratio = v["crop"].get("expand_ratio", 1.0f).asFloat();
         s->crop.square       = v["crop"].get("square", false).asBool();
+        s->crop.pad_value    = v["crop"].get("pad_value", -1).asInt();
     }
     if (v.isMember("roi") && v["roi"].isObject()) {
         const Json::Value& r = v["roi"];

@@ -32,7 +32,8 @@
         "input": "objects_from:ssn_det",
         "crop": {
           "expand_ratio": 1.5,
-          "square": true
+          "square": true,
+          "pad_value": 114
         },
         "produces": "classify_into:ssn_det"
       }

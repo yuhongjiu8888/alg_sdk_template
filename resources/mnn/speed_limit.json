@@ -14,7 +14,8 @@
         "input": "objects_from:detector",
         "crop": {
           "expand_ratio": 1.5,
-          "square": true
+          "square": true,
+          "pad_value": 114
         },
         "produces": "classify_into:detector"
       }

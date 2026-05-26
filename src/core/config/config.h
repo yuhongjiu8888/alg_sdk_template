@@ -48,6 +48,8 @@ enum class StageOutputKind {
 struct CropConfig {
     float expand_ratio = 1.0f;  /* 在 box 周围按比例扩边再裁剪 */
     bool  square = false;       /* 是否扩为正方形 */
+    int   pad_value = -1;       /* >=0：扩边框越界处用此灰度值填充（等价训练端 warpAffine
+                                   borderValue），保正方不形变；-1（默认）：旧行为 clamp 到图内 */
 };
 
 /* 固定 ROI 区域：在原图上按像素坐标裁剪后再送模型检测。 */
