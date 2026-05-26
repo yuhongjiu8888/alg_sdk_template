@@ -149,12 +149,20 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
             float obj = Sigmoid(ReadElem(t, idx_at(bbox_channels_, y, x)));
             if (obj < obj_prefilter_) continue;
 
-            float best_cls = -1.f;
-            int   best_idx = 0;
-            for (int c = 0; c < num_classes_; ++c) {
-                float s = Sigmoid(ReadElem(t, idx_at(cls_offset_ + c, y, x)));
-                if (s > best_cls) { best_cls = s; best_idx = c; }
+            /* cls 分支用 softmax（与训练 model_src/postprocess.py 严格一致）。
+             * 1 类时 softmax 恒为 1 → score=obj；若用 sigmoid，会乘上一个未受监督
+             * （softmax-1类 CE 梯度为 0）的任意 cls logit，把分数压到 conf_threshold
+             * 以下造成漏检——这正是板端比 ONNX 少检的根因。 */
+            int   best_idx   = 0;
+            float max_logit  = ReadElem(t, idx_at(cls_offset_, y, x));
+            for (int c = 1; c < num_classes_; ++c) {
+                float l = ReadElem(t, idx_at(cls_offset_ + c, y, x));
+                if (l > max_logit) { max_logit = l; best_idx = c; }
             }
+            float sum_exp = 0.f;
+            for (int c = 0; c < num_classes_; ++c)
+                sum_exp += std::exp(ReadElem(t, idx_at(cls_offset_ + c, y, x)) - max_logit);
+            float best_cls = 1.0f / sum_exp;   /* = softmax 最大概率 exp(0)/Σexp */
             float score = obj * best_cls;
             if (score < conf_threshold_) continue;
 
