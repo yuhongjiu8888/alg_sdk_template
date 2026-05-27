@@ -12,7 +12,7 @@
   },
   "models": {
     "tld_cfg": {
-      "model_path": "../resources/model/traffic_light.mnn",
+      "model_path": "../resources/model/mnn/traffic_light.mnn",
       "preprocess": {
         "input_size": [
           416,

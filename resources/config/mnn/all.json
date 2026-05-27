@@ -6,12 +6,24 @@
         "name": "tld",
         "model": "tld_cfg",
         "input": "image",
+        "roi": {
+          "x": 600,
+          "y": 0,
+          "width": 900,
+          "height": 400
+        },
         "produces": "objects"
       },
       {
         "name": "ssn_det",
         "model": "ssn_cfg",
         "input": "image",
+        "roi": {
+          "x": 1240,
+          "y": 0,
+          "width": 280,
+          "height": 280
+        },
         "produces": "objects"
       },
       {
@@ -30,7 +42,7 @@
   },
   "models": {
     "tld_cfg": {
-      "model_path": "/data/traffic_light_int8.xmm",
+      "model_path": "../resources/model/mnn/traffic_light.mnn",
       "preprocess": {
         "input_size": [
           416,
@@ -39,7 +51,17 @@
         "color": "RGB",
         "resize": "letterbox_tl",
         "layout": "NCHW",
-        "pad_value": 0
+        "pad_value": 0,
+        "mean": [
+          0,
+          0,
+          0
+        ],
+        "std": [
+          255,
+          255,
+          255
+        ]
       },
       "postprocess": {
         "type": "yolox_det",
@@ -65,7 +87,7 @@
       }
     },
     "ssn_cfg": {
-      "model_path": "/data/speedsignnet.xmm",
+      "model_path": "../resources/model/mnn/speed_limit_dectect.mnn",
       "preprocess": {
         "input_size": [
           576,
@@ -74,7 +96,17 @@
         "color": "RGB",
         "resize": "letterbox_center",
         "layout": "NCHW",
-        "pad_value": 0
+        "pad_value": 0,
+        "mean": [
+          0,
+          0,
+          0
+        ],
+        "std": [
+          255,
+          255,
+          255
+        ]
       },
       "postprocess": {
         "type": "yolov5_anchor_det",
@@ -93,7 +125,7 @@
       }
     },
     "cls_cfg": {
-      "model_path": "/data/classifier.xmm",
+      "model_path": "../resources/model/mnn/speed_limit_classifier.mnn",
       "preprocess": {
         "input_size": [
           64,
@@ -102,7 +134,17 @@
         "color": "RGB",
         "resize": "stretch",
         "layout": "NCHW",
-        "pad_value": 0
+        "pad_value": 0,
+        "mean": [
+          0,
+          0,
+          0
+        ],
+        "std": [
+          255,
+          255,
+          255
+        ]
       },
       "postprocess": {
         "type": "ocr_classifier",

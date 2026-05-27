@@ -24,7 +24,7 @@
   },
   "models": {
     "ssn_cfg": {
-      "model_path": "/data/speedsignnet.xmm",
+      "model_path": "../resources/model/mnn/speed_limit_dectect.mnn",
       "preprocess": {
         "input_size": [
           576,
@@ -33,7 +33,17 @@
         "color": "RGB",
         "resize": "letterbox_center",
         "layout": "NCHW",
-        "pad_value": 0
+        "pad_value": 0,
+        "mean": [
+          0,
+          0,
+          0
+        ],
+        "std": [
+          255,
+          255,
+          255
+        ]
       },
       "postprocess": {
         "type": "yolov5_anchor_det",
@@ -52,7 +62,7 @@
       }
     },
     "cls_cfg": {
-      "model_path": "/data/classifier.xmm",
+      "model_path": "../resources/model/mnn/speed_limit_classifier.mnn",
       "preprocess": {
         "input_size": [
           64,
@@ -61,7 +71,17 @@
         "color": "RGB",
         "resize": "stretch",
         "layout": "NCHW",
-        "pad_value": 0
+        "pad_value": 0,
+        "mean": [
+          0,
+          0,
+          0
+        ],
+        "std": [
+          255,
+          255,
+          255
+        ]
       },
       "postprocess": {
         "type": "ocr_classifier",
