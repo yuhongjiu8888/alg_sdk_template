@@ -227,15 +227,39 @@ Status OcrClassifierPostprocessor::Apply(const IInferer& inferer,
     /* 逐位 softmax+argmax，装配扁平索引，min-prob 作联合置信度。 */
     long  flat = 0;
     float min_prob = std::numeric_limits<float>::max();
+    int   dbg_arg[8] = {0};
+    float dbg_prob[8] = {0};
     for (int p = 0; p < num_positions_; ++p) {
         int   arg = 0;
         float prob = 0.f;
         SoftmaxArgmax(inferer.OutputView(resolved_head_idx_[p]), num_chars_, &arg, &prob);
         flat = flat * num_chars_ + arg;
         min_prob = std::min(min_prob, prob);
+        if (p < 8) { dbg_arg[p] = arg; dbg_prob[p] = prob; }
     }
 
     int cls_id = decode_lut_[static_cast<size_t>(flat)];
+
+    /* —— 一次性诊断（前若干个 ROI）：看 stage2 到底解出了什么、为何丢弃 ——
+     * 关注：三头 argmax 是否合理(百位∈{1,blank=10}、个位应=0)、min_prob 是否过阈、
+     * cls_id 是否 -1(非法组合，多半是三头顺序错位)。确认后删除。 */
+    {
+        static int dbg_n = 0;
+        if (dbg_n < 8) {
+            ++dbg_n;
+            const TensorView& h0 = inferer.OutputView(resolved_head_idx_[0]);
+            ALG_LOGW("[cls-diag] heads_idx=[%d,%d,%d] arg(h,t,u)=[%d,%d,%d] "
+                     "prob=[%.3f,%.3f,%.3f] min_prob=%.3f thr=%.2f cls_id=%d name='%s' "
+                     "h0.dtype=%d scale=%g zp=%d raw0..3=%.2f,%.2f,%.2f,%.2f",
+                     resolved_head_idx_[0], resolved_head_idx_[1], resolved_head_idx_[2],
+                     dbg_arg[0], dbg_arg[1], dbg_arg[2],
+                     dbg_prob[0], dbg_prob[1], dbg_prob[2], min_prob, conf_threshold_, cls_id,
+                     (cls_id >= 0 && cls_id < (int)class_names_.size()) ? class_names_[cls_id].c_str() : "-",
+                     (int)h0.dtype, h0.quant.scale, h0.quant.zero_point,
+                     ReadElem(h0, 0), ReadElem(h0, 1), ReadElem(h0, 2), ReadElem(h0, 3));
+        }
+    }
+
     /* 非法字符组合（含个位非 '0'）→ 拒识；空产出 → ChainSolution drop 掉 src 框。 */
     if (cls_id < 0) return ALG_OK;
     /* 开放集兜底：最不确定那位低于阈值 → 丢弃（字母牌 / 广告过滤）。 */

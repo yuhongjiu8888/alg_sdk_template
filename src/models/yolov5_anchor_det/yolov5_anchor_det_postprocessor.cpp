@@ -235,6 +235,14 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
     Nms(props_, nms_threshold_, &nms_scratch_);
     if (static_cast<int>(props_.size()) > max_det_) props_.resize(max_det_);
 
+    {
+        static bool dumped2 = false;
+        if (!dumped2) {
+            dumped2 = true;
+            ALG_LOGW("[det-diag] NMS 后最终框数=%zu（这些会进 stage2 分类）", props_.size());
+        }
+    }
+
     const float inv_s = state.scale_ratio > 0 ? 1.0f / state.scale_ratio : 1.0f;
     const int max_x = state.original_width  - 1;
     const int max_y = state.original_height - 1;
