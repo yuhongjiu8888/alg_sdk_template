@@ -247,6 +247,29 @@ Status XmmInferer::Forward() {
 
     xmedia_mmz_flush_cache(phy_input_, vir_input_, input_total_size_);
 
+    /* —— 一次性诊断：确认预处理真把图像写进了 NPU 输入 buffer ——
+     * 全 0 或常数 → 预处理没写进来；正常图像应是 0..255 大范围分布。
+     * 首个 Forward 是 stage1 检测器，正好对应检测输入。确认后删除。 */
+    {
+        static bool dumped = false;
+        if (!dumped) {
+            dumped = true;
+            const uint8_t* p = static_cast<const uint8_t*>(vir_input_);
+            int mn = 255, mx = 0;
+            unsigned long sum = 0;
+            for (xmedia_u32 i = 0; i < input_total_size_; ++i) {
+                int v = p[i];
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+                sum += v;
+            }
+            ALG_LOGW("[in-diag] input bytes: size=%u min=%d max=%d mean=%.1f first8=%d,%d,%d,%d,%d,%d,%d,%d",
+                     input_total_size_, mn, mx,
+                     input_total_size_ ? (double)sum / input_total_size_ : 0.0,
+                     p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+        }
+    }
+
     xmedia_cl_s32 ret = xmedia_cl_graph_process(graph_);
     if (ret != XMEDIA_CL_SUCCESS) {
         ALG_LOGE("graph_process=%d", ret);

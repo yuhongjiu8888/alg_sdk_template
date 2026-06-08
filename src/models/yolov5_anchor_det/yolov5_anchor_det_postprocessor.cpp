@@ -143,6 +143,51 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
     props_.clear();
     if (props_.capacity() < 256) props_.reserve(256);
 
+    /* —— 一次性诊断：板端 0 检出时，先确认检测头到底有没有响应 ——
+     * 全网格扫一遍（不卡阈值），看 max obj / max score 落在哪、有多少格子
+     * 过 prefilter / conf；再看输出原始字节 min/max（判断是不是常数死值）。
+     * 确认后删除。 */
+    {
+        static bool dumped = false;
+        if (!dumped) {
+            dumped = true;
+            float max_obj = -1.f, max_score = -1.f;
+            int   mx = -1, my = -1, n_pre = 0, n_conf = 0;
+            int   raw_min = 255, raw_max = 0;
+            const int total = channels * H * W;
+            for (int i = 0; i < total; ++i) {
+                int rv = (t.dtype == DataType::kU8)
+                             ? static_cast<const uint8_t*>(t.data)[i]
+                             : (t.dtype == DataType::kI8
+                                    ? static_cast<const int8_t*>(t.data)[i] + 128
+                                    : 0);
+                if (rv < raw_min) raw_min = rv;
+                if (rv > raw_max) raw_max = rv;
+            }
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    float o = Sigmoid(ReadElem(t, idx_at(bbox_channels_, y, x)));
+                    float ml = ReadElem(t, idx_at(cls_offset_, y, x));
+                    for (int c = 1; c < num_classes_; ++c) {
+                        float l = ReadElem(t, idx_at(cls_offset_ + c, y, x));
+                        if (l > ml) ml = l;
+                    }
+                    float se = 0.f;
+                    for (int c = 0; c < num_classes_; ++c)
+                        se += std::exp(ReadElem(t, idx_at(cls_offset_ + c, y, x)) - ml);
+                    float sc = o * (1.0f / se);
+                    if (o >= obj_prefilter_) ++n_pre;
+                    if (sc >= conf_threshold_) ++n_conf;
+                    if (o > max_obj) { max_obj = o; mx = x; my = y; }
+                    if (sc > max_score) max_score = sc;
+                }
+            ALG_LOGW("[det-diag] raw[min=%d max=%d] scale=%g zp=%d | max_obj=%.4f @(%d,%d) "
+                     "max_score=%.4f | n_pre(>=%.2f)=%d n_conf(>=%.2f)=%d / %d cells",
+                     raw_min, raw_max, t.quant.scale, t.quant.zero_point, max_obj, mx, my,
+                     max_score, obj_prefilter_, n_pre, conf_threshold_, n_conf, H * W);
+        }
+    }
+
     const float fs = static_cast<float>(stride_);
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
