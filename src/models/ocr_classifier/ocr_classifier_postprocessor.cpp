@@ -63,18 +63,19 @@ inline float ReadElem(const TensorView& t, int idx) {
     return 0.0f;
 }
 
-/* 数值稳定 softmax，返回 (argmax_idx, max_prob)。 */
-void SoftmaxArgmax(const TensorView& t, int n, int* arg, float* max_prob) {
-    float m = ReadElem(t, 0);
+/* 数值稳定 softmax，返回 (argmax_idx, max_prob)。base 为该位在张量内的起始元素偏移
+ * （多输出头模式 base=0；单输出模式 base=p*num_chars）。 */
+void SoftmaxArgmax(const TensorView& t, int base, int n, int* arg, float* max_prob) {
+    float m = ReadElem(t, base);
     for (int i = 1; i < n; ++i) {
-        float v = ReadElem(t, i);
+        float v = ReadElem(t, base + i);
         if (v > m) m = v;
     }
     float sum = 0.f;
     int   best = 0;
-    float best_logit = ReadElem(t, 0);
+    float best_logit = ReadElem(t, base);
     for (int i = 0; i < n; ++i) {
-        float v = ReadElem(t, i);
+        float v = ReadElem(t, base + i);
         sum += std::exp(v - m);
         if (v > best_logit) { best_logit = v; best = i; }
     }
@@ -144,33 +145,48 @@ Status OcrClassifierPostprocessor::Configure(const IInferer& inferer,
             head_indices.push_back(params["head_indices"][i].asInt());
 
     const int n_out = inferer.NumOutputs();
-    if (n_out < num_positions_) {
-        ALG_LOGE("ocr_classifier: 需要 %d 个输出头，但 NumOutputs=%d", num_positions_, n_out);
-        return ALG_E_POSTPROCESS;
-    }
 
-    resolved_head_idx_.assign(num_positions_, -1);
-    for (int p = 0; p < num_positions_; ++p) {
-        int idx = (p < static_cast<int>(head_indices.size())) ? head_indices[p] : p;
-        /* 名字匹配（鲁棒：三头同形状无法靠 size 区分，MNN 输出顺序也可能被打乱）。 */
-        if (p < static_cast<int>(head_names.size()) && !head_names[p].empty()) {
-            for (int i = 0; i < n_out; ++i) {
-                if (inferer.OutputView(i).name == head_names[p]) { idx = i; break; }
+    /* 单输出模式：模型只出一个张量，P 个位连续切片（避开 XMM 多输出+CPU 切图的
+     * 板端坑）。各位都读 output[0]，起始偏移 p*num_chars 在 Apply 里算。 */
+    single_output_ = (n_out == 1 && num_positions_ > 1);
+    if (single_output_) {
+        const int need = num_positions_ * num_chars_;
+        if (inferer.OutputView(0).shape.Numel() < need) {
+            ALG_LOGE("ocr_classifier: 单输出 numel=%d < positions*chars=%d",
+                     inferer.OutputView(0).shape.Numel(), need);
+            return ALG_E_POSTPROCESS;
+        }
+        resolved_head_idx_.assign(num_positions_, 0);
+        ALG_LOGI("ocr_classifier: 单输出模式 output[0] numel=%d，按 %d 位 × %d 字符连续切片",
+                 inferer.OutputView(0).shape.Numel(), num_positions_, num_chars_);
+    } else {
+        if (n_out < num_positions_) {
+            ALG_LOGE("ocr_classifier: 需要 %d 个输出头，但 NumOutputs=%d", num_positions_, n_out);
+            return ALG_E_POSTPROCESS;
+        }
+        resolved_head_idx_.assign(num_positions_, -1);
+        for (int p = 0; p < num_positions_; ++p) {
+            int idx = (p < static_cast<int>(head_indices.size())) ? head_indices[p] : p;
+            /* 名字匹配（鲁棒：三头同形状无法靠 size 区分，MNN 输出顺序也可能被打乱）。 */
+            if (p < static_cast<int>(head_names.size()) && !head_names[p].empty()) {
+                for (int i = 0; i < n_out; ++i) {
+                    if (inferer.OutputView(i).name == head_names[p]) { idx = i; break; }
+                }
             }
+            if (idx < 0 || idx >= n_out) {
+                ALG_LOGE("ocr_classifier: 第 %d 位解析到非法输出索引 %d (NumOutputs=%d)",
+                         p, idx, n_out);
+                return ALG_E_POSTPROCESS;
+            }
+            if (inferer.OutputView(idx).shape.Numel() < num_chars_) {
+                ALG_LOGE("ocr_classifier: 第 %d 位输出[%d] numel=%d < num_chars=%d",
+                         p, idx, inferer.OutputView(idx).shape.Numel(), num_chars_);
+                return ALG_E_POSTPROCESS;
+            }
+            resolved_head_idx_[p] = idx;
+            ALG_LOGI("ocr_classifier: 第 %d 位 → output[%d] name='%s'",
+                     p, idx, inferer.OutputView(idx).name.c_str());
         }
-        if (idx < 0 || idx >= n_out) {
-            ALG_LOGE("ocr_classifier: 第 %d 位解析到非法输出索引 %d (NumOutputs=%d)",
-                     p, idx, n_out);
-            return ALG_E_POSTPROCESS;
-        }
-        if (inferer.OutputView(idx).shape.Numel() < num_chars_) {
-            ALG_LOGE("ocr_classifier: 第 %d 位输出[%d] numel=%d < num_chars=%d",
-                     p, idx, inferer.OutputView(idx).shape.Numel(), num_chars_);
-            return ALG_E_POSTPROCESS;
-        }
-        resolved_head_idx_[p] = idx;
-        ALG_LOGI("ocr_classifier: 第 %d 位 → output[%d] name='%s'",
-                 p, idx, inferer.OutputView(idx).name.c_str());
     }
 
     /* 解码 LUT + 限速值表：完全由 class_names 推导，不硬编码 CLASS_TO_CHARS。 */
@@ -232,7 +248,9 @@ Status OcrClassifierPostprocessor::Apply(const IInferer& inferer,
     for (int p = 0; p < num_positions_; ++p) {
         int   arg = 0;
         float prob = 0.f;
-        SoftmaxArgmax(inferer.OutputView(resolved_head_idx_[p]), num_chars_, &arg, &prob);
+        /* 单输出：同一张量内偏移 p*num_chars；多头：各自张量偏移 0。 */
+        const int base = single_output_ ? p * num_chars_ : 0;
+        SoftmaxArgmax(inferer.OutputView(resolved_head_idx_[p]), base, num_chars_, &arg, &prob);
         flat = flat * num_chars_ + arg;
         min_prob = std::min(min_prob, prob);
         if (p < 8) { dbg_arg[p] = arg; dbg_prob[p] = prob; }

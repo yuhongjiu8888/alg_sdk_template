@@ -69,6 +69,10 @@ class OcrClassifierPostprocessor : public IPostprocessor {
     int blank_index_   = 10;  /* 占位符下标 */
     float conf_threshold_ = 0.5f;
 
+    /* 单输出模式：模型只出一个 (1, P*C) / (1,P,C) 张量（避开 XMM 多输出+CPU 切图
+     * 的板端坑），各位在该张量内按 [p*num_chars, p*num_chars+num_chars) 连续切片。
+     * NumOutputs==1 且 P>1 时自动启用；NumOutputs>=P 时仍走原多输出头逻辑。 */
+    bool single_output_ = false;
     std::vector<int>         resolved_head_idx_;  /* 各位对应的 output tensor 索引（高位→低位） */
     std::vector<std::string> class_names_;
     std::vector<int>         value_lut_;          /* class idx → AlgSpeedLimitValue（km/h÷10） */
