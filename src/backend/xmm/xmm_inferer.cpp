@@ -297,9 +297,9 @@ Status XmmInferer::Forward() {
      * 全 0 或常数 → 预处理没写进来；正常图像应是 0..255 大范围分布。
      * 首个 Forward 是 stage1 检测器，正好对应检测输入。确认后删除。 */
     {
-        static bool dumped = false;
-        if (!dumped) {
-            dumped = true;
+        static int dumped = 0;
+        if (dumped < 3) {
+            ++dumped;
             const uint8_t* p = static_cast<const uint8_t*>(vir_input_);
             int mn = 255, mx = 0;
             unsigned long sum = 0;

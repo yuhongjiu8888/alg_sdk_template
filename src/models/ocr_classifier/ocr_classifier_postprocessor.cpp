@@ -248,15 +248,20 @@ Status OcrClassifierPostprocessor::Apply(const IInferer& inferer,
         if (dbg_n < 8) {
             ++dbg_n;
             const TensorView& h0 = inferer.OutputView(resolved_head_idx_[0]);
-            ALG_LOGW("[cls-diag] heads_idx=[%d,%d,%d] arg(h,t,u)=[%d,%d,%d] "
-                     "prob=[%.3f,%.3f,%.3f] min_prob=%.3f thr=%.2f cls_id=%d name='%s' "
-                     "h0.dtype=%d scale=%g zp=%d raw0..3=%.2f,%.2f,%.2f,%.2f",
+            const TensorView& h1 = inferer.OutputView(resolved_head_idx_[1]);
+            const TensorView& h2 = inferer.OutputView(resolved_head_idx_[2]);
+            ALG_LOGW("[cls-diag] idx=[%d,%d,%d] arg=[%d,%d,%d] prob=[%.3f,%.3f,%.3f] "
+                     "min_prob=%.3f thr=%.2f cls_id=%d name='%s' | "
+                     "addr h0=%p h1=%p h2=%p | "
+                     "h0.raw=[%.2f,%.2f,%.2f,%.2f] h1.raw=[%.2f,%.2f,%.2f,%.2f] h2.raw=[%.2f,%.2f,%.2f,%.2f]",
                      resolved_head_idx_[0], resolved_head_idx_[1], resolved_head_idx_[2],
                      dbg_arg[0], dbg_arg[1], dbg_arg[2],
                      dbg_prob[0], dbg_prob[1], dbg_prob[2], min_prob, conf_threshold_, cls_id,
                      (cls_id >= 0 && cls_id < (int)class_names_.size()) ? class_names_[cls_id].c_str() : "-",
-                     (int)h0.dtype, h0.quant.scale, h0.quant.zero_point,
-                     ReadElem(h0, 0), ReadElem(h0, 1), ReadElem(h0, 2), ReadElem(h0, 3));
+                     h0.data, h1.data, h2.data,
+                     ReadElem(h0, 0), ReadElem(h0, 1), ReadElem(h0, 2), ReadElem(h0, 3),
+                     ReadElem(h1, 0), ReadElem(h1, 1), ReadElem(h1, 2), ReadElem(h1, 3),
+                     ReadElem(h2, 0), ReadElem(h2, 1), ReadElem(h2, 2), ReadElem(h2, 3));
         }
     }
 
