@@ -1,5 +1,6 @@
 #include "backend/xmm/xmm_inferer.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -27,8 +28,13 @@ DataType MapDtype(int xmm_dtype) {
         case XMEDIA_CL_INT8:    return DataType::kI8;
         case XMEDIA_CL_INT16:   return DataType::kI16;
         case XMEDIA_CL_UINT16:  return DataType::kU16;
+        case XMEDIA_CL_FP16:    return DataType::kF16;
         case XMEDIA_CL_INT32:   return DataType::kI32;
-        default:                return DataType::kU8;
+        default:
+            /* 静默落到 kU8 会把 FP16 等当成单字节，按 (raw-zp)*scale 解出全是
+             * 垃圾值 → 后处理 obj 全低 → 一个框都检不出。宁可吵也别静默。 */
+            ALG_LOGW("MapDtype: unknown xmm dtype=%d, fallback kU8 (likely wrong)", xmm_dtype);
+            return DataType::kU8;
     }
 }
 
@@ -53,9 +59,12 @@ void XmmMmzFree(xmedia_u64& phy, void*& vir) {
 }
 
 int AllocInoutInfo(xmedia_cl_tensor_info_inout* io) {
-    io->tensor = static_cast<xmedia_cl_tensor*>(malloc(sizeof(xmedia_cl_tensor) * io->num));
-    io->current_batch = static_cast<xmedia_cl_u32*>(malloc(sizeof(xmedia_cl_u32) * io->num));
-    io->tensor_batch = static_cast<xmedia_cl_tensor_batch*>(malloc(sizeof(xmedia_cl_tensor_batch) * io->num));
+    /* 必须用 calloc：current_batch / tensor_batch 会被 set_inout 当 batch 配置读取，
+     * malloc 留下的脏值会让 NPU 用错误的 batch 跑图，infer 不报错但输出是垃圾。
+     * 对齐板端 demo（sample_speedsignnet.cpp::alloc_inout_mem）与 test_xmm.c。 */
+    io->tensor = static_cast<xmedia_cl_tensor*>(calloc(io->num, sizeof(xmedia_cl_tensor)));
+    io->current_batch = static_cast<xmedia_cl_u32*>(calloc(io->num, sizeof(xmedia_cl_u32)));
+    io->tensor_batch = static_cast<xmedia_cl_tensor_batch*>(calloc(io->num, sizeof(xmedia_cl_tensor_batch)));
     if (!io->tensor || !io->current_batch || !io->tensor_batch) return XMEDIA_CL_OUT_OF_HOST_MEMORY;
     return XMEDIA_CL_SUCCESS;
 }
@@ -169,6 +178,8 @@ Status XmmInferer::Load(const std::string& model_path) {
             base = static_cast<char*>(vir_output_);
             for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
                 cl_output_.tensor[i].addr = base;
+                /* 对齐 demo：输出 buffer 先清零（process 后直接读，不再 flush 输出）。 */
+                memset(base, 0, cl_output_.tensor[i].size);
                 base += ALIGN_UP(cl_output_.tensor[i].size, ALIGN_BYTES);
             }
         }
@@ -204,6 +215,30 @@ Status XmmInferer::BuildViews() {
     output_views_.clear();
     for (xmedia_cl_u32 i = 0; i < cl_input_.num; ++i)  input_views_.push_back(fill(cl_input_.tensor[i]));
     for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) output_views_.push_back(fill(cl_output_.tensor[i]));
+
+    /* —— 一次性诊断：板端检不出框时先确认 NPU tensor 元数据 ——
+     * 重点看 output：
+     *   type=4 → FP16（之前 MapDtype 漏了会当 U8 解，全是垃圾值）；
+     *   dims 与 pch 不一致 → NPU 对维度做了对齐补位（pitch != dims），
+     *     后处理按密排 idx 取数会错位 → 也读出垃圾。
+     * 确认后可删掉这段。 */
+    auto dump = [](const char* tag, const xmedia_cl_tensor_info_inout& io) {
+        for (xmedia_cl_u32 i = 0; i < io.num; ++i) {
+            const xmedia_cl_tensor& t = io.tensor[i];
+            char dims[64] = {0}, pch[64] = {0};
+            int dn = 0, pn = 0;
+            for (xmedia_cl_u32 d = 0; d < t.shape.ndims && dn < 56; ++d)
+                dn += snprintf(dims + dn, sizeof(dims) - dn, "%u,", t.shape.dims[d]);
+            for (xmedia_cl_u32 d = 0; d < t.shape.ndims && pn < 56; ++d)
+                pn += snprintf(pch + pn, sizeof(pch) - pn, "%u,", t.shape.pch[d]);
+            ALG_LOGW("[xmm-diag] %s[%u] name=%s type=%d ndims=%u dims=[%s] pch=[%s] "
+                     "scale=%g zp=%d size=%u",
+                     tag, i, t.name ? (const char*)t.name : "", (int)t.shape.type,
+                     t.shape.ndims, dims, pch, t.quant.scale, (int)t.quant.zp, t.size);
+        }
+    };
+    dump("in", cl_input_);
+    dump("out", cl_output_);
     return ALG_OK;
 }
 
@@ -218,7 +253,9 @@ Status XmmInferer::Forward() {
         return ALG_E_BACKEND;
     }
 
-    xmedia_mmz_flush_cache(phy_output_, vir_output_, output_total_size_);
+    /* 不对输出再做 flush_cache：板端 demo（session_run）只 flush 输入。
+     * output buffer 已在 Load 时 memset 清零，process 后直接读即可；
+     * 若此处对输出做 clean 型 flush，会把脏 cache 写回覆盖 NPU 结果。 */
 
     for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
         output_views_[i].data = cl_output_.tensor[i].addr;
