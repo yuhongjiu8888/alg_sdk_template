@@ -7,9 +7,6 @@
 #include "core/logger.h"
 
 #define ALIGN_BYTES 8
-/* 实验：每个输出独占一整页，排除多输出小张量挤在同一拷贝/DMA/cache-line 粒度里
- * 互相串扰（板端三头各 11B、地址相邻 16B，疑似被写成同一份）。 */
-#define OUT_ALIGN_BYTES 4096
 #define ALIGN_UP(A, B) ((((A) % (B)) == 0) ? (A) : ((A) + (B) - ((A) % (B))))
 
 #define XMM_TRY(call, msg)                                              \
@@ -215,7 +212,7 @@ Status XmmInferer::Load(const std::string& model_path) {
 
         output_total_size_ = 0;
         for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i)
-            output_total_size_ += ALIGN_UP(cl_output_.tensor[i].size, OUT_ALIGN_BYTES);
+            output_total_size_ += ALIGN_UP(cl_output_.tensor[i].size, ALIGN_BYTES);
         if (XmmMmzAllocCached(&phy_output_, &vir_output_, "npu_out", output_total_size_) != 0) break;
 
         {
@@ -227,7 +224,7 @@ Status XmmInferer::Load(const std::string& model_path) {
             base = static_cast<char*>(vir_output_);
             for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
                 cl_output_.tensor[i].addr = base;
-                base += ALIGN_UP(cl_output_.tensor[i].size, OUT_ALIGN_BYTES);
+                base += ALIGN_UP(cl_output_.tensor[i].size, ALIGN_BYTES);
             }
             /* 不在此 memset 输出：对齐 vendor model_process.cpp（只在 process 后
              * flush_cache 输出做 invalidate）。memset 会弄脏 cache line，若 flush
