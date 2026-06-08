@@ -31,10 +31,10 @@ class XmmInferer : public IInferer {
     void   FreeAll();
     Status BuildViews();
 
-    xmedia_cl_context     context_ = nullptr;
+    /* context / device 枚举 / sys|cl init 都在进程级共享单例里（见 .cpp 的
+     * XmmRuntime），这里只持有本模型独占的 graph + I/O 内存。 */
     xmedia_cl_graph       graph_ = nullptr;
-    xmedia_cl_device_id*  devices_ = nullptr;
-    xmedia_cl_u32         num_devices_ = 0;
+    bool                  acquired_ = false;  /* 是否已 g_rt.Acquire()，析构时配对 Release() */
 
     xmedia_u64 phy_workspace_ = 0, phy_weight_ = 0, phy_input_ = 0, phy_output_ = 0;
     void*      vir_workspace_ = nullptr;

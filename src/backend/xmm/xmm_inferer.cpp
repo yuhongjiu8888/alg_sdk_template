@@ -75,6 +75,68 @@ void FreeInoutInfo(xmedia_cl_tensor_info_inout* io) {
     free(io->tensor_batch);    io->tensor_batch = nullptr;
 }
 
+/*
+ * 进程级共享运行时：sys_init / cl_init / device 枚举 / context 都是 NPU 全局
+ * 单例，绝不能每个模型各做一份。两阶段会建两个 XmmInferer，若各自 init/uninit
+ * 并各建一个 context，会互相把全局状态冲掉 → 推理跑在坏 context 上 → 输出垃圾。
+ * 对齐板端 demo（sample_speedsignnet.cpp）：全程只 init 一次、一个 context，
+ * 两个 graph 共享。引用计数到 0 才真正 uninit。
+ * 注：端侧推理为单线程顺序执行，这里不加锁。
+ */
+struct XmmRuntime {
+    int                   refcount = 0;
+    xmedia_cl_device_id*  devices = nullptr;
+    xmedia_cl_u32         num_devices = 0;
+    xmedia_cl_context     context = nullptr;
+
+    xmedia_cl_s32 Acquire() {
+        if (refcount > 0) { ++refcount; return XMEDIA_CL_SUCCESS; }
+
+        xmedia_cl_s32 ret = xmedia_sys_init(XMEDIA_NULL);
+        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("sys_init=%d", ret); return ret; }
+        ret = xmedia_cl_init();
+        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("cl_init=%d", ret); xmedia_sys_exit(); return ret; }
+
+        ret = xmedia_cl_get_device_ids(XMEDIA_CL_DEVICE_ALL, NULL, &num_devices);
+        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_device_ids(count)=%d", ret); goto fail_cl; }
+        devices = static_cast<xmedia_cl_device_id*>(calloc(num_devices, sizeof(xmedia_cl_device_id)));
+        if (!devices) { ALG_LOGE("calloc devices failed"); goto fail_cl; }
+        ret = xmedia_cl_get_device_ids(XMEDIA_CL_DEVICE_ALL, devices, &num_devices);
+        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_device_ids=%d", ret); goto fail_dev; }
+
+        xmedia_cl_s32 err;
+        err = 0;
+        context = xmedia_cl_create_context(num_devices, devices, &err);
+        if (err != XMEDIA_CL_SUCCESS) { ALG_LOGE("create_context=%d", err); ret = err; goto fail_dev; }
+
+        refcount = 1;
+        return XMEDIA_CL_SUCCESS;
+
+    fail_dev:
+        free(devices);
+        devices = nullptr;
+    fail_cl:
+        xmedia_cl_uninit();
+        xmedia_sys_exit();
+        return ret;
+    }
+
+    void Release() {
+        if (refcount <= 0) return;
+        if (--refcount > 0) return;
+        if (context) { xmedia_cl_release_context(context); context = nullptr; }
+        if (devices) {
+            xmedia_cl_release_device_ids(devices, &num_devices);
+            free(devices);
+            devices = nullptr;
+        }
+        xmedia_cl_uninit();
+        xmedia_sys_exit();
+    }
+};
+
+XmmRuntime g_rt;
+
 }  // namespace
 
 XmmInferer::XmmInferer() {
@@ -85,53 +147,36 @@ XmmInferer::XmmInferer() {
 XmmInferer::~XmmInferer() { FreeAll(); }
 
 void XmmInferer::FreeAll() {
-    if (!initialized_ && !context_ && !devices_ && !vir_input_ && !vir_output_ &&
+    if (!acquired_ && !graph_ && !vir_input_ && !vir_output_ &&
         !vir_workspace_ && !vir_weight_) {
         return;
     }
     FreeInoutInfo(&cl_input_);
     FreeInoutInfo(&cl_output_);
+    /* graph 在共享 context 仍存活时卸载（与 demo session_release 顺序一致）。 */
     if (graph_) { xmedia_cl_graph_unload(graph_); graph_ = nullptr; }
     XmmMmzFree(phy_workspace_, vir_workspace_);
     XmmMmzFree(phy_weight_, vir_weight_);
     XmmMmzFree(phy_input_, vir_input_);
     XmmMmzFree(phy_output_, vir_output_);
-    if (context_) { xmedia_cl_release_context(context_); context_ = nullptr; }
-    if (devices_) {
-        xmedia_cl_release_device_ids(devices_, &num_devices_);
-        free(devices_);
-        devices_ = nullptr;
-    }
-    xmedia_cl_uninit();
-    xmedia_sys_exit();
+    /* 只在最后一个 inferer 析构时才真正 release context + cl/sys uninit。 */
+    if (acquired_) { g_rt.Release(); acquired_ = false; }
     initialized_ = false;
 }
 
 Status XmmInferer::Load(const std::string& model_path) {
     if (initialized_) return ALG_E_INVALID_ARG;
 
-    XMM_TRY(xmedia_sys_init(XMEDIA_NULL), "xmedia_sys_init");
-
-    xmedia_cl_s32 ret = xmedia_cl_init();
-    if (ret != XMEDIA_CL_SUCCESS) {
-        xmedia_sys_exit();
-        ALG_LOGE("xmedia_cl_init=%d", ret);
+    /* 取共享运行时（首个实例真正 init，其余只 ++refcount）。 */
+    if (g_rt.Acquire() != XMEDIA_CL_SUCCESS) {
+        ALG_LOGE("XmmRuntime acquire failed");
         return ALG_E_BACKEND;
     }
+    acquired_ = true;
 
+    xmedia_cl_s32 ret;
     Status status = ALG_E_BACKEND;
     do {
-        ret = xmedia_cl_get_device_ids(XMEDIA_CL_DEVICE_ALL, NULL, &num_devices_);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_device_ids(count)=%d", ret); break; }
-        devices_ = static_cast<xmedia_cl_device_id*>(calloc(num_devices_, sizeof(xmedia_cl_device_id)));
-        if (!devices_) { ALG_LOGE("calloc devices failed"); break; }
-        ret = xmedia_cl_get_device_ids(XMEDIA_CL_DEVICE_ALL, devices_, &num_devices_);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_device_ids=%d", ret); break; }
-
-        xmedia_cl_s32 err = 0;
-        context_ = xmedia_cl_create_context(num_devices_, devices_, &err);
-        if (err != XMEDIA_CL_SUCCESS) { ALG_LOGE("create_context=%d", err); break; }
-
         xmedia_cl_u32 worksize = 0, weightsize = 0;
         ret = xmedia_cl_graph_querysize_from_file(model_path.c_str(), &worksize, &weightsize);
         if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("querysize=%d", ret); break; }
@@ -139,7 +184,8 @@ Status XmmInferer::Load(const std::string& model_path) {
         if (worksize && XmmMmzAllocCached(&phy_workspace_, &vir_workspace_, "npu_ws", worksize) != 0) break;
         if (weightsize && XmmMmzAllocCached(&phy_weight_, &vir_weight_, "npu_wt", weightsize) != 0) break;
 
-        ret = xmedia_cl_graph_loadmodel_from_file_withmem(&context_, model_path.c_str(),
+        /* 两个 graph 共享同一个 context（&g_rt.context）——与 demo 一致。 */
+        ret = xmedia_cl_graph_loadmodel_from_file_withmem(&g_rt.context, model_path.c_str(),
                                                           vir_workspace_, worksize,
                                                           vir_weight_, weightsize, &graph_);
         if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("loadmodel=%d", ret); break; }
