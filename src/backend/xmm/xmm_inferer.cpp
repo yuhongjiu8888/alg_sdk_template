@@ -347,6 +347,16 @@ Status XmmInferer::Forward() {
                          b ? b[0] : -1, b ? b[1] : -1, b ? b[2] : -1, b ? b[3] : -1,
                          b ? b[4] : -1, b ? b[5] : -1, b ? b[6] : -1, b ? b[7] : -1);
             }
+            /* dump out[0] 那一页开头 48 字节：若 head1/head2 的真实数据紧挨 head0
+             * 之后 → NPU 从 base 连续写（SDK 可按偏移读）；若后面是 padding/常数
+             * → NPU 只产出 head0（export 裁了另两路）。 */
+            const uint8_t* p0 = static_cast<const uint8_t*>(cl_output_.tensor[0].addr);
+            if (p0) {
+                char hex[256]; int n = 0;
+                for (int k = 0; k < 48; ++k)
+                    n += snprintf(hex + n, sizeof(hex) - n, "%d,", p0[k]);
+                ALG_LOGW("[out-diag] out[0] page first48 = %s", hex);
+            }
         }
     }
 
