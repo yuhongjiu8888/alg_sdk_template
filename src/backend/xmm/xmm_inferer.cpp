@@ -277,10 +277,10 @@ Status XmmInferer::BuildViews() {
                 dn += snprintf(dims + dn, sizeof(dims) - dn, "%u,", t.shape.dims[d]);
             for (xmedia_cl_u32 d = 0; d < t.shape.ndims && pn < 56; ++d)
                 pn += snprintf(pch + pn, sizeof(pch) - pn, "%u,", t.shape.pch[d]);
-            ALG_LOGW("[xmm-diag] %s[%u] name=%s type=%d ndims=%u dims=[%s] pch=[%s] "
-                     "scale=%g zp=%d size=%u",
-                     tag, i, t.name ? (const char*)t.name : "", (int)t.shape.type,
-                     t.shape.ndims, dims, pch, t.quant.scale, (int)t.quant.zp, t.size);
+            ALG_LOGW("[xmm-diag] %s[%u] tid=%u name=%s type=%d ndims=%u dims=[%s] pch=[%s] "
+                     "scale=%g zp=%d size=%u addr=%p",
+                     tag, i, t.tensor_id, t.name ? (const char*)t.name : "", (int)t.shape.type,
+                     t.shape.ndims, dims, pch, t.quant.scale, (int)t.quant.zp, t.size, t.addr);
         }
     };
     dump("in", cl_input_);
@@ -325,6 +325,24 @@ Status XmmInferer::Forward() {
     /* 不对输出再做 flush_cache：板端 demo（session_run）只 flush 输入。
      * output buffer 已在 Load 时 memset 清零，process 后直接读即可；
      * 若此处对输出做 clean 型 flush，会把脏 cache 写回覆盖 NPU 结果。 */
+
+    /* —— 一次性诊断：process 后按物理顺序打印每个输出的 tid+addr+原始字节 ——
+     * 验证多输出绑定/顺序：若三块 tid 不同但字节相同 → NPU 把同一份写进了三块；
+     * 若 addr 跟 Load 时不同 → NPU 动态改了输出地址（非拷贝模式）。确认后删除。 */
+    {
+        static int dumped_out = 0;
+        if (dumped_out < 3 && cl_output_.num > 1) {
+            ++dumped_out;
+            for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
+                const xmedia_cl_tensor& t = cl_output_.tensor[i];
+                const uint8_t* b = static_cast<const uint8_t*>(t.addr);
+                ALG_LOGW("[out-diag] out[%u] tid=%u addr=%p size=%u raw8=%d,%d,%d,%d,%d,%d,%d,%d",
+                         i, t.tensor_id, t.addr, t.size,
+                         b ? b[0] : -1, b ? b[1] : -1, b ? b[2] : -1, b ? b[3] : -1,
+                         b ? b[4] : -1, b ? b[5] : -1, b ? b[6] : -1, b ? b[7] : -1);
+            }
+        }
+    }
 
     for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
         output_views_[i].data = cl_output_.tensor[i].addr;
