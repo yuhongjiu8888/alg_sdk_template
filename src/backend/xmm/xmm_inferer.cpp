@@ -224,10 +224,11 @@ Status XmmInferer::Load(const std::string& model_path) {
             base = static_cast<char*>(vir_output_);
             for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
                 cl_output_.tensor[i].addr = base;
-                /* 对齐 demo：输出 buffer 先清零（process 后直接读，不再 flush 输出）。 */
-                memset(base, 0, cl_output_.tensor[i].size);
                 base += ALIGN_UP(cl_output_.tensor[i].size, ALIGN_BYTES);
             }
+            /* 不在此 memset 输出：对齐 vendor model_process.cpp（只在 process 后
+             * flush_cache 输出做 invalidate）。memset 会弄脏 cache line，若 flush
+             * 走 clean 路径反而把脏值写回覆盖 NPU 结果。 */
         }
 
         ret = xmedia_cl_graph_set_inout(graph_, &cl_input_, &cl_output_);
@@ -322,9 +323,11 @@ Status XmmInferer::Forward() {
         return ALG_E_BACKEND;
     }
 
-    /* 不对输出再做 flush_cache：板端 demo（session_run）只 flush 输入。
-     * output buffer 已在 Load 时 memset 清零，process 后直接读即可；
-     * 若此处对输出做 clean 型 flush，会把脏 cache 写回覆盖 NPU 结果。 */
+    /* process 后必须 invalidate 输出 cache，否则 CPU 读到陈旧缓存。
+     * 多输出小张量尤其致命：三头各 11B、地址相邻，同落一条 64B cache line，
+     * 不 invalidate 会三次读到同一份没刷新的数据（== 之前三头读到同值的根因）。
+     * 对齐 vendor model_process.cpp::Run 的输出 flush_cache。 */
+    xmedia_mmz_flush_cache(phy_output_, vir_output_, output_total_size_);
 
     /* —— 一次性诊断：process 后按物理顺序打印每个输出的 tid+addr+原始字节 ——
      * 验证多输出绑定/顺序：若三块 tid 不同但字节相同 → NPU 把同一份写进了三块；
