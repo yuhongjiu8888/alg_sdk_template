@@ -110,16 +110,6 @@
         "num_positions": 3,
         "num_chars": 11,
         "blank_index": 10,
-        "head_names": [
-          "logits_h",
-          "logits_t",
-          "logits_u"
-        ],
-        "head_indices": [
-          0,
-          1,
-          2
-        ],
         "conf_threshold": 0.6,
         "class_names": [
           "10",

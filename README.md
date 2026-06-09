@@ -147,13 +147,18 @@ AlgDestroy(h);
                        "resize": "stretch" },
       "postprocess": { "type": "ocr_classifier", "category": "speed_limit",
                        "num_positions": 3, "num_chars": 11, "blank_index": 10,
-                       "head_names": ["logits_h","logits_t","logits_u"],
-                       "head_indices": [0,1,2], "conf_threshold": 0.5,
+                       "conf_threshold": 0.5,
                        "class_names": ["10","20","30","40","50","60","70","80","100","90","110","120"] }
     }
   }
 }
 ```
+
+> **OCR 输出布局**：上例 `.xmm` 为**单输出模型**（`classifier.xmm` 出 1 个 `(1,33)` 张量，
+> 各位按 `base=p*num_chars` 切片）——这是 XMM 板端默认，绕开多输出被切 NPU+CPU 混合图、
+> 只落 head0 的坑。SDK 自动识别（`NumOutputs==1 && num_positions>1`），无需配 `head_names`/
+> `head_indices`。MNN 仍可用三头多输出模型，此时再加
+> `"head_names":["logits_h","logits_t","logits_u"]`（按张量名匹配，覆盖 MNN 输出乱序）。
 
 ### Stage 语义新增
 
