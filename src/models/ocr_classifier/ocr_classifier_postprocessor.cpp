@@ -268,7 +268,7 @@ Status OcrClassifierPostprocessor::Apply(const IInferer& inferer,
             const TensorView& h0 = inferer.OutputView(resolved_head_idx_[0]);
             const TensorView& h1 = inferer.OutputView(resolved_head_idx_[1]);
             const TensorView& h2 = inferer.OutputView(resolved_head_idx_[2]);
-            ALG_LOGW("[cls-diag] idx=[%d,%d,%d] arg=[%d,%d,%d] prob=[%.3f,%.3f,%.3f] "
+            ALG_LOGD("[cls-diag] idx=[%d,%d,%d] arg=[%d,%d,%d] prob=[%.3f,%.3f,%.3f] "
                      "min_prob=%.3f thr=%.2f cls_id=%d name='%s' | "
                      "addr h0=%p h1=%p h2=%p | "
                      "h0.raw=[%.2f,%.2f,%.2f,%.2f] h1.raw=[%.2f,%.2f,%.2f,%.2f] h2.raw=[%.2f,%.2f,%.2f,%.2f]",

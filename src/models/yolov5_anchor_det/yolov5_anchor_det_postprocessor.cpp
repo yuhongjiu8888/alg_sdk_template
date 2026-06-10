@@ -181,7 +181,7 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
                     if (o > max_obj) { max_obj = o; mx = x; my = y; }
                     if (sc > max_score) max_score = sc;
                 }
-            ALG_LOGW("[det-diag] raw[min=%d max=%d] scale=%g zp=%d | max_obj=%.4f @(%d,%d) "
+            ALG_LOGD("[det-diag] raw[min=%d max=%d] scale=%g zp=%d | max_obj=%.4f @(%d,%d) "
                      "max_score=%.4f | n_pre(>=%.2f)=%d n_conf(>=%.2f)=%d / %d cells",
                      raw_min, raw_max, t.quant.scale, t.quant.zero_point, max_obj, mx, my,
                      max_score, obj_prefilter_, n_pre, conf_threshold_, n_conf, H * W);
@@ -239,7 +239,7 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
         static bool dumped2 = false;
         if (!dumped2) {
             dumped2 = true;
-            ALG_LOGW("[det-diag] NMS 后最终框数=%zu（这些会进 stage2 分类）", props_.size());
+            ALG_LOGD("[det-diag] NMS 后最终框数=%zu（这些会进 stage2 分类）", props_.size());
         }
     }
 

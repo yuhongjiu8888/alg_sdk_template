@@ -12,6 +12,20 @@ project(alg_sdk LANGUAGES C CXX)
 option(LINUX_AARCH64 "Build for aarch64 Linux (cross-compile)" OFF)
 option(LINUX_X86_64  "Build for x86_64 Linux (host, local MNN test)" OFF)
 
+# 日志开关（默认全关，零热路径开销）。排查时打开：
+#   cmake .. -DALG_LOG_DEBUG=ON   # 板端诊断 dump（xmm/in/out/det/cls-diag）
+#   cmake .. -DALG_LOG_INFO=ON    # 每帧耗时等 info
+option(ALG_LOG_INFO  "Enable ALG_LOGI per-frame info logs"        OFF)
+option(ALG_LOG_DEBUG "Enable ALG_LOGD board debug diagnostics"    OFF)
+if(ALG_LOG_INFO)
+    add_compile_definitions(ALG_ENABLE_LOG_INFO)
+    message(STATUS "ALG_LOGI (info) enabled")
+endif()
+if(ALG_LOG_DEBUG)
+    add_compile_definitions(ALG_ENABLE_LOG_DEBUG)
+    message(STATUS "ALG_LOGD (debug diag) enabled")
+endif()
+
 if(NOT DEFINED ALG_BACKEND)
     set(ALG_BACKEND "xmm" CACHE STRING "Inference backend: xmm | rk | mnn")
 endif()

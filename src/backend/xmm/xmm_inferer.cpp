@@ -278,7 +278,7 @@ Status XmmInferer::BuildViews() {
                 dn += snprintf(dims + dn, sizeof(dims) - dn, "%u,", t.shape.dims[d]);
             for (xmedia_cl_u32 d = 0; d < t.shape.ndims && pn < 56; ++d)
                 pn += snprintf(pch + pn, sizeof(pch) - pn, "%u,", t.shape.pch[d]);
-            ALG_LOGW("[xmm-diag] %s[%u] tid=%u name=%s type=%d ndims=%u dims=[%s] pch=[%s] "
+            ALG_LOGD("[xmm-diag] %s[%u] tid=%u name=%s type=%d ndims=%u dims=[%s] pch=[%s] "
                      "scale=%g zp=%d size=%u addr=%p",
                      tag, i, t.tensor_id, t.name ? (const char*)t.name : "", (int)t.shape.type,
                      t.shape.ndims, dims, pch, t.quant.scale, (int)t.quant.zp, t.size, t.addr);
@@ -310,7 +310,7 @@ Status XmmInferer::Forward() {
                 if (v > mx) mx = v;
                 sum += v;
             }
-            ALG_LOGW("[in-diag] input bytes: size=%u min=%d max=%d mean=%.1f first8=%d,%d,%d,%d,%d,%d,%d,%d",
+            ALG_LOGD("[in-diag] input bytes: size=%u min=%d max=%d mean=%.1f first8=%d,%d,%d,%d,%d,%d,%d,%d",
                      input_total_size_, mn, mx,
                      input_total_size_ ? (double)sum / input_total_size_ : 0.0,
                      p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
@@ -339,7 +339,7 @@ Status XmmInferer::Forward() {
             for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
                 const xmedia_cl_tensor& t = cl_output_.tensor[i];
                 const uint8_t* b = static_cast<const uint8_t*>(t.addr);
-                ALG_LOGW("[out-diag] out[%u] tid=%u addr=%p size=%u raw8=%d,%d,%d,%d,%d,%d,%d,%d",
+                ALG_LOGD("[out-diag] out[%u] tid=%u addr=%p size=%u raw8=%d,%d,%d,%d,%d,%d,%d,%d",
                          i, t.tensor_id, t.addr, t.size,
                          b ? b[0] : -1, b ? b[1] : -1, b ? b[2] : -1, b ? b[3] : -1,
                          b ? b[4] : -1, b ? b[5] : -1, b ? b[6] : -1, b ? b[7] : -1);
@@ -352,7 +352,7 @@ Status XmmInferer::Forward() {
                 char hex[256]; int n = 0;
                 for (int k = 0; k < 48; ++k)
                     n += snprintf(hex + n, sizeof(hex) - n, "%d,", p0[k]);
-                ALG_LOGW("[out-diag] out[0] page first48 = %s", hex);
+                ALG_LOGD("[out-diag] out[0] page first48 = %s", hex);
             }
         }
     }
