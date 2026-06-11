@@ -1,17 +1,24 @@
 /**
  * @file test_runner.cpp
- * @brief 通用 SDK 烟雾测试：传入 JSON solution + 一张图，跑完打印强类型结果。
+ * @brief 通用 SDK 烟雾测试：传入 JSON solution + 一张图或一个目录，跑完打印强类型结果。
  *
  * 同一个二进制可跑：
  *   ./test_runner resources/traffic_light.json   /data/test.jpg out/
  *   ./test_runner resources/speed_limit.json     /data/test.jpg out/
  *   ./test_runner resources/all.json             /data/test.jpg out/
+ *
+ * 第二个参数也可以是目录，批量跑目录下所有图片（句柄只创建一次，复用跑全部）：
+ *   ./test_runner resources/speed_limit.json     /data/imgs/  out/
  */
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 
@@ -84,31 +91,52 @@ void DrawResult(cv::Mat& img, const AlgResult& r) {
     }
 }
 
-}  // namespace
+bool IsDir(const char* path) {
+    struct stat st;
+    return ::stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
 
-int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::fprintf(stderr,
-            "usage: %s <solution.json> <image.jpg> [out_dir]\n", argv[0]);
-        return 1;
+bool HasImageExt(const std::string& name) {
+    auto dot = name.find_last_of('.');
+    if (dot == std::string::npos) return false;
+    std::string ext = name.substr(dot + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "bmp" ||
+           ext == "webp" || ext == "tif" || ext == "tiff";
+}
+
+/* 列出目录下所有图片文件（不递归），按文件名排序，方便结果稳定可对照。 */
+std::vector<std::string> ListImages(const char* dir_path) {
+    std::vector<std::string> files;
+    DIR* dir = ::opendir(dir_path);
+    if (!dir) return files;
+    std::string base(dir_path);
+    if (!base.empty() && base.back() == '/') base.pop_back();
+    for (struct dirent* ent = ::readdir(dir); ent; ent = ::readdir(dir)) {
+        std::string name(ent->d_name);
+        if (name == "." || name == "..") continue;
+        if (!HasImageExt(name)) continue;
+        std::string full = base + "/" + name;
+        if (IsDir(full.c_str())) continue;
+        files.push_back(full);
     }
-    const char* json_path  = argv[1];
-    const char* image_path = argv[2];
-    const char* out_dir    = argc >= 4 ? argv[3] : "out";
+    ::closedir(dir);
+    std::sort(files.begin(), files.end());
+    return files;
+}
 
+/* 取路径文件名（不含目录），用于批量模式给每张图命名输出。 */
+std::string BaseName(const std::string& path) {
+    auto slash = path.find_last_of('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+/* 跑单张图：复用已创建的句柄，打印结果并保存画框图。返回 0 成功。 */
+int RunOne(AlgHandle h, const std::string& image_path, const std::string& out_path) {
     cv::Mat bgr = cv::imread(image_path, cv::IMREAD_COLOR);
-    if (bgr.empty()) { std::fprintf(stderr, "imread failed: %s\n", image_path); return 1; }
-    std::printf("[image ] %s (%dx%d)\n", image_path, bgr.cols, bgr.rows);
-    std::printf("[sdk   ] %s\n", AlgVersion());
-
-    AlgHandle h = nullptr;
-    timeval t0, t1;
-    gettimeofday(&t0, nullptr);
-    AlgStatus s = AlgCreate(&h, json_path);
-    gettimeofday(&t1, nullptr);
-    if (s != ALG_OK) { std::fprintf(stderr, "AlgCreate err %d\n", s); return s; }
-    std::printf("[init  ] %.2f ms\n",
-                (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0);
+    if (bgr.empty()) { std::fprintf(stderr, "imread failed: %s\n", image_path.c_str()); return 1; }
+    std::printf("[image ] %s (%dx%d)\n", image_path.c_str(), bgr.cols, bgr.rows);
 
     AlgImage img;
     img.format   = ALG_PIX_BGR;
@@ -119,14 +147,11 @@ int main(int argc, char** argv) {
     img.data     = bgr.data;
 
     AlgResult r{};
+    timeval t0, t1;
     gettimeofday(&t0, nullptr);
-    s = AlgRun(h, &img, &r);
+    AlgStatus s = AlgRun(h, &img, &r);
     gettimeofday(&t1, nullptr);
-    if (s != ALG_OK) {
-        std::fprintf(stderr, "AlgRun err %d\n", s);
-        AlgDestroy(h);
-        return s;
-    }
+    if (s != ALG_OK) { std::fprintf(stderr, "AlgRun err %d\n", s); return s; }
 
     std::printf("[infer ] %.2f ms\n",
                 (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0);
@@ -145,15 +170,69 @@ int main(int argc, char** argv) {
                     sl.box.xmin, sl.box.ymin, sl.box.xmax, sl.box.ymax);
     }
 
-    mkdir(out_dir, 0755);
     DrawResult(bgr, r);
-    std::string out_path = std::string(out_dir) + "/result.jpg";
     if (!cv::imwrite(out_path, bgr))
         std::fprintf(stderr, "imwrite fail: %s\n", out_path.c_str());
     else
         std::printf("[save  ] %s\n", out_path.c_str());
 
     AlgFreeResult(&r);
-    AlgDestroy(h);
     return 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        std::fprintf(stderr,
+            "usage: %s <solution.json> <image_or_dir> [out_dir]\n", argv[0]);
+        return 1;
+    }
+    const char* json_path  = argv[1];
+    const char* input_path = argv[2];
+    const char* out_dir    = argc >= 4 ? argv[3] : "out";
+
+    /* 先把待跑图片列出来：目录则批量，单文件则单张。 */
+    const bool batch = IsDir(input_path);
+    std::vector<std::string> images;
+    if (batch) {
+        images = ListImages(input_path);
+        if (images.empty()) {
+            std::fprintf(stderr, "no image found in dir: %s\n", input_path);
+            return 1;
+        }
+        std::printf("[batch ] %zu images under %s\n", images.size(), input_path);
+    } else {
+        images.push_back(input_path);
+    }
+
+    std::printf("[sdk   ] %s\n", AlgVersion());
+
+    AlgHandle h = nullptr;
+    timeval t0, t1;
+    gettimeofday(&t0, nullptr);
+    AlgStatus s = AlgCreate(&h, json_path);
+    gettimeofday(&t1, nullptr);
+    if (s != ALG_OK) { std::fprintf(stderr, "AlgCreate err %d\n", s); return s; }
+    std::printf("[init  ] %.2f ms\n",
+                (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0);
+
+    mkdir(out_dir, 0755);
+
+    /* 句柄只创建一次，循环复用跑全部图片。 */
+    int failed = 0;
+    for (size_t i = 0; i < images.size(); ++i) {
+        if (batch) std::printf("\n[%zu/%zu] ----------------------------------------\n",
+                               i + 1, images.size());
+        /* 批量模式按原文件名输出（避免互相覆盖）；单张模式沿用 result.jpg。 */
+        std::string out_path = std::string(out_dir) + "/" +
+                               (batch ? BaseName(images[i]) : std::string("result.jpg"));
+        if (RunOne(h, images[i], out_path) != 0) ++failed;
+    }
+
+    if (batch)
+        std::printf("\n[done  ] %zu ok, %d failed\n", images.size() - failed, failed);
+
+    AlgDestroy(h);
+    return failed == 0 ? 0 : 1;
 }
