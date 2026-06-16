@@ -66,6 +66,7 @@ set(ALG_CORE_SRCS
     src/interface/alg_interface.cpp
     src/core/object.cpp
     src/core/config/config.cpp
+    src/core/log/alg_log.cpp
     src/core/registry/postprocessor_registry.cpp
     src/core/instance/model_instance.cpp
     src/core/preprocess/letterbox_preprocessor.cpp
@@ -142,6 +143,10 @@ target_link_libraries(alg_sdk
     ${ALG_BACKEND_LIBS}
     rt dl pthread
 )
+# Android logcat sink 需要 liblog（NDK 构建时）
+if(ANDROID OR ALG_LOG_ANDROID)
+    target_link_libraries(alg_sdk log)
+endif()
 
 # -----------------------------------------------------------------------------
 # 测试可执行（通用 runner，跑哪个 solution 由 JSON 决定）

@@ -26,6 +26,32 @@ if(ALG_LOG_DEBUG)
     message(STATUS "ALG_LOGD (debug diag) enabled")
 endif()
 
+# 异步落盘日志模块（借鉴 spdlog：异步 + 多 sink + 滚动文件）。默认关闭，
+# 不影响现有逐字节行为。打开后 ALG_LOGE/W/I/D 改走 core/log/alg_log。
+#   cmake .. -DALG_LOG_FILE=ON \
+#            -DALG_LOG_FILE_PATH=/data/log/alg.log \
+#            -DALG_LOG_FILE_MAX_SIZE=10485760 \   # 单文件上限(字节)，默认 10MB
+#            -DALG_LOG_FILE_MAX_FILES=5           # 滚动保留份数(循环覆盖)
+option(ALG_LOG_FILE    "Enable async rotating file log module"        OFF)
+option(ALG_LOG_ANDROID "Route logs to Android logcat (NDK build)"     OFF)
+set(ALG_LOG_FILE_PATH      "alg_sdk.log" CACHE STRING "Log file base path")
+set(ALG_LOG_FILE_MAX_SIZE  "10485760"    CACHE STRING "Max bytes per log file before rotation")
+set(ALG_LOG_FILE_MAX_FILES "5"           CACHE STRING "Number of rotated log files kept (circular)")
+if(ALG_LOG_FILE)
+    add_compile_definitions(
+        ALG_ENABLE_LOG_FILE
+        ALG_LOG_FILE_PATH="${ALG_LOG_FILE_PATH}"
+        ALG_LOG_FILE_MAX_SIZE=${ALG_LOG_FILE_MAX_SIZE}
+        ALG_LOG_FILE_MAX_FILES=${ALG_LOG_FILE_MAX_FILES}
+    )
+    message(STATUS "ALG file log enabled: path=${ALG_LOG_FILE_PATH} "
+                   "max_size=${ALG_LOG_FILE_MAX_SIZE} max_files=${ALG_LOG_FILE_MAX_FILES}")
+endif()
+if(ALG_LOG_ANDROID)
+    add_compile_definitions(ALG_LOG_ANDROID_DEFAULT=true)
+    message(STATUS "ALG android logcat sink enabled")
+endif()
+
 if(NOT DEFINED ALG_BACKEND)
     set(ALG_BACKEND "xmm" CACHE STRING "Inference backend: xmm | rk | mnn")
 endif()
