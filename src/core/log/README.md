@@ -15,6 +15,9 @@
     `alg.log, alg.log.1, … alg.log.N`（`.N` 最旧，被覆盖）。
   - 控制台：沿用旧行为，`E/W → stderr`，`I/D → stdout`。
   - Android：`__ANDROID__` 下用 `__android_log_print`，tag 默认 `alg`。
+- **启动表头（仿 glog）**：每次启动/`init` 在日志流开头裸写一段表头
+  （`Log file created at` / `Running on machine` / `Process id` / `Log line format`），
+  append 模式下多次重启被表头自然分段，一眼看出哪段是重启后的输出。
 - **零默认开销**：不开 `ALG_LOG_FILE` 时，`ALG_LOGE/W/I/D` 行为与改动前逐字节一致
   （直接 `fprintf`，`I/D` 仍编译期消除），且不链接本模块。
 

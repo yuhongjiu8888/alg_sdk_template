@@ -252,21 +252,43 @@ private:
         }
     }
 
-    // 会话起始分割线（仿 glog）：每次 worker 启动 / init 只打一次，文件+终端都打，
-    // 是日志流里的第一行——重启后一眼能看出新一段从哪开始。绕过 level 过滤，恒打。
+    // 会话起始表头（仿 glog）：每次 worker 启动 / init 打一次，是日志流的第一段。
+    // 按 glog 习惯"裸写"——不带逐行时间戳/级别前缀，直接顶在文件和终端开头；
+    // append 模式下多次重启的表头会把日志自然分段，一眼看出哪段是重启后的。
+    // 绕过 level 过滤，恒打。
     void write_banner() {
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
-        char body[ALG_LOG_MSG_MAX];
+        struct tm tmv;
+        time_t sec = ts.tv_sec;
+        localtime_r(&sec, &tmv);
+
+        char host[256];
+        if (gethostname(host, sizeof(host)) != 0) std::strcpy(host, "unknown");
+        host[sizeof(host) - 1] = '\0';
+
+        char buf[512];
         int n = std::snprintf(
-            body, sizeof(body),
-            "================ alg_sdk log start | pid=%ld ================",
-            static_cast<long>(getpid()));
+            buf, sizeof(buf),
+            "Log file created at: %04d/%02d/%02d %02d:%02d:%02d\n"
+            "Running on machine: %s\n"
+            "Process id: %ld\n"
+            "Log line format: YYYY-MM-DD HH:MM:SS.mmm [alg][EWID] msg\n",
+            tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+            tmv.tm_hour, tmv.tm_min, tmv.tm_sec,
+            host, static_cast<long>(getpid()));
         if (n < 0) return;
-        Slot s;
-        fill_slot(s, Level::Info, ts, body, n);
+        if (n >= static_cast<int>(sizeof(buf))) n = static_cast<int>(sizeof(buf)) - 1;
+
         std::lock_guard<std::mutex> sk(sink_mtx_);
-        write_line(s);
+        if (file_enabled_) file_.write(buf, static_cast<std::size_t>(n));
+        if (console_)      std::fwrite(buf, 1, static_cast<std::size_t>(n), stderr);
+#if defined(__ANDROID__)
+        if (android_)
+            __android_log_print(ANDROID_LOG_INFO, android_tag_,
+                                "==== alg_sdk log start (pid=%ld) ====",
+                                static_cast<long>(getpid()));
+#endif
         flush_sinks();   // 立即可见，不等队列攒满
     }
 
