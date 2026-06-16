@@ -13,6 +13,7 @@
 
 #include <sys/stat.h>   // mkdir / stat
 #include <sys/types.h>
+#include <unistd.h>     // getpid
 
 #if defined(__ANDROID__)
 #  include <android/log.h>
@@ -245,8 +246,28 @@ private:
                 ring_.assign(cap, Slot{});
                 head_ = tail_ = count_ = 0;
             }
-            start_worker_locked();
+            start_worker_locked();   // 横幅由 worker 启动时打（见 worker_main）
+        } else {
+            write_banner();          // 同步模式无 worker，这里直接打一次
         }
+    }
+
+    // 会话起始分割线（仿 glog）：每次 worker 启动 / init 只打一次，文件+终端都打，
+    // 是日志流里的第一行——重启后一眼能看出新一段从哪开始。绕过 level 过滤，恒打。
+    void write_banner() {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        char body[ALG_LOG_MSG_MAX];
+        int n = std::snprintf(
+            body, sizeof(body),
+            "================ alg_sdk log start | pid=%ld ================",
+            static_cast<long>(getpid()));
+        if (n < 0) return;
+        Slot s;
+        fill_slot(s, Level::Info, ts, body, n);
+        std::lock_guard<std::mutex> sk(sink_mtx_);
+        write_line(s);
+        flush_sinks();   // 立即可见，不等队列攒满
     }
 
     void start_worker_locked() {
@@ -275,6 +296,7 @@ private:
     }
 
     void worker_main() {
+        write_banner();   // 保证横幅是本会话日志流的第一行（先于任何已入队的消息）
         for (;;) {
             Slot s;
             bool drained;
