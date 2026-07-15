@@ -43,13 +43,13 @@ set(OPENCV4_LIB_STATIC
 # jsoncpp（用户可通过 -DJSONCPP_ROOT=/path/to/jsoncpp/install 覆盖）
 # 期望布局：${JSONCPP_ROOT}/include/json/json.h，${JSONCPP_ROOT}/lib/libjsoncpp.a
 # -----------------------------------------------------------------------------
-if(NOT DEFINED JSONCPP_ROOT)
-    set(JSONCPP_ROOT "/root/opensource/jsoncpp/build_arm/install" CACHE PATH "jsoncpp install root")
-endif()
-message(STATUS "JSONCPP_ROOT = ${JSONCPP_ROOT}")
-include_directories(${JSONCPP_ROOT}/include)
-link_directories(${JSONCPP_ROOT}/lib)
-set(JSONCPP_LIB_STATIC libjsoncpp.a)
+# if(NOT DEFINED JSONCPP_ROOT)
+#     set(JSONCPP_ROOT "/root/opensource/jsoncpp/build_arm/install" CACHE PATH "jsoncpp install root")
+# endif()
+# message(STATUS "JSONCPP_ROOT = ${JSONCPP_ROOT}")
+# include_directories(${JSONCPP_ROOT}/include)
+# link_directories(${JSONCPP_ROOT}/lib)
+# set(JSONCPP_LIB_STATIC libjsoncpp.a)
 
 # -----------------------------------------------------------------------------
 # Public + internal include paths
@@ -66,6 +66,7 @@ set(ALG_CORE_SRCS
     src/interface/alg_interface.cpp
     src/core/object.cpp
     src/core/config/config.cpp
+    src/core/log/alg_log.cpp
     src/core/registry/postprocessor_registry.cpp
     src/core/instance/model_instance.cpp
     src/core/preprocess/letterbox_preprocessor.cpp
@@ -76,15 +77,26 @@ set(ALG_CORE_SRCS
 
 # -----------------------------------------------------------------------------
 # 模型（按类型注册的后处理）—— 加新模型在此处追加，无需改其它文件
+#
+# 当前分支聚焦：红绿灯检测 + 巴西限速牌识别（v3.4 OCR）
+#   - yolox_det           : mmyolo YOLOXHead 多尺度（红绿灯 4 类，stride 8/16/32）
+#   - yolov5_anchor_det   : 单尺度 anchor 解码（SpeedSignNet 1 类 stride=8 anchor=(36,36)）
+#   - ocr_classifier      : 三头逐位数字 OCR + class_names 驱动解码 + 置信度过滤（限速牌 12 类）
+#   - dualhead_classifier : 旧双头数字识别（限速牌 9 类）；保留向后兼容，新配置走 ocr_classifier
 # -----------------------------------------------------------------------------
 set(ALG_MODEL_SRCS
-    src/models/fcos_face/fcos_face_postprocessor.cpp
-    src/models/fcos_face/fcos_face_register.cpp
-    src/models/pfld_landmark/pfld_landmark_postprocessor.cpp
-    src/models/pfld_landmark/pfld_landmark_register.cpp
-    src/models/face_attribute/face_attribute_postprocessor.cpp
-    src/models/face_attribute/face_attribute_register.cpp
+    src/models/yolox_det/yolox_det_postprocessor.cpp
+    src/models/yolox_det/yolox_det_register.cpp
+    src/models/yolov5_anchor_det/yolov5_anchor_det_postprocessor.cpp
+    src/models/yolov5_anchor_det/yolov5_anchor_det_register.cpp
+    src/models/ocr_classifier/ocr_classifier_postprocessor.cpp
+    src/models/ocr_classifier/ocr_classifier_register.cpp
+    src/models/dualhead_classifier/dualhead_classifier_postprocessor.cpp
+    src/models/dualhead_classifier/dualhead_classifier_register.cpp
 )
+
+#第三方库json
+set(JSONCPP_SRCS src/json/jsoncpp.cpp)
 
 # -----------------------------------------------------------------------------
 # 后端（一份产物对应一种芯片）
@@ -97,9 +109,9 @@ if(ALG_BACKEND STREQUAL "xmm")
         src/backend/xmm/xmm_backend.cpp
     )
     include_directories(${CMAKE_SOURCE_DIR}/include/xmm_sdk
-                        /root/sgk-sdk/include)
+                        /root/sgk-sdk/include /root/project/sgk/deploy/sgk-sdk/include)
     link_directories(${CMAKE_SOURCE_DIR}/lib/static
-                     /root/sgk-sdk/lib/static)
+                     /root/sgk-sdk/lib/static /root/project/sgk/deploy/sgk-sdk/lib/static)
     set(ALG_BACKEND_LIBS
         libxmedia_cl.a
         libxmedia_npu.a
@@ -122,17 +134,22 @@ add_library(alg_sdk SHARED
     ${ALG_CORE_SRCS}
     ${ALG_MODEL_SRCS}
     ${ALG_BACKEND_SRCS}
+    ${JSONCPP_SRCS}
 )
 target_compile_definitions(alg_sdk PRIVATE ALG_BUILDING_SDK=1)
 target_link_libraries(alg_sdk
     ${OPENCV4_LIB_STATIC}
-    ${JSONCPP_LIB_STATIC}
+    # ${JSONCPP_LIB_STATIC}
     ${ALG_BACKEND_LIBS}
     rt dl pthread
 )
+# Android logcat sink 需要 liblog（NDK 构建时）
+if(ANDROID OR ALG_LOG_ANDROID)
+    target_link_libraries(alg_sdk log)
+endif()
 
 # -----------------------------------------------------------------------------
-# 测试可执行
+# 测试可执行（通用 runner，跑哪个 solution 由 JSON 决定）
 # -----------------------------------------------------------------------------
-add_executable(test_facedet test/test_facedet.cpp)
-target_link_libraries(test_facedet alg_sdk pthread)
+add_executable(test_runner test/test_runner.cpp)
+target_link_libraries(test_runner alg_sdk pthread)

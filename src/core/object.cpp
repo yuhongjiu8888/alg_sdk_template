@@ -2,84 +2,86 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "alg_interface.h"
+#include "core/logger.h"
 
 namespace alg {
 
 namespace {
 
-AlgKeypoints* NewKeypoints(const Keypoints& kp) {
-    auto* out = static_cast<AlgKeypoints*>(std::calloc(1, sizeof(AlgKeypoints)));
-    if (!out) return nullptr;
-    out->count = static_cast<int>(kp.x.size());
-    if (out->count == 0) return out;
-    out->xs     = static_cast<float*>(std::malloc(sizeof(float) * out->count));
-    out->ys     = static_cast<float*>(std::malloc(sizeof(float) * out->count));
-    out->scores = kp.score.empty()
-                      ? nullptr
-                      : static_cast<float*>(std::malloc(sizeof(float) * out->count));
-    if (!out->xs || !out->ys || (out->scores == nullptr && !kp.score.empty())) {
-        std::free(out->xs); std::free(out->ys); std::free(out->scores); std::free(out);
-        return nullptr;
+/* 在 attributes 里找指定 name 的条目；找不到返回空。 */
+const Attribute* FindAttr(const std::vector<Attribute>& attrs, const char* name) {
+    for (const auto& a : attrs) {
+        if (a.name == name) return &a;
     }
-    std::memcpy(out->xs, kp.x.data(), sizeof(float) * out->count);
-    std::memcpy(out->ys, kp.y.data(), sizeof(float) * out->count);
-    if (out->scores) std::memcpy(out->scores, kp.score.data(), sizeof(float) * out->count);
-    return out;
+    return nullptr;
 }
 
-AlgAttributes* NewAttributes(const std::vector<Attribute>& attrs) {
-    auto* out = static_cast<AlgAttributes*>(std::calloc(1, sizeof(AlgAttributes)));
-    if (!out) return nullptr;
-    out->count = static_cast<int>(attrs.size());
-    if (out->count == 0) return out;
-    out->items = static_cast<AlgAttribute*>(std::calloc(out->count, sizeof(AlgAttribute)));
-    if (!out->items) { std::free(out); return nullptr; }
-    for (int i = 0; i < out->count; ++i) {
-        const Attribute& a = attrs[i];
-        std::strncpy(out->items[i].name, a.name.c_str(), sizeof(out->items[i].name) - 1);
-        out->items[i].value_int = a.value_int;
-        out->items[i].value_float = a.value_float;
-        std::strncpy(out->items[i].value_str, a.value_str.c_str(),
-                     sizeof(out->items[i].value_str) - 1);
-    }
-    return out;
-}
-
-AlgEmbedding* NewEmbedding(const Embedding& emb) {
-    auto* out = static_cast<AlgEmbedding*>(std::calloc(1, sizeof(AlgEmbedding)));
-    if (!out) return nullptr;
-    out->dim = static_cast<int>(emb.v.size());
-    if (out->dim == 0) return out;
-    out->values = static_cast<float*>(std::malloc(sizeof(float) * out->dim));
-    if (!out->values) { std::free(out); return nullptr; }
-    std::memcpy(out->values, emb.v.data(), sizeof(float) * out->dim);
-    return out;
+/* 把内部 box 拷到 ABI box（外加 score）。 */
+inline void CopyBox(const AlgBox& src, AlgBox* dst) {
+    dst->xmin  = src.xmin;
+    dst->ymin  = src.ymin;
+    dst->xmax  = src.xmax;
+    dst->ymax  = src.ymax;
+    dst->score = src.score;
 }
 
 }  // namespace
 
 int FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
     AlgFreeResult(result);
-    result->object_count = static_cast<int>(objs.size());
-    if (objs.empty()) {
-        result->objects = nullptr;
-        return 0;
-    }
-    result->objects =
-        static_cast<AlgObject*>(std::calloc(objs.size(), sizeof(AlgObject)));
-    if (!result->objects) { result->object_count = 0; return -1; }
 
-    for (size_t i = 0; i < objs.size(); ++i) {
-        const Object& src = objs[i];
-        AlgObject& dst = result->objects[i];
-        dst.field_mask = src.field_mask;
-        dst.box = src.box;
-        if (src.has_keypoints())  dst.keypoints  = NewKeypoints(src.keypoints);
-        if (src.has_attributes()) dst.attributes = NewAttributes(src.attributes);
-        if (src.has_embedding())  dst.embedding  = NewEmbedding(src.embedding);
+    /* 第一遍：按 category attribute 分桶计数。 */
+    int tl_n = 0, sl_n = 0;
+    for (const auto& o : objs) {
+        if (!o.has_box() || !o.has_attributes()) continue;
+        const Attribute* cat = FindAttr(o.attributes, "category");
+        if (!cat) continue;
+        if (cat->value_str == "traffic_light") ++tl_n;
+        else if (cat->value_str == "speed_limit") ++sl_n;
+        else ALG_LOGW("FillAlgResult: 未知 category '%s'，丢弃", cat->value_str.c_str());
     }
+
+    if (tl_n > 0) {
+        result->traffic_lights = static_cast<AlgTrafficLight*>(
+            std::calloc(tl_n, sizeof(AlgTrafficLight)));
+        if (!result->traffic_lights) return -1;
+    }
+    if (sl_n > 0) {
+        result->speed_limits = static_cast<AlgSpeedLimit*>(
+            std::calloc(sl_n, sizeof(AlgSpeedLimit)));
+        if (!result->speed_limits) {
+            std::free(result->traffic_lights);
+            result->traffic_lights = nullptr;
+            return -1;
+        }
+    }
+
+    /* 第二遍：填强类型字段。value 由后处理器在 Configure 时从
+     * class_names 推导，此处直接读取，不再硬编码映射表。 */
+    int ti = 0, si = 0;
+    for (const auto& o : objs) {
+        if (!o.has_box() || !o.has_attributes()) continue;
+        const Attribute* cat = FindAttr(o.attributes, "category");
+        if (!cat) continue;
+
+        if (cat->value_str == "traffic_light") {
+            AlgTrafficLight& dst = result->traffic_lights[ti++];
+            CopyBox(o.box, &dst.box);
+            dst.color = (o.value >= TLC_RED && o.value <= TLC_OFF)
+                        ? static_cast<AlgTrafficLightColor>(o.value) : TLC_INVALID;
+        } else if (cat->value_str == "speed_limit") {
+            AlgSpeedLimit& dst = result->speed_limits[si++];
+            CopyBox(o.box, &dst.box);
+            dst.value = (o.value >= SLV_10 && o.value <= SLV_120)
+                        ? static_cast<AlgSpeedLimitValue>(o.value) : SLV_INVALID;
+        }
+    }
+
+    result->traffic_light_count = ti;
+    result->speed_limit_count   = si;
     return 0;
 }
 

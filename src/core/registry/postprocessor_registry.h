@@ -1,6 +1,6 @@
 /**
  * @file postprocessor_registry.h
- * @brief 后处理类型注册表 —— 每个"模型类型"（fcos_face / pfld_landmark / ...）
+ * @brief 后处理类型注册表 —— 每个"模型类型"（yolox_det / yolov5_anchor_det / dualhead_classifier / ...）
  * 在自己的源文件里通过 REGISTER_ALG_POST 把构造函数挂进来。
  *
  * 新增模型只要：

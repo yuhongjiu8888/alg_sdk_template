@@ -1,6 +1,7 @@
 #include "core/solution/crop_util.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <opencv2/opencv.hpp>
 
@@ -64,29 +65,53 @@ bool CropFromDecoded(const cv::Mat& decoded_bgr, const AlgBox& box,
         float side = std::max(w, h);
         w = side; h = side;
     }
-    int x1 = static_cast<int>(cx - w * 0.5f);
-    int y1 = static_cast<int>(cy - h * 0.5f);
-    int x2 = static_cast<int>(cx + w * 0.5f);
-    int y2 = static_cast<int>(cy + h * 0.5f);
-    x1 = std::max(0, std::min(x1, src_w - 1));
-    y1 = std::max(0, std::min(y1, src_h - 1));
-    x2 = std::max(x1 + 1, std::min(x2, src_w));
-    y2 = std::max(y1 + 1, std::min(y2, src_h));
+    /* 期望的扩边框（可能越界；square 时为正方）。 */
+    int bx1 = static_cast<int>(std::lround(cx - w * 0.5f));
+    int by1 = static_cast<int>(std::lround(cy - h * 0.5f));
+    int bx2 = static_cast<int>(std::lround(cx + w * 0.5f));
+    int by2 = static_cast<int>(std::lround(cy + h * 0.5f));
+    if (bx2 <= bx1) bx2 = bx1 + 1;
+    if (by2 <= by1) by2 = by1 + 1;
 
-    /* 关键优化：ROI 视图，零拷贝。共享 decoded_bgr 的像素。 */
-    *holder = decoded_bgr(cv::Rect(x1, y1, x2 - x1, y2 - y1));
+    const bool inside = (bx1 >= 0 && by1 >= 0 && bx2 <= src_w && by2 <= src_h);
+
+    if (cfg.pad_value < 0 || inside) {
+        /* 旧行为：裁到图内（零拷贝 ROI 视图）。inside 时与扩边框一致；越界时 clamp
+         * 到边界（可能裁成非正方，下游 resize 会形变）。 */
+        int x1 = std::max(0, std::min(bx1, src_w - 1));
+        int y1 = std::max(0, std::min(by1, src_h - 1));
+        int x2 = std::max(x1 + 1, std::min(bx2, src_w));
+        int y2 = std::max(y1 + 1, std::min(by2, src_h));
+        *holder      = decoded_bgr(cv::Rect(x1, y1, x2 - x1, y2 - y1));
+        out->stride  = static_cast<int>(holder->step);  /* 非连续，下游必须按 stride 读 */
+        xf->offset_x = x1;
+        xf->offset_y = y1;
+    } else {
+        /* padded 模式：产出完整扩边（square 时为正方）区域，越界部分用 pad_value 灰填，
+         * 与训练端 infer.py::_crop_for_classifier 的 cv2.warpAffine(borderValue=114) 等价。
+         * 否则贴边的牌被 clamp+stretch 形变，OCR 逐位读数会把最左/最右位读错（如 110→10）。 */
+        const int cw = bx2 - bx1;
+        const int ch = by2 - by1;
+        holder->create(ch, cw, CV_8UC3);
+        holder->setTo(cv::Scalar::all(cfg.pad_value));
+        const int ix1 = std::max(0, bx1), iy1 = std::max(0, by1);
+        const int ix2 = std::min(src_w, bx2), iy2 = std::min(src_h, by2);
+        if (ix2 > ix1 && iy2 > iy1) {
+            decoded_bgr(cv::Rect(ix1, iy1, ix2 - ix1, iy2 - iy1))
+                .copyTo((*holder)(cv::Rect(ix1 - bx1, iy1 - by1, ix2 - ix1, iy2 - iy1)));
+        }
+        out->stride  = static_cast<int>(holder->step);
+        xf->offset_x = bx1;  /* 可能为负：MapBackToOriginal 加回后仍是正确原图坐标 */
+        xf->offset_y = by1;
+    }
 
     out->format   = ALG_PIX_BGR;
     out->width    = holder->cols;
     out->height   = holder->rows;
-    out->stride   = static_cast<int>(holder->step);  /* 非连续，下游必须按 stride 读 */
     out->data_len = static_cast<int>(holder->step) * holder->rows;
     out->data     = holder->data;
-
-    xf->offset_x = x1;
-    xf->offset_y = y1;
-    xf->crop_w   = holder->cols;
-    xf->crop_h   = holder->rows;
+    xf->crop_w    = holder->cols;
+    xf->crop_h    = holder->rows;
     return true;
 }
 

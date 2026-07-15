@@ -36,14 +36,29 @@ enum class StageInputKind {
 /* Stage 输出落地类型。 */
 enum class StageOutputKind {
     kCreateObjects,    /* 本 stage 的产物作为 top-level objects（典型：detector） */
-    kFillKeypoints,    /* 本 stage 的产物填到 target_stage 已产 objects 的 keypoints 字段 */
-    kFillAttributes,   /* 同上，attributes 字段 */
-    kFillEmbedding,    /* 同上，embedding 字段 */
+    kFillAttributes,   /* 本 stage 的产物填到 target_stage 已产 objects 的 attributes 字段 */
+    kClassifyInto,     /* 分类器：合并 attributes，把 sub.label 写回 src.label，
+                          src.box.score 乘以 sub.box.score（联合置信度）；
+                          子模型若返回空（典型：joint_conf 低于阈值）则丢弃 src 框。
+                          典型用法：detector → ROI classifier 二阶段，把识别置信度低的框过滤掉。 */
+    kKeypointsInto,    /* 关键点回归：把 sub.keypoints 写回 src.keypoints（内部预留） */
+    kMaskInto,         /* 分割掩码：把 sub.mask 写回 src.mask（内部预留） */
 };
 
 struct CropConfig {
     float expand_ratio = 1.0f;  /* 在 box 周围按比例扩边再裁剪 */
     bool  square = false;       /* 是否扩为正方形 */
+    int   pad_value = -1;       /* >=0：扩边框越界处用此灰度值填充（等价训练端 warpAffine
+                                   borderValue），保正方不形变；-1（默认）：旧行为 clamp 到图内 */
+};
+
+/* 固定 ROI 区域：在原图上按像素坐标裁剪后再送模型检测。 */
+struct RoiConfig {
+    bool enabled = false;
+    int x = 0;       /* 左上角 x（像素） */
+    int y = 0;       /* 左上角 y（像素） */
+    int width = 0;   /* 裁剪宽度 */
+    int height = 0;  /* 裁剪高度 */
 };
 
 struct StageConfig {
@@ -52,8 +67,11 @@ struct StageConfig {
     StageInputKind  input_kind;
     std::string     input_stage;     /* input_kind == kObjectsFromStage 时引用的 stage */
     CropConfig      crop;
+    RoiConfig       roi;
     StageOutputKind output_kind;
     std::string     output_target;   /* output_kind != kCreateObjects 时引用的 stage */
+    float           score_threshold = 0.0f;  /* classify_into：合并后联合分(det×cls)低于此值则 drop；
+                                                 0（默认）= 不过滤。卡的是各阶段阈值卡不到的两阶段乘积。 */
 };
 
 /* 整份 JSON 配置。 */

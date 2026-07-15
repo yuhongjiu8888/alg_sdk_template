@@ -63,10 +63,11 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
     }
     stage_produces_.assign(stages_.size(), {});
 
-    /* 3) 提前判定是否需要解码原图（有任何 ROI 子模型）。 */
+    /* 3) 提前判定是否需要解码原图（有 ROI 子模型或固定 ROI 裁剪）。 */
     needs_decoded_bgr_ = false;
     for (const auto& rs : stages_) {
-        if (rs.cfg.input_kind == StageInputKind::kObjectsFromStage) {
+        if (rs.cfg.input_kind == StageInputKind::kObjectsFromStage ||
+            (rs.cfg.input_kind == StageInputKind::kImage && rs.cfg.roi.enabled)) {
             needs_decoded_bgr_ = true;
             break;
         }
@@ -80,8 +81,6 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
 namespace {
 
 void MapBackToOriginal(std::vector<Object>* objs, const CropTransform& xf) {
-    const float dx = static_cast<float>(xf.offset_x);
-    const float dy = static_cast<float>(xf.offset_y);
     for (auto& o : *objs) {
         if (o.has_box()) {
             o.box.xmin += xf.offset_x;
@@ -89,26 +88,34 @@ void MapBackToOriginal(std::vector<Object>* objs, const CropTransform& xf) {
             o.box.ymin += xf.offset_y;
             o.box.ymax += xf.offset_y;
         }
-        if (o.has_keypoints()) {
-            for (auto& v : o.keypoints.x) v += dx;
-            for (auto& v : o.keypoints.y) v += dy;
-        }
     }
 }
 
 void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
     switch (kind) {
-        case StageOutputKind::kFillKeypoints:
-            dst->keypoints  = std::move(src.keypoints);
-            dst->field_mask |= ALG_FIELD_KEYPOINTS;
-            break;
         case StageOutputKind::kFillAttributes:
             dst->attributes = std::move(src.attributes);
             dst->field_mask |= ALG_FIELD_ATTRIBUTES;
             break;
-        case StageOutputKind::kFillEmbedding:
-            dst->embedding  = std::move(src.embedding);
-            dst->field_mask |= ALG_FIELD_EMBEDDING;
+        case StageOutputKind::kKeypointsInto:
+            dst->keypoints = std::move(src.keypoints);
+            dst->field_mask |= ALG_FIELD_KEYPOINTS;
+            break;
+        case StageOutputKind::kMaskInto:
+            dst->mask = std::move(src.mask);
+            dst->field_mask |= ALG_FIELD_MASK;
+            break;
+        case StageOutputKind::kClassifyInto:
+            /* 分类器：用 sub 的 label 覆盖 src，把 sub.box.score 当分类置信度乘到
+             * src.box.score（detector_score × classifier_conf = 联合置信度）；
+             * attributes 全量并过来给 C API 透出。 */
+            dst->label     = src.label;
+            dst->value     = src.value;
+            dst->box.score = dst->box.score * src.box.score;
+            if (!src.attributes.empty()) {
+                dst->attributes = std::move(src.attributes);
+                dst->field_mask |= ALG_FIELD_ATTRIBUTES;
+            }
             break;
         case StageOutputKind::kCreateObjects:
             break;
@@ -120,11 +127,9 @@ void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
 void ResetStageObjects(std::vector<Object>& v) {
     for (auto& o : v) {
         o.field_mask = 0;
-        o.keypoints.x.clear();
-        o.keypoints.y.clear();
-        o.keypoints.score.clear();
+        o.label      = 0;
+        o.drop       = false;
         o.attributes.clear();
-        o.embedding.v.clear();
     }
     v.clear();  /* size=0, capacity 保留 */
 }
@@ -141,6 +146,35 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
 
     if (rs.cfg.input_kind == StageInputKind::kImage) {
         ResetStageObjects(out_bucket);
+
+        if (rs.cfg.roi.enabled) {
+            /* 固定 ROI 裁剪：在原图上裁出指定区域再送模型。 */
+            if (decoded_bgr.empty()) {
+                ALG_LOGE("ChainSolution: stage '%s' needs roi but decoded_bgr is empty",
+                         rs.cfg.name.c_str());
+                return ALG_E_PREPROCESS;
+            }
+            cv::Mat roi_holder;
+            AlgImage cropped;
+            CropTransform xf;
+            AlgBox roi_box;
+            roi_box.xmin = rs.cfg.roi.x;
+            roi_box.ymin = rs.cfg.roi.y;
+            roi_box.xmax = rs.cfg.roi.x + rs.cfg.roi.width;
+            roi_box.ymax = rs.cfg.roi.y + rs.cfg.roi.height;
+            CropConfig crop_cfg;  /* expand_ratio=1, square=false：不做扩展 */
+            if (!CropFromDecoded(decoded_bgr, roi_box, crop_cfg,
+                                 &roi_holder, &cropped, &xf)) {
+                ALG_LOGE("ChainSolution: stage '%s' roi crop failed", rs.cfg.name.c_str());
+                return ALG_E_PREPROCESS;
+            }
+            Status r = mi->Run(cropped, &out_bucket);
+            if (r != ALG_OK) return r;
+            /* 后处理输出的是裁剪图坐标，映射回原图。 */
+            MapBackToOriginal(&out_bucket, xf);
+            return ALG_OK;
+        }
+
         return mi->Run(image, &out_bucket);
     }
 
@@ -157,17 +191,35 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
     std::vector<Object> sub;  /* 子模型一次产出（通常 1 个对象），栈对象，小 */
 
     for (auto& src : src_objs) {
+        if (src.drop) continue;
         if (!src.has_box()) continue;
-        if (!CropFromDecoded(decoded_bgr, src.box, rs.cfg.crop, &roi_holder, &cropped, &xf))
+        if (!CropFromDecoded(decoded_bgr, src.box, rs.cfg.crop, &roi_holder, &cropped, &xf)) {
+            /* 框完全在画外或裁出空 ROI；classify_into 视为分类失败 → drop。 */
+            if (rs.cfg.output_kind == StageOutputKind::kClassifyInto) src.drop = true;
             continue;
+        }
 
         sub.clear();
         Status r = mi->Run(cropped, &sub);
         if (r != ALG_OK) return r;
-        MapBackToOriginal(&sub, xf);
+        /* classify_into 用的是 label / box.score 覆盖语义，sub.box 是 ROI 内坐标
+         * （分类器一般不输出真实 box），跳过坐标反映射避免污染 src.box。 */
+        if (rs.cfg.output_kind != StageOutputKind::kClassifyInto)
+            MapBackToOriginal(&sub, xf);
 
         if (rs.cfg.output_kind == StageOutputKind::kCreateObjects) {
             for (auto& o : sub) out_bucket.push_back(std::move(o));
+        } else if (rs.cfg.output_kind == StageOutputKind::kClassifyInto) {
+            if (sub.empty()) {
+                src.drop = true;
+            } else {
+                MergeFields(&src, std::move(sub.front()), rs.cfg.output_kind);
+                /* 联合分阈值：MergeFields 后 src.box.score = det×cls（最终对外分数）。
+                 * 检测/分类各自的 conf_threshold 只卡各自分数，两头都勉强过线时乘积仍可能偏低，
+                 * 这里按联合分兜底过滤（0 = 关闭）。 */
+                if (rs.cfg.score_threshold > 0.0f && src.box.score < rs.cfg.score_threshold)
+                    src.drop = true;
+            }
         } else {
             if (!sub.empty())
                 MergeFields(&src, std::move(sub.front()), rs.cfg.output_kind);
@@ -198,8 +250,10 @@ Status ChainSolution::Run(const AlgImage& image, std::vector<Object>* out_object
     out_objects->clear();
     for (size_t i = 0; i < stages_.size(); ++i) {
         if (stages_[i].cfg.output_kind != StageOutputKind::kCreateObjects) continue;
-        for (auto& o : stage_produces_[i].objects)
+        for (auto& o : stage_produces_[i].objects) {
+            if (o.drop) continue;  /* classify_into 已标记应丢弃的框 */
             out_objects->push_back(std::move(o));
+        }
     }
     return ALG_OK;
 }

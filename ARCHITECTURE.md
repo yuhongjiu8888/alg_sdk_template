@@ -11,9 +11,9 @@
 |----------------------------|-------------------------------------------------------------------|
 | 移植芯片成本接近为零        | 换 NPU 厂商时只重写一个类，前/后处理、业务编排、C API 完全不动     |
 | 加模型类型成本接近为零      | 新模型 = 一个目录 + 一行注册；不改公共头、不改 C API、不改 Solution |
-| 业务编排无需重编            | 检测→关键点→属性→...的整条流水线写在 JSON 里                       |
+| 业务编排无需重编            | 检测→识别→...的整条流水线写在 JSON 里                              |
 | 参数调优无需重编            | 阈值、输入尺寸、均值方差等全部 JSON 化                              |
-| 同一个 .so 适配不同业务     | 人脸 SDK、车辆 SDK、烟火 SDK 共用一个二进制，只换 JSON              |
+| 同一个 .so 适配不同业务     | 红绿灯检测、限速牌识别、并行版共用一个二进制，只换 JSON               |
 | 零额外内存拷贝              | 前处理直接写进芯片输入张量，不走中间 buffer                         |
 
 ---
@@ -39,7 +39,7 @@
    ▼                               ▼                                  ▼
 IPreprocessor                  IInferer                          IPostprocessor
 (数据驱动)                     (每芯片一份)                       (每模型类型一份)
-LetterboxPreprocessor          XmmInferer / RkInferer / ...      FcosFace / Pfld / FaceAttr / ...
+LetterboxPreprocessor          XmmInferer / RkInferer / ...      YoloxDet / Yolov5AnchorDet / DualheadClassifier / ...
 ```
 
 | 变化轴                 | 抽象              | 源码位置                    | 用到的 C++ 特性                     |
@@ -57,15 +57,12 @@ LetterboxPreprocessor          XmmInferer / RkInferer / ...      FcosFace / Pfld
 
 ```
 include/                       公共 C ABI（应用方唯一依赖）
-  alg_types.h                  AlgResult / AlgObject / 子结构、错误码、像素格式
+  alg_types.h                  AlgResult / AlgTrafficLight / AlgSpeedLimit / 错误码、像素格式
   alg_interface.h              AlgCreate / AlgRun / AlgDestroy / AlgFreeResult
 
-resources/                     示例 JSON 业务配置
-  face_only.json               单模型：纯检测
-  face_full.json               三段链：检测→关键点→属性
-  smoke_only.json              非人脸单模型示例
-  vehicle_plate.json           非人脸级联示例
-  face_and_vehicle.json        并行检测示例
+resources/                     示例 JSON 业务配置（本分支落地模型）
+  traffic_light.json           红绿灯：单阶段 YOLOX 4 类（416×416 RGB）
+  speed_limit.json             巴西限速牌：检测 + OCR 三头逐位识别（classify_into 过滤低置信）
 
 src/
   interface/                   C ABI → C++ 实现的胶水层
@@ -84,9 +81,10 @@ src/
     solution/                  ChainSolution（多模型业务编排）+ CropFromBox
 
   models/                      每种模型类型一个目录
-    fcos_face/                 单类别 FCOS anchor-free 检测
-    pfld_landmark/             N 点关键点回归
-    face_attribute/            多任务分类/回归头
+    yolox_det/                 mmyolo YOLOXHead 多尺度（offset=0 grid，class-aware NMS）
+    yolov5_anchor_det/         单尺度 anchor + sigmoid decode（SpeedSignNet）
+    ocr_classifier/            三头逐位数字 OCR + class_names 驱动解码 + 置信度过滤（限速牌 12 类）
+    dualhead_classifier/       旧双头数字识别（限速牌 9 类，保留向后兼容）
 
   backend/                     每种芯片一个目录
     backend_factory.h          MakeInferer() / BackendName() 入口（编译期绑定）
@@ -94,7 +92,7 @@ src/
     rk/                        Rockchip RKNN（桩示例）
 
 cmake/                         构建配置（按 ALG_PLATFORM + ALG_BACKEND 拼接）
-test/test_facedet.cpp          API 烟雾测试
+test/test_runner.cpp           通用 runner：./test_runner <solution.json> <image>
 ```
 
 ---
@@ -231,29 +229,32 @@ for stage in stages:
             map_back_to_original(sub_objs, xf)
             if stage.produces == "objects":
                 state[stage.name].append(sub_objs)
-            else:  // keypoints_into / attributes_into / embedding_into
-                merge sub_objs[0]'s field into object
+            else:  // attributes_into / classify_into
+                merge sub_objs[0]'s field into object (classify_into 还会更新 label / box.score 或 drop)
 
 return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
 ```
 
 并行检测（场景 C，多个 `produces:"objects"` 的 stage）天然就在最后那行 ⋃ 处合并。
 
-### 4.7 `Object` ↔ `AlgObject` —— 内外两套类型
+### 4.7 内部 `Object` ↔ 外部 `AlgResult.traffic_lights[] / speed_limits[]`
 
-| 内部 (`alg::Object`)            | 外部 (`AlgObject`)              |
-|---------------------------------|---------------------------------|
-| C++，std::vector/string         | C ABI，裸指针 + count           |
-| Solution / postprocessor 操作    | 应用层看到的最终结构             |
+| 内部 (`alg::Object`)                        | 外部 (强类型 ABI)                                |
+|---------------------------------------------|--------------------------------------------------|
+| C++，统一形态：box + attributes + drop      | C ABI，按业务分桶：AlgTrafficLight / AlgSpeedLimit |
+| Solution / postprocessor 操作               | 应用层看到的最终结构                              |
 
-边界翻译只在 C API 出口 `FillAlgResult()` 做一次：
-- malloc 数组、深拷贝向量 → 应用通过 `AlgFreeResult()` 一次释放全部。
+`FillAlgResult()` 在 C API 边界做一次翻译：
+- 按 `attributes["category"].value_str` 分桶到 `traffic_lights[]` / `speed_limits[]`
+- 读取后处理器写入的 `Object.value`（业务 enum 编号，0 留给 INVALID）填强类型字段；
+  红绿灯取颜色 enum，限速牌取 `AlgSpeedLimitValue`（ocr_classifier 由 class_names 解析数值 ÷ 10 得出）
+- malloc 出来的两个数组由用户通过 `AlgFreeResult()` 一次释放
 
 ---
 
 ## 5. 数据流
 
-### 5.1 一次 `AlgRun` 的全过程（以人脸全套为例）
+### 5.1 一次 `AlgRun` 的全过程（以限速牌二阶段为例）
 
 ```
 应用层调用 AlgRun(image)
@@ -261,38 +262,42 @@ return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
         ▼
 ChainSolution::Run(image, &objects)
         │
-        ├── stage "detector":
+        ├── stage "detector" (SpeedSignNet):
         │      ModelInstance::Run(image, &objs)
         │      ├── LetterboxPreprocessor::Apply ──┐
         │      │   image → xmm_input_tensor (零拷贝)│
         │      │   填 PreprocessState (scale/pad)   │
         │      ├── XmmInferer::Forward             │  ╲
-        │      │   flush input cache               │   ╲ 这里发生的所有事
-        │      │   xmedia_cl_graph_process         │    > 上层都不感知
+        │      │   flush input cache               │   ╲ 上层不感知
+        │      │   xmedia_cl_graph_process         │    >
         │      │   invalidate output cache         │   ╱
-        │      └── FcosFacePostprocessor::Apply ───┘
-        │          解码 cls/reg → NMS → 映射回原帧
-        │          → objs = [box, box, box]
+        │      └── Yolov5AnchorDetPostprocessor::Apply ──┘
+        │          score=σ(obj)×softmax(cls)；box=(σ*2-0.5+grid)*stride 解码 → NMS → 映射回原帧
+        │          → objs = [box(label=0,score=det_conf), ...]
         │      state["detector"] = objs
         │
-        ├── stage "landmark":
-        │      for each obj in state["detector"]:
-        │          CropFromBox(image, obj.box, expand=1.25, square=true)
+        ├── stage "classifier" (SpeedSignOCR, classify_into:detector):
+        │      for each obj in state["detector"] (跳过 obj.drop):
+        │          CropFromBox(image, obj.box, expand=1.5, square=true)
         │              → cropped_image + CropTransform xf
         │          ModelInstance::Run(cropped_image, &sub)
-        │              (同上 pre/infer/post)
-        │          MapBackToOriginal(sub, xf)
-        │          obj.keypoints  = sub[0].keypoints
-        │          obj.field_mask |= ALG_FIELD_KEYPOINTS
-        │
-        ├── stage "attribute":
-        │      for each obj in state["detector"]:
-        │          (同上，把 attributes 字段并回去)
+        │              (三头逐位 softmax+argmax → class_names LUT 解码 + 拒识)
+        │          if sub.empty():           # 字符组合非法 或 min(三头 prob) < conf_threshold
+        │              obj.drop = true
+        │          else:
+        │              obj.label     = sub[0].label        # 12 类 idx
+        │              obj.value     = sub[0].value        # AlgSpeedLimitValue（km/h÷10）
+        │              obj.box.score *= sub[0].box.score   # det × cls 联合
+        │              obj.attributes = sub[0].attributes
+        │              obj.field_mask |= ALG_FIELD_ATTRIBUTES
         │
         └── 汇总：所有 produces=="objects" 的 stage 输出 → out_objects
+                  跳过 obj.drop=true 的对象
                   → FillAlgResult(out_objects, &result)
-                  → 应用层拿到 AlgResult.objects[]
+                  → 应用层拿到 AlgResult.traffic_lights[] / speed_limits[]
 ```
+
+红绿灯单阶段更简单：只有 `stage "tld"`（YoloxDetPostprocessor），整个 classifier 段省略。
 
 ### 5.2 内存所有权时序
 
@@ -304,7 +309,7 @@ NPU 输入/输出张量        XmmInferer (MMZ)        IInferer 析构
 前处理临时 Mat（cv::Mat）LetterboxPreprocessor   按帧覆盖（复用）
 裁剪 ROI（cv::Mat）      ChainSolution           按对象一次性
 内部 Object/Keypoints   std::vector            ChainSolution::Run 内
-AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
+AlgTrafficLight[]/AlgSpeedLimit[]  malloc (C API 出口)  用户 AlgFreeResult 释放
 ```
 
 ---
@@ -322,11 +327,10 @@ AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
         "name": "<stage_id>",
         "model": "<key in models map>",
         "input": "image" | "objects_from:<earlier_stage>",
-        "crop":  { "expand_ratio": <float>, "square": <bool> },
+        "crop":  { "expand_ratio": <float>, "square": <bool>, "pad_value": <int> },
         "produces": "objects"
-                  | "keypoints_into:<earlier_stage>"
                   | "attributes_into:<earlier_stage>"
-                  | "embedding_into:<earlier_stage>"
+                  | "classify_into:<earlier_stage>"
       }
     ]
   },
@@ -358,10 +362,13 @@ AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
 |---------------------------|------------------------------|--------------------------------------------|
 | `image`                   | `objects`                    | 在原图上做检测                              |
 | `image`                   | `attributes_into:s`          | 全图分类（少见，但合法）                    |
-| `objects_from:s`          | `keypoints_into:s`           | 在 s 的每个 box 上做关键点回归              |
 | `objects_from:s`          | `attributes_into:s`          | 在 s 的每个 box 上做属性识别                |
-| `objects_from:s`          | `embedding_into:s`           | 在 s 的每个 box 上做特征提取                |
+| `objects_from:s`          | `classify_into:s`            | **在 s 的每个 box 上做识别**：合并 attributes，把 sub.label 写回 src.label，src.box.score *= sub.box.score 作联合置信度；分类器返回空 → 直接 drop 掉这个 src 框 |
 | `objects_from:s`          | `objects`                    | 在 s 的每个 ROI 上再做检测（少见）           |
+
+`classify_into` 与 `attributes_into` 的差别：前者是**带过滤的识别器**——分类器
+`Apply` 返回空 vector 即视为「该框未通过识别」，ChainSolution 在最终聚合阶段
+跳过被标记 `drop` 的对象。典型用法是限速牌二阶段链路里字符组合非法或分类置信度低于阈值的丢弃。
 
 ### 6.2 解析约束
 
@@ -391,7 +398,7 @@ AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
 
 ### 7.2 加新模型类型
 
-1. `src/models/<type>/<type>_postprocessor.h/.cpp` 派生 `IPostprocessor`，在 `Apply()` 里把输出塞进 `Object` 的对应字段（box / keypoints / attributes / embedding），置 `field_mask`。
+1. `src/models/<type>/<type>_postprocessor.h/.cpp` 派生 `IPostprocessor`，在 `Apply()` 里把输出塞进 `Object` 的对应字段（box / attributes），置 `field_mask`。
 2. 同目录 `<type>_register.cpp`：
    ```cpp
    REGISTER_ALG_POST("<type_name>", []{
@@ -452,12 +459,12 @@ AlgObject[]/子结构      malloc (C API 出口)     用户 AlgFreeResult 释放
 
 ### 为什么业务编排走 JSON 而不是 C++ 子类
 
-替代方案是每个业务派生一个 `ISolution`（face_full / vehicle_plate / smoke_only），
+替代方案是每个业务派生一个 `ISolution`（traffic_light / speed_limit / ...），
 但实际上端侧业务的迭代频率比模型/芯片高一个数量级：
 
 - 检测阈值要 A/B 测试 → 改 JSON 不重编
-- 关键点裁剪扩边比例要调 → 改 JSON 不重编
-- 增加一个属性头 → 加一行 JSON
+- ROI 裁剪扩边比例要调 → 改 JSON 不重编
+- 增加一个识别头 → 加一行 JSON
 - 减少一个 stage → 删一行 JSON
 
 JSON 化让算法工程师不依赖 C++ 工程师就能完成产品迭代。
@@ -465,9 +472,12 @@ C++ 侧只暴露**通用机制**（裁剪 + 字段合并 + 坐标反映射）。
 
 ### 为什么 ABI 用 `field_mask` 而不是多个独立结构
 
-多模型组合的输出形态种类有限（box / kps / attrs / embedding），
-但每个对象**是否带某个字段**会随 solution 变化。
-- 用 union：要么很难表达"既有 box 又有 kps"，要么内部需要标签字段（等于 field_mask）
+输出形态由 solution 决定：
+- 单阶段检测：仅 box
+- 检测 + 识别：box + attributes（attributes 里再装 class / category / 联合置信度）
+
+用 `field_mask` + 可空 attributes 子指针的好处：
+- 用 union：要么很难表达"既有 box 又有 attributes"，要么内部需要标签字段（等于 field_mask）
 - 每业务一个独立的 result 结构：C API 爆炸，应用侧难写通用代码
 - 用 `field_mask` + 可空子指针：单一稳定 ABI，组合性自然
 
@@ -477,7 +487,7 @@ C++ 侧只暴露**通用机制**（裁剪 + 字段合并 + 坐标反映射）。
 
 release 链接默认带 `-Wl,--gc-sections` + `-fdata-sections`。注册器是文件作用域的静态对象，
 对外**没有任何引用**（注册的副作用全靠构造函数），链接器会判定为死代码、丢掉整个 section，
-注册不发生，运行时 `Create("fcos_face")` 返回 `nullptr`。
+注册不发生，运行时 `Create("yolox_det")` 返回 `nullptr`。
 
 `__attribute__((used))` 告诉编译器"无论看上去有没有引用，都保留"。这是自注册工厂模式
 在 release 构建下的标准坑。

@@ -118,13 +118,23 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
     if (v.isMember("crop") && v["crop"].isObject()) {
         s->crop.expand_ratio = v["crop"].get("expand_ratio", 1.0f).asFloat();
         s->crop.square       = v["crop"].get("square", false).asBool();
+        s->crop.pad_value    = v["crop"].get("pad_value", -1).asInt();
     }
+    if (v.isMember("roi") && v["roi"].isObject()) {
+        const Json::Value& r = v["roi"];
+        s->roi.enabled = true;
+        s->roi.x      = r.get("x", 0).asInt();
+        s->roi.y      = r.get("y", 0).asInt();
+        s->roi.width  = r.get("width", 0).asInt();
+        s->roi.height = r.get("height", 0).asInt();
+    }
+    s->score_threshold = v.get("score_threshold", 0.0f).asFloat();
 
     std::string produces = v.get("produces", "objects").asString();
     if (produces == "objects") {
         s->output_kind = StageOutputKind::kCreateObjects;
     } else {
-        /* "keypoints_into:<stage>" / "attributes_into:<stage>" / "embedding_into:<stage>" */
+        /* "attributes_into:<stage>" / "classify_into:<stage>" */
         auto parse_into = [&](const std::string& tag, StageOutputKind kind) -> int {
             const std::string prefix = tag + ":";
             if (produces.rfind(prefix, 0) != 0) return 0;
@@ -132,9 +142,10 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
             s->output_target = produces.substr(prefix.size());
             return 1;
         };
-        if (!parse_into("keypoints_into",  StageOutputKind::kFillKeypoints) &&
-            !parse_into("attributes_into", StageOutputKind::kFillAttributes) &&
-            !parse_into("embedding_into",  StageOutputKind::kFillEmbedding)) {
+        if (!parse_into("attributes_into", StageOutputKind::kFillAttributes) &&
+            !parse_into("classify_into",   StageOutputKind::kClassifyInto) &&
+            !parse_into("keypoints_into",  StageOutputKind::kKeypointsInto) &&
+            !parse_into("mask_into",       StageOutputKind::kMaskInto)) {
             SetErr(err, "stage.produces unrecognized: " + produces);
             return false;
         }
@@ -199,6 +210,10 @@ AlgStatus LoadSolutionConfig(const std::string& path, SolutionConfig* out, std::
             !seen_stage_names.count(s.input_stage)) {
             SetErr(err_msg, "stage '" + s.name + "' inputs from unknown earlier stage '" +
                                 s.input_stage + "'");
+            return ALG_E_CONFIG;
+        }
+        if (s.roi.enabled && s.input_kind != StageInputKind::kImage) {
+            SetErr(err_msg, "stage '" + s.name + "': roi is only valid for input='image'");
             return ALG_E_CONFIG;
         }
         if (s.output_kind != StageOutputKind::kCreateObjects &&

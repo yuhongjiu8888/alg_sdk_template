@@ -1,9 +1,10 @@
 /**
  * @file alg_types.h
- * @brief 算法 SDK 的公共 C ABI 类型定义。
+ * @brief alg_sdk 公共 C ABI 类型定义。
  *
- * SDK 是多模型 + 多后端组合：一个 AlgRun 可能跑完检测→关键点→属性整条链。
- * 因此 AlgResult 是"对象数组"，每个对象用 field_mask 表明带了哪些子结果。
+ * 本分支聚焦红绿灯检测 + 巴西限速牌识别两个落地模型。AlgResult 用强类型字段
+ * 直接表达每个检测器的产出（traffic_lights[] / speed_limits[]），应用代码
+ * 不需要查 attribute 字符串，也不依赖 JSON 里 class_names 顺序之外的约定。
  */
 
 #ifndef ALG_TYPES_H
@@ -27,6 +28,10 @@
 #endif
 
 ALG_C_BEGIN
+
+/* ============================================================== */
+/*                          基础类型                                */
+/* ============================================================== */
 
 /* 不透明 SDK 句柄。 */
 typedef struct AlgContext* AlgHandle;
@@ -60,75 +65,96 @@ typedef struct AlgImage_ {
     AlgPixelFormat format;
     int            width;
     int            height;
-    int            stride;
-    int            data_len;
-    const void*    data;
+    int            stride;     /* 每行像素跨度（字节）；0 表示按 width * bpp 推算 */
+    int            data_len;   /* 像素数据字节数 */
+    const void*    data;       /* 像素数据缓冲区 */
 } AlgImage;
 
-/* 原图坐标系下的 2D 框。 */
+/* 原图坐标系下的 2D 检测框。
+ * score 含义：
+ *   - 红绿灯：检测置信度
+ *   - 限速牌：联合置信度 = 检测置信度 × OCR 分类置信度
+ * 应用统一只看这一个分数即可。 */
 typedef struct AlgBox_ {
     int   xmin, ymin, xmax, ymax;
     float score;
-    int   label; /* 类别 id，单类模型为 0 */
 } AlgBox;
 
-/* 关键点集合，xs/ys/scores 都是长度 = count 的数组（scores 可空）。 */
-typedef struct AlgKeypoints_ {
-    int    count;
-    float* xs;
-    float* ys;
-    float* scores;
-} AlgKeypoints;
+/* ============================================================== */
+/*                     红绿灯检测 (traffic light)                   */
+/* ============================================================== */
 
-/* 单个属性条目（性别 / 年龄 / 是否戴口罩 等）。 */
-typedef struct AlgAttribute_ {
-    char  name[32];
-    int   value_int;     /* 离散属性的类别 id（如 gender=1 表示女） */
-    float value_float;   /* 连续属性的回归值（如 age=27.3） */
-    char  value_str[32]; /* 可读字符串（如 "female"） */
-} AlgAttribute;
-
-typedef struct AlgAttributes_ {
-    int           count;
-    AlgAttribute* items;
-} AlgAttributes;
-
-/* Embedding 向量（人脸特征等）。 */
-typedef struct AlgEmbedding_ {
-    int    dim;
-    float* values;
-} AlgEmbedding;
-
-/* AlgObject.field_mask 的位标志。 */
-typedef enum AlgObjectField_ {
-    ALG_FIELD_BOX        = 1 << 0,
-    ALG_FIELD_KEYPOINTS  = 1 << 1,
-    ALG_FIELD_ATTRIBUTES = 1 << 2,
-    ALG_FIELD_EMBEDDING  = 1 << 3,
-} AlgObjectField;
-
-/*
- * 一个被检测出来的"目标"。
+/* 红绿灯颜色类别。
  *
- * - 纯检测模型：仅 box 字段有效，field_mask = ALG_FIELD_BOX。
- * - 检测+关键点+属性的人脸全套：box | keypoints | attributes 都有效。
- * - 纯分类（无 box）：field_mask = ALG_FIELD_ATTRIBUTES，整个 AlgResult 只有一个 object。
- *
- * 所有 AlgKeypoints* / AlgAttributes* / AlgEmbedding* 由 SDK 持有；
- * 用户通过 AlgFreeResult 统一释放。
- */
-typedef struct AlgObject_ {
-    int            field_mask;
-    AlgBox         box;
-    AlgKeypoints*  keypoints;
-    AlgAttributes* attributes;
-    AlgEmbedding*  embedding;
-} AlgObject;
+ * 枚举值 = JSON 中 tld_cfg.postprocess.class_names[label] 的下标 + 1，0 留作 INVALID。
+ * 顺序约定：class_names 必须按
+ *     ["red_light", "yellow_light", "green_light", "off_light"]
+ * 排列，否则颜色映射会错位。 */
+typedef enum AlgTrafficLightColor_ {
+    TLC_INVALID = 0,    /* 检测到了但分类异常（正常不出现） */
+    TLC_RED     = 1,    /* 红灯 */
+    TLC_YELLOW  = 2,    /* 黄灯 */
+    TLC_GREEN   = 3,    /* 绿灯 */
+    TLC_OFF     = 4,    /* 熄灭 */
+} AlgTrafficLightColor;
 
+/* 单个红绿灯检测结果。 */
+typedef struct AlgTrafficLight_ {
+    AlgBox                box;     /* 原图坐标系下的框，box.score = 检测置信度 */
+    AlgTrafficLightColor  color;
+} AlgTrafficLight;
+
+/* ============================================================== */
+/*                   限速牌识别 (speed limit sign)                  */
+/* ============================================================== */
+
+/* 限速牌类别。枚举编号即 km/h ÷ 10（SLV_10=1→10km/h, ..., SLV_120=12→120km/h），
+ * 限速值都是 10 的倍数，故 value × 10 == km/h，应用可直接换算或 switch / 查表。
+ *
+ * value 由后处理器从 cls_cfg.postprocess.class_names 推导（解析类名数值 ÷ 10），
+ * 不依赖 class_names 的排列顺序（v3.4 OCR 的 class_names 是"追加排序"而非数值序）。
+ * 0 留作 INVALID。 */
+typedef enum AlgSpeedLimitValue_ {
+    SLV_INVALID = 0,    /* 二阶段分类置信度 < 阈值 / 字符组合非法的框已由 SDK 内部 drop，正常不出现 */
+    SLV_10      = 1,
+    SLV_20      = 2,
+    SLV_30      = 3,
+    SLV_40      = 4,
+    SLV_50      = 5,
+    SLV_60      = 6,
+    SLV_70      = 7,
+    SLV_80      = 8,
+    SLV_90      = 9,
+    SLV_100     = 10,
+    SLV_110     = 11,
+    SLV_120     = 12,
+} AlgSpeedLimitValue;
+
+/* 单个限速牌识别结果。 */
+typedef struct AlgSpeedLimit_ {
+    AlgBox              box;          /* 原图坐标系下的框，box.score = det × cls 联合置信度 */
+    AlgSpeedLimitValue  value;        /* 限速值类别（enum），编号即隐含 km/h */
+} AlgSpeedLimit;
+
+/* ============================================================== */
+/*                          完整结果                                */
+/* ============================================================== */
+
+/* 一帧的算法输出。
+ *
+ *  - 单 solution 跑红绿灯 (traffic_light.json)：只有 traffic_lights 非空。
+ *  - 单 solution 跑限速牌 (speed_limit.json)：  只有 speed_limits 非空。
+ *  - 二合一 (all.json)：两个数组都可能非空。
+ *
+ * 两个数组由 SDK 持有；应用通过 AlgFreeResult 一次性释放。 */
 typedef struct AlgResult_ {
-    long long  frame_id;
-    int        object_count;
-    AlgObject* objects;
+    long long           frame_id;
+
+    int                 traffic_light_count;
+    AlgTrafficLight*    traffic_lights;
+
+    int                 speed_limit_count;
+    AlgSpeedLimit*      speed_limits;
 } AlgResult;
 
 ALG_C_END

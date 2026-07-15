@@ -1,5 +1,6 @@
 #include "backend/xmm/xmm_inferer.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -26,9 +27,14 @@ DataType MapDtype(int xmm_dtype) {
         case XMEDIA_CL_UINT8:   return DataType::kU8;
         case XMEDIA_CL_INT8:    return DataType::kI8;
         case XMEDIA_CL_INT16:   return DataType::kI16;
-        case XMEDIA_CL_FLOAT16: return DataType::kF16;
-        case XMEDIA_CL_FLOAT32: return DataType::kF32;
-        default:                return DataType::kU8;
+        case XMEDIA_CL_UINT16:  return DataType::kU16;
+        case XMEDIA_CL_FP16:    return DataType::kF16;
+        case XMEDIA_CL_INT32:   return DataType::kI32;
+        default:
+            /* 静默落到 kU8 会把 FP16 等当成单字节，按 (raw-zp)*scale 解出全是
+             * 垃圾值 → 后处理 obj 全低 → 一个框都检不出。宁可吵也别静默。 */
+            ALG_LOGW("MapDtype: unknown xmm dtype=%d, fallback kU8 (likely wrong)", xmm_dtype);
+            return DataType::kU8;
     }
 }
 
@@ -53,9 +59,12 @@ void XmmMmzFree(xmedia_u64& phy, void*& vir) {
 }
 
 int AllocInoutInfo(xmedia_cl_tensor_info_inout* io) {
-    io->tensor = static_cast<xmedia_cl_tensor*>(malloc(sizeof(xmedia_cl_tensor) * io->num));
-    io->current_batch = static_cast<xmedia_cl_u32*>(malloc(sizeof(xmedia_cl_u32) * io->num));
-    io->tensor_batch = static_cast<xmedia_cl_tensor_batch*>(malloc(sizeof(xmedia_cl_tensor_batch) * io->num));
+    /* 必须用 calloc：current_batch / tensor_batch 会被 set_inout 当 batch 配置读取，
+     * malloc 留下的脏值会让 NPU 用错误的 batch 跑图，infer 不报错但输出是垃圾。
+     * 对齐板端 demo（sample_speedsignnet.cpp::alloc_inout_mem）与 test_xmm.c。 */
+    io->tensor = static_cast<xmedia_cl_tensor*>(calloc(io->num, sizeof(xmedia_cl_tensor)));
+    io->current_batch = static_cast<xmedia_cl_u32*>(calloc(io->num, sizeof(xmedia_cl_u32)));
+    io->tensor_batch = static_cast<xmedia_cl_tensor_batch*>(calloc(io->num, sizeof(xmedia_cl_tensor_batch)));
     if (!io->tensor || !io->current_batch || !io->tensor_batch) return XMEDIA_CL_OUT_OF_HOST_MEMORY;
     return XMEDIA_CL_SUCCESS;
 }
@@ -65,6 +74,68 @@ void FreeInoutInfo(xmedia_cl_tensor_info_inout* io) {
     free(io->current_batch);   io->current_batch = nullptr;
     free(io->tensor_batch);    io->tensor_batch = nullptr;
 }
+
+/*
+ * 进程级共享运行时：sys_init / cl_init / device 枚举 / context 都是 NPU 全局
+ * 单例，绝不能每个模型各做一份。两阶段会建两个 XmmInferer，若各自 init/uninit
+ * 并各建一个 context，会互相把全局状态冲掉 → 推理跑在坏 context 上 → 输出垃圾。
+ * 对齐板端 demo（sample_speedsignnet.cpp）：全程只 init 一次、一个 context，
+ * 两个 graph 共享。引用计数到 0 才真正 uninit。
+ * 注：端侧推理为单线程顺序执行，这里不加锁。
+ */
+struct XmmRuntime {
+    int                   refcount = 0;
+    xmedia_cl_device_id*  devices = nullptr;
+    xmedia_cl_u32         num_devices = 0;
+    xmedia_cl_context     context = nullptr;
+
+    xmedia_cl_s32 Acquire() {
+        if (refcount > 0) { ++refcount; return XMEDIA_CL_SUCCESS; }
+
+        xmedia_cl_s32 ret = xmedia_sys_init(XMEDIA_NULL);
+        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("sys_init=%d", ret); return ret; }
+        ret = xmedia_cl_init();
+        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("cl_init=%d", ret); xmedia_sys_exit(); return ret; }
+
+        ret = xmedia_cl_get_device_ids(XMEDIA_CL_DEVICE_ALL, NULL, &num_devices);
+        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_device_ids(count)=%d", ret); goto fail_cl; }
+        devices = static_cast<xmedia_cl_device_id*>(calloc(num_devices, sizeof(xmedia_cl_device_id)));
+        if (!devices) { ALG_LOGE("calloc devices failed"); goto fail_cl; }
+        ret = xmedia_cl_get_device_ids(XMEDIA_CL_DEVICE_ALL, devices, &num_devices);
+        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_device_ids=%d", ret); goto fail_dev; }
+
+        xmedia_cl_s32 err;
+        err = 0;
+        context = xmedia_cl_create_context(num_devices, devices, &err);
+        if (err != XMEDIA_CL_SUCCESS) { ALG_LOGE("create_context=%d", err); ret = err; goto fail_dev; }
+
+        refcount = 1;
+        return XMEDIA_CL_SUCCESS;
+
+    fail_dev:
+        free(devices);
+        devices = nullptr;
+    fail_cl:
+        xmedia_cl_uninit();
+        xmedia_sys_exit();
+        return ret;
+    }
+
+    void Release() {
+        if (refcount <= 0) return;
+        if (--refcount > 0) return;
+        if (context) { xmedia_cl_release_context(context); context = nullptr; }
+        if (devices) {
+            xmedia_cl_release_device_ids(devices, &num_devices);
+            free(devices);
+            devices = nullptr;
+        }
+        xmedia_cl_uninit();
+        xmedia_sys_exit();
+    }
+};
+
+XmmRuntime g_rt;
 
 }  // namespace
 
@@ -76,53 +147,36 @@ XmmInferer::XmmInferer() {
 XmmInferer::~XmmInferer() { FreeAll(); }
 
 void XmmInferer::FreeAll() {
-    if (!initialized_ && !context_ && !devices_ && !vir_input_ && !vir_output_ &&
+    if (!acquired_ && !graph_ && !vir_input_ && !vir_output_ &&
         !vir_workspace_ && !vir_weight_) {
         return;
     }
     FreeInoutInfo(&cl_input_);
     FreeInoutInfo(&cl_output_);
+    /* graph 在共享 context 仍存活时卸载（与 demo session_release 顺序一致）。 */
     if (graph_) { xmedia_cl_graph_unload(graph_); graph_ = nullptr; }
     XmmMmzFree(phy_workspace_, vir_workspace_);
     XmmMmzFree(phy_weight_, vir_weight_);
     XmmMmzFree(phy_input_, vir_input_);
     XmmMmzFree(phy_output_, vir_output_);
-    if (context_) { xmedia_cl_release_context(context_); context_ = nullptr; }
-    if (devices_) {
-        xmedia_cl_release_device_ids(devices_, &num_devices_);
-        free(devices_);
-        devices_ = nullptr;
-    }
-    xmedia_cl_uninit();
-    xmedia_sys_exit();
+    /* 只在最后一个 inferer 析构时才真正 release context + cl/sys uninit。 */
+    if (acquired_) { g_rt.Release(); acquired_ = false; }
     initialized_ = false;
 }
 
 Status XmmInferer::Load(const std::string& model_path) {
     if (initialized_) return ALG_E_INVALID_ARG;
 
-    XMM_TRY(xmedia_sys_init(XMEDIA_NULL), "xmedia_sys_init");
-
-    xmedia_cl_s32 ret = xmedia_cl_init();
-    if (ret != XMEDIA_CL_SUCCESS) {
-        xmedia_sys_exit();
-        ALG_LOGE("xmedia_cl_init=%d", ret);
+    /* 取共享运行时（首个实例真正 init，其余只 ++refcount）。 */
+    if (g_rt.Acquire() != XMEDIA_CL_SUCCESS) {
+        ALG_LOGE("XmmRuntime acquire failed");
         return ALG_E_BACKEND;
     }
+    acquired_ = true;
 
+    xmedia_cl_s32 ret;
     Status status = ALG_E_BACKEND;
     do {
-        ret = xmedia_cl_get_device_ids(XMEDIA_CL_DEVICE_ALL, NULL, &num_devices_);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_device_ids(count)=%d", ret); break; }
-        devices_ = static_cast<xmedia_cl_device_id*>(calloc(num_devices_, sizeof(xmedia_cl_device_id)));
-        if (!devices_) { ALG_LOGE("calloc devices failed"); break; }
-        ret = xmedia_cl_get_device_ids(XMEDIA_CL_DEVICE_ALL, devices_, &num_devices_);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_device_ids=%d", ret); break; }
-
-        xmedia_cl_s32 err = 0;
-        context_ = xmedia_cl_create_context(num_devices_, devices_, &err);
-        if (err != XMEDIA_CL_SUCCESS) { ALG_LOGE("create_context=%d", err); break; }
-
         xmedia_cl_u32 worksize = 0, weightsize = 0;
         ret = xmedia_cl_graph_querysize_from_file(model_path.c_str(), &worksize, &weightsize);
         if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("querysize=%d", ret); break; }
@@ -130,7 +184,8 @@ Status XmmInferer::Load(const std::string& model_path) {
         if (worksize && XmmMmzAllocCached(&phy_workspace_, &vir_workspace_, "npu_ws", worksize) != 0) break;
         if (weightsize && XmmMmzAllocCached(&phy_weight_, &vir_weight_, "npu_wt", weightsize) != 0) break;
 
-        ret = xmedia_cl_graph_loadmodel_from_file_withmem(&context_, model_path.c_str(),
+        /* 两个 graph 共享同一个 context（&g_rt.context）——与 demo 一致。 */
+        ret = xmedia_cl_graph_loadmodel_from_file_withmem(&g_rt.context, model_path.c_str(),
                                                           vir_workspace_, worksize,
                                                           vir_weight_, weightsize, &graph_);
         if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("loadmodel=%d", ret); break; }
@@ -171,6 +226,9 @@ Status XmmInferer::Load(const std::string& model_path) {
                 cl_output_.tensor[i].addr = base;
                 base += ALIGN_UP(cl_output_.tensor[i].size, ALIGN_BYTES);
             }
+            /* 不在此 memset 输出：对齐 vendor model_process.cpp（只在 process 后
+             * flush_cache 输出做 invalidate）。memset 会弄脏 cache line，若 flush
+             * 走 clean 路径反而把脏值写回覆盖 NPU 结果。 */
         }
 
         ret = xmedia_cl_graph_set_inout(graph_, &cl_input_, &cl_output_);
@@ -204,6 +262,30 @@ Status XmmInferer::BuildViews() {
     output_views_.clear();
     for (xmedia_cl_u32 i = 0; i < cl_input_.num; ++i)  input_views_.push_back(fill(cl_input_.tensor[i]));
     for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) output_views_.push_back(fill(cl_output_.tensor[i]));
+
+    /* —— 一次性诊断：板端检不出框时先确认 NPU tensor 元数据 ——
+     * 重点看 output：
+     *   type=4 → FP16（之前 MapDtype 漏了会当 U8 解，全是垃圾值）；
+     *   dims 与 pch 不一致 → NPU 对维度做了对齐补位（pitch != dims），
+     *     后处理按密排 idx 取数会错位 → 也读出垃圾。
+     * 确认后可删掉这段。 */
+    auto dump = [](const char* tag, const xmedia_cl_tensor_info_inout& io) {
+        for (xmedia_cl_u32 i = 0; i < io.num; ++i) {
+            const xmedia_cl_tensor& t = io.tensor[i];
+            char dims[64] = {0}, pch[64] = {0};
+            int dn = 0, pn = 0;
+            for (xmedia_cl_u32 d = 0; d < t.shape.ndims && dn < 56; ++d)
+                dn += snprintf(dims + dn, sizeof(dims) - dn, "%u,", t.shape.dims[d]);
+            for (xmedia_cl_u32 d = 0; d < t.shape.ndims && pn < 56; ++d)
+                pn += snprintf(pch + pn, sizeof(pch) - pn, "%u,", t.shape.pch[d]);
+            ALG_LOGD("[xmm-diag] %s[%u] tid=%u name=%s type=%d ndims=%u dims=[%s] pch=[%s] "
+                     "scale=%g zp=%d size=%u addr=%p",
+                     tag, i, t.tensor_id, t.name ? (const char*)t.name : "", (int)t.shape.type,
+                     t.shape.ndims, dims, pch, t.quant.scale, (int)t.quant.zp, t.size, t.addr);
+        }
+    };
+    dump("in", cl_input_);
+    dump("out", cl_output_);
     return ALG_OK;
 }
 
@@ -212,13 +294,68 @@ Status XmmInferer::Forward() {
 
     xmedia_mmz_flush_cache(phy_input_, vir_input_, input_total_size_);
 
+    /* —— 一次性诊断：确认预处理真把图像写进了 NPU 输入 buffer ——
+     * 全 0 或常数 → 预处理没写进来；正常图像应是 0..255 大范围分布。
+     * 首个 Forward 是 stage1 检测器，正好对应检测输入。确认后删除。 */
+    {
+        static int dumped = 0;
+        if (dumped < 3) {
+            ++dumped;
+            const uint8_t* p = static_cast<const uint8_t*>(vir_input_);
+            int mn = 255, mx = 0;
+            unsigned long sum = 0;
+            for (xmedia_u32 i = 0; i < input_total_size_; ++i) {
+                int v = p[i];
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+                sum += v;
+            }
+            ALG_LOGD("[in-diag] input bytes: size=%u min=%d max=%d mean=%.1f first8=%d,%d,%d,%d,%d,%d,%d,%d",
+                     input_total_size_, mn, mx,
+                     input_total_size_ ? (double)sum / input_total_size_ : 0.0,
+                     p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+        }
+    }
+
     xmedia_cl_s32 ret = xmedia_cl_graph_process(graph_);
     if (ret != XMEDIA_CL_SUCCESS) {
         ALG_LOGE("graph_process=%d", ret);
         return ALG_E_BACKEND;
     }
 
+    /* process 后必须 invalidate 输出 cache，否则 CPU 读到陈旧缓存。
+     * 多输出小张量尤其致命：三头各 11B、地址相邻，同落一条 64B cache line，
+     * 不 invalidate 会三次读到同一份没刷新的数据（== 之前三头读到同值的根因）。
+     * 对齐 vendor model_process.cpp::Run 的输出 flush_cache。 */
     xmedia_mmz_flush_cache(phy_output_, vir_output_, output_total_size_);
+
+    /* —— 一次性诊断：process 后按物理顺序打印每个输出的 tid+addr+原始字节 ——
+     * 验证多输出绑定/顺序：若三块 tid 不同但字节相同 → NPU 把同一份写进了三块；
+     * 若 addr 跟 Load 时不同 → NPU 动态改了输出地址（非拷贝模式）。确认后删除。 */
+    {
+        static int dumped_out = 0;
+        if (dumped_out < 3 && cl_output_.num > 1) {
+            ++dumped_out;
+            for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
+                const xmedia_cl_tensor& t = cl_output_.tensor[i];
+                const uint8_t* b = static_cast<const uint8_t*>(t.addr);
+                ALG_LOGD("[out-diag] out[%u] tid=%u addr=%p size=%u raw8=%d,%d,%d,%d,%d,%d,%d,%d",
+                         i, t.tensor_id, t.addr, t.size,
+                         b ? b[0] : -1, b ? b[1] : -1, b ? b[2] : -1, b ? b[3] : -1,
+                         b ? b[4] : -1, b ? b[5] : -1, b ? b[6] : -1, b ? b[7] : -1);
+            }
+            /* dump out[0] 那一页开头 48 字节：若 head1/head2 的真实数据紧挨 head0
+             * 之后 → NPU 从 base 连续写（SDK 可按偏移读）；若后面是 padding/常数
+             * → NPU 只产出 head0（export 裁了另两路）。 */
+            const uint8_t* p0 = static_cast<const uint8_t*>(cl_output_.tensor[0].addr);
+            if (p0) {
+                char hex[256]; int n = 0;
+                for (int k = 0; k < 48; ++k)
+                    n += snprintf(hex + n, sizeof(hex) - n, "%d,", p0[k]);
+                ALG_LOGD("[out-diag] out[0] page first48 = %s", hex);
+            }
+        }
+    }
 
     for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
         output_views_[i].data = cl_output_.tensor[i].addr;
