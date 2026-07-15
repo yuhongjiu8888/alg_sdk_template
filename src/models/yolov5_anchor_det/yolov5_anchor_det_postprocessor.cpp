@@ -181,10 +181,24 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
                     if (o > max_obj) { max_obj = o; mx = x; my = y; }
                     if (sc > max_score) max_score = sc;
                 }
+            /* v3.5：在最强检测点 dump 每个 cls 通道的读值 —— 板端 pare(cls>=1) 判别失效时，
+             * 对比 xmm_quantize 仿真的 [NPU dets] cls=1：若这里 pare 那路恒低/异常，说明板端
+             * 把该 cls 通道读错了（per-channel 量化单 scale 读不对 / pch!=dims 对齐错位）。 */
+            char clsbuf[160] = {0};
+            int cn = 0;
+            if (mx >= 0)
+                for (int c = 0; c < num_classes_ && cn < 140; ++c)
+                    cn += snprintf(clsbuf + cn, sizeof(clsbuf) - cn, "cls%d=%.3f ",
+                                   c, ReadElem(t, idx_at(cls_offset_ + c, my, mx)));
             ALG_LOGD("[det-diag] raw[min=%d max=%d] scale=%g zp=%d | max_obj=%.4f @(%d,%d) "
-                     "max_score=%.4f | n_pre(>=%.2f)=%d n_conf(>=%.2f)=%d / %d cells",
+                     "max_score=%.4f | n_pre(>=%.2f)=%d n_conf(>=%.2f)=%d / %d cells | "
+                     "@max_obj: %s(dims=%d,%d,%d,%d layout=%d)",
                      raw_min, raw_max, t.quant.scale, t.quant.zero_point, max_obj, mx, my,
-                     max_score, obj_prefilter_, n_pre, conf_threshold_, n_conf, H * W);
+                     max_score, obj_prefilter_, n_pre, conf_threshold_, n_conf, H * W,
+                     clsbuf, t.shape.ndims > 0 ? t.shape.dims[0] : 0,
+                     t.shape.ndims > 1 ? t.shape.dims[1] : 0,
+                     t.shape.ndims > 2 ? t.shape.dims[2] : 0,
+                     t.shape.ndims > 3 ? t.shape.dims[3] : 0, (int)t.layout);
         }
     }
 
@@ -239,7 +253,15 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
         static bool dumped2 = false;
         if (!dumped2) {
             dumped2 = true;
-            ALG_LOGD("[det-diag] NMS 后最终框数=%zu（这些会进 stage2 分类）", props_.size());
+            /* 打每个最终框的 label（0=round_sign 1=pare）：全是 0 = 板端 pare 判别失效
+             * （pare 框被判成 round → passthrough 不触发 → 进 OCR 被丢）。对比仿真应有 label=1。 */
+            char lbls[256] = {0};
+            int ln = 0;
+            for (size_t k = 0; k < props_.size() && ln < 240; ++k)
+                ln += snprintf(lbls + ln, sizeof(lbls) - ln, "%d(%.2f) ",
+                               props_[k].label, props_[k].score);
+            ALG_LOGD("[det-diag] NMS 后最终框数=%zu labels=[%s]（0=round 1=pare；全 0 则 pare 判别在板端失效）",
+                     props_.size(), lbls);
         }
     }
 
