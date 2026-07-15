@@ -47,6 +47,15 @@ int SLKmh(AlgSpeedLimitValue v) {
     return 0;
 }
 
+const char* SignName(AlgSignType t) {
+    switch (t) {
+        case SIGN_NO_PARKING: return "no_parking";
+        case SIGN_PARE:       return "pare";
+        case SIGN_INVALID:
+        default:              return "invalid";
+    }
+}
+
 cv::Scalar TLCColor(AlgTrafficLightColor c) {
     switch (c) {
         case TLC_RED:    return cv::Scalar(  0,   0, 255);
@@ -88,6 +97,11 @@ void DrawResult(cv::Mat& img, const AlgResult& r) {
         const AlgSpeedLimit& s = r.speed_limits[i];
         std::snprintf(buf, sizeof(buf), "SL.%d %.2f", SLKmh(s.value), s.box.score);
         DrawBoxLabel(img, s.box, buf, SLColor(s.value));
+    }
+    for (int i = 0; i < r.sign_count; ++i) {
+        const AlgSign& g = r.signs[i];
+        std::snprintf(buf, sizeof(buf), "%s %.2f", SignName(g.type), g.box.score);
+        DrawBoxLabel(img, g.box, buf, cv::Scalar(0, 128, 255));  /* 橙色：禁令/停车牌 */
     }
 }
 
@@ -155,8 +169,8 @@ int RunOne(AlgHandle h, const std::string& image_path, const std::string& out_pa
 
     std::printf("[infer ] %.2f ms\n",
                 (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0);
-    std::printf("[result] frame_id=%lld  traffic_lights=%d  speed_limits=%d\n",
-                (long long)r.frame_id, r.traffic_light_count, r.speed_limit_count);
+    std::printf("[result] frame_id=%lld  traffic_lights=%d  speed_limits=%d  signs=%d\n",
+                (long long)r.frame_id, r.traffic_light_count, r.speed_limit_count, r.sign_count);
     for (int i = 0; i < r.traffic_light_count; ++i) {
         const AlgTrafficLight& t = r.traffic_lights[i];
         std::printf("  TL[%d] color=%s score=%.3f  box=(%d,%d)-(%d,%d)\n",
@@ -168,6 +182,12 @@ int RunOne(AlgHandle h, const std::string& image_path, const std::string& out_pa
         std::printf("  SL[%d] %d km/h score=%.3f  box=(%d,%d)-(%d,%d)\n",
                     i, SLKmh(sl.value), sl.box.score,
                     sl.box.xmin, sl.box.ymin, sl.box.xmax, sl.box.ymax);
+    }
+    for (int i = 0; i < r.sign_count; ++i) {
+        const AlgSign& g = r.signs[i];
+        std::printf("  SG[%d] %s score=%.3f  box=(%d,%d)-(%d,%d)\n",
+                    i, SignName(g.type), g.box.score,
+                    g.box.xmin, g.box.ymin, g.box.xmax, g.box.ymax);
     }
 
     DrawResult(bgr, r);
