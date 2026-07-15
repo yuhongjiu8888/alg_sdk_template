@@ -245,10 +245,12 @@ return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
 | Solution / postprocessor 操作               | 应用层看到的最终结构                              |
 
 `FillAlgResult()` 在 C API 边界做一次翻译：
-- 按 `attributes["category"].value_str` 分桶到 `traffic_lights[]` / `speed_limits[]`
+- 按 `attributes["category"].value_str` 分桶到 `traffic_lights[]` / `speed_limits[]` / `signs[]`
+  （`category` ∈ {`traffic_light`, `speed_limit`, `no_parking`, `pare`}；后两者 = v3.5 禁令/停车牌 → `signs[]`）
 - 读取后处理器写入的 `Object.value`（业务 enum 编号，0 留给 INVALID）填强类型字段；
-  红绿灯取颜色 enum，限速牌取 `AlgSpeedLimitValue`（ocr_classifier 由 class_names 解析数值 ÷ 10 得出）
-- malloc 出来的两个数组由用户通过 `AlgFreeResult()` 一次释放
+  红绿灯取颜色 enum，限速牌取 `AlgSpeedLimitValue`（ocr_classifier 由 class_names 解析数值 ÷ 10 得出），
+  禁令/停车牌取 `AlgSignType`（`no_parking` / `pare` 两类，`signs[].type` 由 category 直接决定）
+- malloc 出来的三个数组由用户通过 `AlgFreeResult()` 一次释放
 
 ---
 

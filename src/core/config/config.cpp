@@ -130,6 +130,30 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
     }
     s->score_threshold = v.get("score_threshold", 0.0f).asFloat();
 
+    /* v3.5 终端类透传：passthrough:[{label,category,sign_value,min_score}]。 */
+    if (v.isMember("passthrough") && v["passthrough"].isArray()) {
+        for (Json::ArrayIndex i = 0; i < v["passthrough"].size(); ++i) {
+            const Json::Value& p = v["passthrough"][i];
+            PassthroughRule r;
+            r.label      = p.get("label", -1).asInt();
+            r.category   = p.get("category", "").asString();
+            r.sign_value = p.get("sign_value", 0).asInt();
+            r.min_score  = p.get("min_score", 0.0f).asFloat();
+            if (r.label < 0 || r.category.empty()) {
+                SetErr(err, "stage.passthrough entry needs label>=0 and non-empty category");
+                return false;
+            }
+            s->passthrough.push_back(std::move(r));
+        }
+    }
+
+    /* v3.5 按 category 的最小框短边过滤（nopark_min_size）：min_box_short:{"no_parking":40}。 */
+    if (v.isMember("min_box_short") && v["min_box_short"].isObject()) {
+        const Json::Value& m = v["min_box_short"];
+        for (const auto& key : m.getMemberNames())
+            s->min_box_short[key] = m[key].asInt();
+    }
+
     std::string produces = v.get("produces", "objects").asString();
     if (produces == "objects") {
         s->output_kind = StageOutputKind::kCreateObjects;

@@ -83,6 +83,28 @@ void SoftmaxArgmax(const TensorView& t, int base, int n, int* arg, float* max_pr
     *max_prob = std::exp(best_logit - m) / sum;
 }
 
+/* 门控向量 softmax：返回 argmax、P(限速)、P(禁停)。base=门控在张量内的起始偏移。 */
+void GateProbs(const TensorView& t, int base, int n, int speed_idx, int nopark_idx,
+               int* arg, float* p_speed, float* p_nopark) {
+    float m = ReadElem(t, base);
+    for (int i = 1; i < n; ++i) {
+        float v = ReadElem(t, base + i);
+        if (v > m) m = v;
+    }
+    float sum = 0.f;
+    int   best = 0;
+    float best_logit = ReadElem(t, base);
+    for (int i = 0; i < n; ++i) {
+        float v = ReadElem(t, base + i);
+        sum += std::exp(v - m);
+        if (v > best_logit) { best_logit = v; best = i; }
+    }
+    const float inv = 1.0f / (sum + 1e-9f);
+    *arg      = best;
+    *p_speed  = std::exp(ReadElem(t, base + speed_idx)  - m) * inv;
+    *p_nopark = std::exp(ReadElem(t, base + nopark_idx) - m) * inv;
+}
+
 /* 限速字符串 → 右对齐的 P 位字符索引（缺位补 blank）+ 数值。
  * "90"→(blank,9,0) speed=90；"120"→(1,2,0) speed=120。非纯数字 / 位数超 P → 返回 false。 */
 bool ParseClassDigits(const std::string& s, int num_positions, int blank,
@@ -106,6 +128,14 @@ Status OcrClassifierPostprocessor::Configure(const IInferer& inferer,
     blank_index_    = params.get("blank_index", 10).asInt();
     conf_threshold_ = params.get("conf_threshold", 0.5f).asFloat();
     category_       = params.get("category", "").asString();
+
+    /* v3.5 门控（可选，默认 0=无门控纯 OCR）。 */
+    gate_channels_     = params.get("gate_channels", 0).asInt();
+    gate_speed_index_  = params.get("gate_speed_index", 1).asInt();
+    gate_nopark_index_ = params.get("gate_nopark_index", 2).asInt();
+    gate_threshold_    = params.get("gate_threshold", 0.5f).asFloat();
+    nopark_category_   = params.get("nopark_category", "").asString();
+    nopark_sign_value_ = params.get("nopark_sign_value", 0).asInt();
 
     class_names_.clear();
     if (params.isMember("class_names") && params["class_names"].isArray()) {
@@ -150,15 +180,15 @@ Status OcrClassifierPostprocessor::Configure(const IInferer& inferer,
      * 板端坑）。各位都读 output[0]，起始偏移 p*num_chars 在 Apply 里算。 */
     single_output_ = (n_out == 1 && num_positions_ > 1);
     if (single_output_) {
-        const int need = num_positions_ * num_chars_;
+        const int need = num_positions_ * num_chars_ + gate_channels_;
         if (inferer.OutputView(0).shape.Numel() < need) {
-            ALG_LOGE("ocr_classifier: 单输出 numel=%d < positions*chars=%d",
+            ALG_LOGE("ocr_classifier: 单输出 numel=%d < positions*chars(+gate)=%d",
                      inferer.OutputView(0).shape.Numel(), need);
             return ALG_E_POSTPROCESS;
         }
         resolved_head_idx_.assign(num_positions_, 0);
-        ALG_LOGI("ocr_classifier: 单输出模式 output[0] numel=%d，按 %d 位 × %d 字符连续切片",
-                 inferer.OutputView(0).shape.Numel(), num_positions_, num_chars_);
+        ALG_LOGI("ocr_classifier: 单输出模式 output[0] numel=%d，按 %d 位 × %d 字符连续切片（gate=%d）",
+                 inferer.OutputView(0).shape.Numel(), num_positions_, num_chars_, gate_channels_);
     } else {
         if (n_out < num_positions_) {
             ALG_LOGE("ocr_classifier: 需要 %d 个输出头，但 NumOutputs=%d", num_positions_, n_out);
@@ -187,6 +217,44 @@ Status OcrClassifierPostprocessor::Configure(const IInferer& inferer,
             ALG_LOGI("ocr_classifier: 第 %d 位 → output[%d] name='%s'",
                      p, idx, inferer.OutputView(idx).name.c_str());
         }
+    }
+
+    /* v3.5 门控位置解析：单输出 → output[0] 内偏移 P*num_chars；多输出 → 独立门控头。 */
+    gate_view_idx_ = -1;
+    gate_base_ = 0;
+    if (gate_channels_ > 0) {
+        if (gate_speed_index_ < 0 || gate_speed_index_ >= gate_channels_ ||
+            gate_nopark_index_ < 0 || gate_nopark_index_ >= gate_channels_) {
+            ALG_LOGE("ocr_classifier: gate 下标越界 speed=%d nopark=%d channels=%d",
+                     gate_speed_index_, gate_nopark_index_, gate_channels_);
+            return ALG_E_POSTPROCESS;
+        }
+        if (single_output_) {
+            gate_view_idx_ = 0;
+            gate_base_ = num_positions_ * num_chars_;   /* OCR 段之后 */
+        } else {
+            /* 多输出：门控是独立头，优先按 name（gate_head_name），否则索引（默认 = P，即 OCR 头之后）。 */
+            int gidx = params.get("gate_head_index", num_positions_).asInt();
+            std::string gname = params.get("gate_head_name", "").asString();
+            if (!gname.empty())
+                for (int i = 0; i < n_out; ++i)
+                    if (inferer.OutputView(i).name == gname) { gidx = i; break; }
+            if (gidx < 0 || gidx >= n_out ||
+                inferer.OutputView(gidx).shape.Numel() < gate_channels_) {
+                ALG_LOGE("ocr_classifier: 门控头解析失败 idx=%d name='%s' n_out=%d",
+                         gidx, gname.c_str(), n_out);
+                return ALG_E_POSTPROCESS;
+            }
+            gate_view_idx_ = gidx;
+            gate_base_ = 0;
+        }
+        if (nopark_sign_value_ != 0 && nopark_category_.empty()) {
+            ALG_LOGE("ocr_classifier: 配了 nopark_sign_value 却没 nopark_category（FillAlgResult 无法分桶）");
+            return ALG_E_POSTPROCESS;
+        }
+        ALG_LOGI("ocr_classifier: 门控就绪 channels=%d view=%d base=%d thr=%.2f nopark_cat='%s' val=%d",
+                 gate_channels_, gate_view_idx_, gate_base_, gate_threshold_,
+                 nopark_category_.c_str(), nopark_sign_value_);
     }
 
     /* 解码 LUT + 限速值表：完全由 class_names 推导，不硬编码 CLASS_TO_CHARS。 */
@@ -281,6 +349,34 @@ Status OcrClassifierPostprocessor::Apply(const IInferer& inferer,
                      ReadElem(h1, 0), ReadElem(h1, 1), ReadElem(h1, 2), ReadElem(h1, 3),
                      ReadElem(h2, 0), ReadElem(h2, 1), ReadElem(h2, 2), ReadElem(h2, 3));
         }
+    }
+
+    /* v3.5 门控 3 路分拣（对齐 infer_onnx.py / deploy_src）：
+     *   argmax==no_parking → 直接产出禁停正类（category=nopark_category，跳过 OCR）；
+     *   argmax==speed 且 P(限速)≥gate_thr → 走下面 OCR；
+     *   其余(other / P(限速)低) → 拒识（返回空 → ChainSolution drop 掉 src 框）。
+     * nopark_min_size 需原图框尺寸，由 ChainSolution 的 min_box_short 施加（此处拿不到 box）。 */
+    if (gate_channels_ > 0) {
+        int   gate_id  = 0;
+        float p_speed  = 0.f, p_nopark = 0.f;
+        GateProbs(inferer.OutputView(gate_view_idx_), gate_base_, gate_channels_,
+                  gate_speed_index_, gate_nopark_index_, &gate_id, &p_speed, &p_nopark);
+        if (gate_id == gate_nopark_index_) {
+            Object np;
+            np.field_mask = ALG_FIELD_BOX | ALG_FIELD_ATTRIBUTES;
+            np.label      = -1;                 /* 非限速类，label 不用 */
+            np.box.score  = p_nopark;           /* 联合前的 gate 置信；ChainSolution 再乘 det */
+            np.box.xmin = np.box.ymin = np.box.xmax = np.box.ymax = 0;
+            np.value      = nopark_sign_value_; /* AlgSignType（SIGN_NO_PARKING） */
+            Attribute cat;
+            cat.name = "category";
+            cat.value_str = nopark_category_;   /* FillAlgResult 据此分桶到 signs[] */
+            np.attributes.push_back(std::move(cat));
+            out->push_back(std::move(np));
+            return ALG_OK;
+        }
+        if (gate_id != gate_speed_index_ || p_speed < gate_threshold_)
+            return ALG_OK;   /* other / 非限速 → 拒识 */
     }
 
     /* 非法字符组合（含个位非 '0'）→ 拒识；空产出 → ChainSolution drop 掉 src 框。 */

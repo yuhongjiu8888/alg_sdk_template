@@ -26,13 +26,20 @@
  *   - 置信度 cls_conf = min(三头各自 max softmax prob)（最不确定那位当门槛，与
  *     alg_speed_limit/src/infer_onnx.py 一致）；< conf_threshold → 丢弃（开放集兜底）。
  *
+ * v3.5 门控（3 路 other/speed/no_parking，gate_channels>0 时启用；单输出=OCR 段之后 P*num_chars，
+ * 多输出=独立 logits_gate 头）。门控 argmax 定牌种：
+ *   - speed（且 P(限速)≥gate_threshold）→ 走上面 OCR，输出限速值（category=category）
+ *   - no_parking → 不读 OCR，直接产出禁停正类：category=nopark_category、value=nopark_sign_value
+ *     （AlgSignType SIGN_NO_PARKING）、box.score=P(禁停)。FillAlgResult 据 category 分桶到 signs[]。
+ *     nopark_min_size（最小框短边）在 ChainSolution 的 min_box_short 施加（此处拿不到原图框尺寸）。
+ *   - other（或 P(限速)<gate_threshold）→ 拒识（返回空 → classify_into drop）
+ *
  * Object 输出（成功时）：
  *   - field_mask = ALG_FIELD_BOX | ALG_FIELD_ATTRIBUTES
- *   - label = cls_id（class_names 下标），box.score = cls_conf
- *   - value = class_names[cls_id] 解析出的限速值 ÷ 10（即 C ABI 的 AlgSpeedLimitValue，
- *             SLV_10=1..SLV_120=12；FillAlgResult 直接读取，不再硬编码映射表）
- *   - attributes[0] = { name="class", value_int=cls_id, value_str=class_name, value_float=cls_conf }
- *   - 若配置了 category，再追加 { name="category", value_str=category }
+ *   - 限速：label=cls_id、box.score=cls_conf、value=限速值÷10（AlgSpeedLimitValue SLV_10..SLV_120）、
+ *     attributes=[{class,...},{category=category}]
+ *   - no_parking：label=-1、box.score=P(禁停)、value=nopark_sign_value、attributes=[{category=nopark_category}]
+ *   FillAlgResult 直接按 category 分桶 + 读 value，不再硬编码映射表。
  *
  * JSON 参数：
  *   { "type": "ocr_classifier",
@@ -43,6 +50,11 @@
  *     "head_names":     ["logits_h","logits_t","logits_u"],  // 按名匹配（高位→低位）
  *     "head_indices":   [0, 1, 2],                      // name 不可用时的索引兜底（高位→低位）
  *     "conf_threshold": 0.5,                            // min(三头 prob) 低于此值 → drop
+ *     "gate_channels":  3,                              // v3.5 门控路数；0=无门控纯 OCR
+ *     "gate_threshold": 0.5,                            // P(限速) < 此值 → 拒识
+ *     "gate_head_name": "logits_gate",                  // 仅多输出：门控头名
+ *     "nopark_category":"no_parking",                   // no_parking 正类 category（分桶 signs[]）
+ *     "nopark_sign_value": 1,                           // AlgSignType SIGN_NO_PARKING
  *     "class_names":    ["10","20","30","40","50","60","70","80","100","90","110","120"]
  *   }
  */
@@ -79,6 +91,19 @@ class OcrClassifierPostprocessor : public IPostprocessor {
     std::vector<int>         decode_lut_;         /* 扁平 (num_chars^P) → class idx；非法=-1 */
 
     std::string category_;
+
+    /* v3.5 门控（3 路 other/speed/no_parking）。gate_channels_==0 → 无门控（纯 OCR，向后兼容）。
+     * 单输出模式：门控在 output[0] 内，偏移 gate_base_=P*num_chars；
+     * 多输出模式：门控是独立头（gate_head_name/gate_head_index），gate_base_=0。 */
+    int   gate_channels_    = 0;
+    int   gate_speed_index_ = 1;   /* P(限速) 在门控向量里的下标 */
+    int   gate_nopark_index_ = 2;  /* P(禁停) 在门控向量里的下标 */
+    float gate_threshold_   = 0.5f;
+    int   gate_view_idx_    = -1;  /* 门控所在 output tensor 索引；<0 = 未解析/无门控 */
+    int   gate_base_        = 0;   /* 门控在该 tensor 内的起始元素偏移 */
+    std::string nopark_category_;  /* no_parking 正类产出的 category（FillAlgResult 据此分桶到 signs[]） */
+    int         nopark_sign_value_ = 0;  /* AlgSignType（SIGN_NO_PARKING=1） */
+
     bool        configured_ = false;
 };
 

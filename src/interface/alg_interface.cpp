@@ -79,8 +79,13 @@ void AlgFreeResult(AlgResult* result) {
         std::free(result->speed_limits);
         result->speed_limits = nullptr;
     }
+    if (result->signs) {
+        std::free(result->signs);
+        result->signs = nullptr;
+    }
     result->traffic_light_count = 0;
     result->speed_limit_count   = 0;
+    result->sign_count          = 0;
 }
 
 const char* AlgVersion(void) {

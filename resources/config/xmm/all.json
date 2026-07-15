@@ -23,7 +23,11 @@
           "square": true,
           "pad_value": 114
         },
-        "score_threshold": 0.5,
+        "score_threshold": 0.6,
+        "passthrough": [
+          { "label": 1, "category": "pare", "sign_value": 2, "min_score": 0.0 }
+        ],
+        "min_box_short": { "no_parking": 40 },
         "produces": "classify_into:ssn_det"
       }
     ]
@@ -78,7 +82,7 @@
       },
       "postprocess": {
         "type": "yolov5_anchor_det",
-        "num_classes": 1,
+        "num_classes": 2,
         "bbox_channels": 4,
         "obj_channels": 1,
         "stride": 8,
@@ -96,8 +100,8 @@
       "model_path": "../resources/model/xmm/classifier.xmm",
       "preprocess": {
         "input_size": [
-          64,
-          64
+          96,
+          96
         ],
         "color": "RGB",
         "resize": "stretch",
@@ -111,6 +115,12 @@
         "num_chars": 11,
         "blank_index": 10,
         "conf_threshold": 0.6,
+        "gate_channels": 3,
+        "gate_speed_index": 1,
+        "gate_nopark_index": 2,
+        "gate_threshold": 0.5,
+        "nopark_category": "no_parking",
+        "nopark_sign_value": 1,
         "class_names": [
           "10",
           "20",

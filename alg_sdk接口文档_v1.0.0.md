@@ -82,8 +82,8 @@
 
 - `AlgCreate` 较重（加载模型、初始化后端），**只调用一次**，句柄在整个生命周期内复用。
 - 每帧调用 `AlgRun` 前填充 `AlgImage`，其中 `data` 缓冲区由调用方持有；`AlgRun` 不接管该内存。
-- 每帧调用 `AlgRun` 后，`AlgResult` 内的 `traffic_lights` / `speed_limits` 数组由 SDK 分配，**必须配对调用 `AlgFreeResult`** 释放，否则内存泄漏。
-- 结果按 solution 类型填充：红绿灯配置只填 `traffic_lights`，限速牌配置只填 `speed_limits`，二合一配置两者均可能非空。
+- 每帧调用 `AlgRun` 后，`AlgResult` 内的 `traffic_lights` / `speed_limits` / `signs` 数组由 SDK 分配，**必须配对调用 `AlgFreeResult`** 释放，否则内存泄漏。
+- 结果按 solution 类型填充：红绿灯配置只填 `traffic_lights`，限速牌配置填 `speed_limits`（限速值）+ `signs`（PARE / 禁止停车等牌种，v3.5），二合一配置多者均可能非空。
 
 最小调用示例：
 
@@ -173,7 +173,7 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 void AlgFreeResult(AlgResult* result);
 ```
 
-**函数说明**：释放 SDK 在 `result` 内部分配的内存（`traffic_lights[]` / `speed_limits[]` 两个数组）。对零值 / 已释放的 `result` 调用是安全的。
+**函数说明**：释放 SDK 在 `result` 内部分配的内存（`traffic_lights[]` / `speed_limits[]` / `signs[]` 三个数组）。对零值 / 已释放的 `result` 调用是安全的。
 
 **参数**：
 
@@ -343,7 +343,30 @@ typedef struct AlgSpeedLimit_ {
 } AlgSpeedLimit;
 ```
 
-### 4.4 完整结果
+### 4.4 禁令 / 停车牌（prohibition sign，v3.5 新增）
+
+非限速、不带可读数字的牌种（无法用 `AlgSpeedLimitValue` 表达），单列一个数组。
+
+#### AlgSignType —— 牌种
+
+```c
+typedef enum AlgSignType_ {
+    SIGN_INVALID    = 0,
+    SIGN_NO_PARKING = 1,   // R-6c 禁止停车（红圈 + 黑 E + 红色 ✕），Stage2 门控识别
+    SIGN_PARE       = 2,   // 停车让行（巴西 R-1，红色八边形），Stage1 检测直出
+} AlgSignType;
+```
+
+#### AlgSign —— 单个禁令 / 停车牌识别结果
+
+```c
+typedef struct AlgSign_ {
+    AlgBox       box;    // 原图坐标系下的框，box.score = 联合置信度
+    AlgSignType  type;
+} AlgSign;
+```
+
+### 4.5 完整结果
 
 #### AlgResult —— 一帧的算法输出
 
@@ -356,13 +379,16 @@ typedef struct AlgResult_ {
 
     int                 speed_limit_count;     // 限速牌结果数量
     AlgSpeedLimit*      speed_limits;          // 限速牌结果数组（SDK 持有）
+
+    int                 sign_count;            // 禁令/停车牌结果数量（v3.5）
+    AlgSign*            signs;                 // 禁令/停车牌结果数组（SDK 持有）
 } AlgResult;
 ```
 
 结果填充规则：
 
 - 单 solution 跑红绿灯（`traffic_light.json`）：仅 `traffic_lights` 非空；
-- 单 solution 跑限速牌（`speed_limit.json`）：仅 `speed_limits` 非空；
-- 二合一（`all.json`）：两个数组都可能非空。
+- 单 solution 跑限速牌（`speed_limit.json`）：`speed_limits` / `signs` 可能非空（`signs` = PARE / 禁止停车等）；
+- 二合一（`all.json`）：多个数组都可能非空。
 
-两个数组由 SDK 持有，应用通过 `AlgFreeResult` 一次性释放。
+三个数组由 SDK 持有，应用通过 `AlgFreeResult` 一次性释放。

@@ -1,5 +1,6 @@
 #include "core/solution/chain_solution.h"
 
+#include <map>
 #include <unordered_map>
 
 #include "core/logger.h"
@@ -122,6 +123,33 @@ void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
     }
 }
 
+/* 给 object 打上 category 属性 + value（透传终端类用）；已有 category 则覆盖。 */
+void TagCategory(Object* o, const std::string& category, int value) {
+    for (auto& a : o->attributes) {
+        if (a.name == "category") { a.value_str = category; o->value = value;
+                                    o->field_mask |= ALG_FIELD_ATTRIBUTES; return; }
+    }
+    Attribute c;
+    c.name = "category";
+    c.value_str = category;
+    o->attributes.push_back(std::move(c));
+    o->value = value;
+    o->field_mask |= ALG_FIELD_ATTRIBUTES;
+}
+
+/* 命中 min_box_short（按 category）→ true 表示该丢弃（框短边 < 阈值）。 */
+bool BelowMinBoxShort(const Object& o, const std::map<std::string, int>& m) {
+    if (m.empty() || !o.has_attributes()) return false;
+    const Attribute* cat = nullptr;
+    for (const auto& a : o.attributes) if (a.name == "category") { cat = &a; break; }
+    if (!cat) return false;
+    auto it = m.find(cat->value_str);
+    if (it == m.end()) return false;
+    const int w = o.box.xmax - o.box.xmin;
+    const int h = o.box.ymax - o.box.ymin;
+    return (w < h ? w : h) < it->second;
+}
+
 /* 把目标 vector 清空但保留 capacity（每个 Object 内部 vector 也清空保 capacity）。
  * 这样下一帧 push_back / move_assign 不会再 malloc。 */
 void ResetStageObjects(std::vector<Object>& v) {
@@ -193,6 +221,21 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
     for (auto& src : src_objs) {
         if (src.drop) continue;
         if (!src.has_box()) continue;
+
+        /* v3.5 终端类透传：上游某 label（如 pare）不进子模型，直接打 category/牌种透出。
+         * 命中即跳过裁剪+分类；min_score/min_box_short 作精度兜底。 */
+        {
+            const PassthroughRule* pt = nullptr;
+            for (const auto& r : rs.cfg.passthrough)
+                if (r.label == src.label) { pt = &r; break; }
+            if (pt) {
+                if (pt->min_score > 0.0f && src.box.score < pt->min_score) { src.drop = true; continue; }
+                TagCategory(&src, pt->category, pt->sign_value);
+                if (BelowMinBoxShort(src, rs.cfg.min_box_short)) src.drop = true;
+                continue;
+            }
+        }
+
         if (!CropFromDecoded(decoded_bgr, src.box, rs.cfg.crop, &roi_holder, &cropped, &xf)) {
             /* 框完全在画外或裁出空 ROI；classify_into 视为分类失败 → drop。 */
             if (rs.cfg.output_kind == StageOutputKind::kClassifyInto) src.drop = true;
@@ -216,8 +259,11 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
                 MergeFields(&src, std::move(sub.front()), rs.cfg.output_kind);
                 /* 联合分阈值：MergeFields 后 src.box.score = det×cls（最终对外分数）。
                  * 检测/分类各自的 conf_threshold 只卡各自分数，两头都勉强过线时乘积仍可能偏低，
-                 * 这里按联合分兜底过滤（0 = 关闭）。 */
+                 * 这里按联合分兜底过滤（0 = 关闭）。这即 deploy_src 的 joint_thr。 */
                 if (rs.cfg.score_threshold > 0.0f && src.box.score < rs.cfg.score_threshold)
+                    src.drop = true;
+                /* v3.5 nopark_min_size：禁停(R-6c)正类仅近处大牌生效（按 category 的最小框短边）。 */
+                else if (BelowMinBoxShort(src, rs.cfg.min_box_short))
                     src.drop = true;
             }
         } else {

@@ -10,6 +10,7 @@
 
 #include <json/json.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -61,6 +62,16 @@ struct RoiConfig {
     int height = 0;  /* 裁剪高度 */
 };
 
+/* v3.5 透传规则：上游检测的某个 label 是"终端类"（如 Stage1 的 pare 八边形），
+ * 不进本 classify 阶段的子模型，直接打上 category/牌种透出。
+ * 用途：pare 走 Stage1 检测直出，不该被 OCR 分类器当非限速 drop 掉。 */
+struct PassthroughRule {
+    int         label = -1;          /* 上游 object.label（检测类 idx） */
+    std::string category;            /* 透出的 category（FillAlgResult 据此分桶，如 "pare"） */
+    int         sign_value = 0;      /* 写入 object.value（如 AlgSignType SIGN_PARE） */
+    float       min_score = 0.0f;    /* 检测分低于此值则 drop（0=不额外过滤，pare 弱类可设 0.85） */
+};
+
 struct StageConfig {
     std::string     name;
     std::string     model_ref;       /* 引用 ModelInstanceConfig.name */
@@ -72,6 +83,9 @@ struct StageConfig {
     std::string     output_target;   /* output_kind != kCreateObjects 时引用的 stage */
     float           score_threshold = 0.0f;  /* classify_into：合并后联合分(det×cls)低于此值则 drop；
                                                  0（默认）= 不过滤。卡的是各阶段阈值卡不到的两阶段乘积。 */
+    std::vector<PassthroughRule> passthrough;          /* 终端类透传（按上游 label 命中） */
+    std::map<std::string, int>   min_box_short;        /* category → 最小框短边(px)；小于则 drop
+                                                          （nopark_min_size：R-6c 禁停仅近处大牌生效） */
 };
 
 /* 整份 JSON 配置。 */

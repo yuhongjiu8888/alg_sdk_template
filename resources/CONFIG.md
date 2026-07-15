@@ -33,6 +33,17 @@ Both keys are required.
 | `crop.pad_value` | int | no | `-1` | `>=0`：扩边框越界处用该灰度值填充、保正方不形变（等价训练端 `cv2.warpAffine(borderValue=…)`）；`-1`：旧行为，clamp 到图内（越界时 ROI 非正方，下游 resize 会形变）。逐位 OCR 等对裁剪几何敏感的分类器应设为训练裁剪用的灰边值（限速牌为 `114`） |
 | `produces` | string | no | `"objects"` | Output routing (see below) |
 | `score_threshold` | float | no | `0.0` | 仅 `classify_into:`：合并后联合分 `det_score × cls_conf`（最终对外 `box.score`）低于此值则 drop。检测/分类各自的 `conf_threshold` 只卡各自分数，两头都勉强过线时乘积仍可能偏低，此项按联合分兜底过滤。`0` = 关闭 |
+| `passthrough` | array | no | `[]` | 仅 `objects_from:`：**终端类透传**。上游某 `label` 的框不进本 stage 子模型，直接打 `category`/牌种透出（见下） |
+| `min_box_short` | object | no | `{}` | `{ "<category>": <px> }`：合并/透传后的框，若其 `category` 命中且**框短边 < 阈值**则 drop（精度优先，如禁停 `nopark_min_size`） |
+
+**`passthrough[*]`**（v3.5：Stage1 终端类如 `pare` 八边形，不进 Stage2 OCR 直接输出）：
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `label` | int | **必填** | 上游检测的类别 idx（如 pare=1）。命中即跳过裁剪+子模型 |
+| `category` | string | **必填** | 透出的 `category`（`FillAlgResult` 据此分桶，如 `"pare"`） |
+| `sign_value` | int | `0` | 写入 `object.value`（如 `AlgSignType` 的 `SIGN_PARE=2`） |
+| `min_score` | float | `0.0` | 检测分 `box.score` 低于此值则 drop（`0`=不额外过滤；pare 弱类易误检可设 `0.85`，对齐 deploy 的 `pare_score_thr`） |
 
 `produces` 可选值：
 - `"objects"` -- 产出新的顶层检测框
@@ -126,7 +137,7 @@ cls 分支用 **softmax**（非 sigmoid）：单类时 softmax 恒为 1 → `sco
 | `max_det` | int | `64` | NMS 后最大保留数 |
 | `obj_prefilter` | float | `0.05` | objectness 早剪枝阈值 |
 
-### type: "ocr_classifier" -- 定长多位字符 OCR 分类器（限速牌 v3.4，当前方案）
+### type: "ocr_classifier" -- 定长多位字符 OCR 分类器 + 门控（限速牌 v3.5，当前方案）
 
 逐位读数字的 OCR 网络后处理。对接训练侧
 `alg_speed_limit/src/classifier_src/classifier.py` 的 SpeedSignOCR（P=3 位：百/十/个位，
@@ -143,6 +154,18 @@ cls 分支用 **softmax**（非 sigmoid）：单类时 softmax 恒为 1 → `sco
 `softmax + argmax` 得 `(h,t,u)`，查 LUT 得 `cls_id`，非法组合（含个位非 `'0'`）→ 拒识。
 联合置信度 `cls_conf = min(各位 max-prob)`，`< conf_threshold` → 丢弃（开放集兜底）。
 输出 Object 的 `value = 类名数值 ÷ 10`（即 `AlgSpeedLimitValue`），与 `class_names` 排列顺序无关。
+
+**v3.5 门控（3 路 other/speed/no_parking）**：`gate_channels > 0` 时启用。门控向量 `argmax` 定牌种：
+- `speed`（且 `P(限速) ≥ gate_threshold`）→ 走上面的 OCR 解码，输出限速值（`category` = `category` 参数，如 `speed_limit`）
+- `no_parking` → **不读 OCR**，直接产出禁停正类：`category` = `nopark_category`（如 `"no_parking"`）、
+  `value` = `nopark_sign_value`（`AlgSignType` 的 `SIGN_NO_PARKING=1`）、`box.score` = `P(禁停)`。
+  `FillAlgResult` 据 `category` 分桶到 `AlgResult.signs[]`。禁停的最小框尺寸（`nopark_min_size`）由
+  **stage 的 `min_box_short`**（按 `category` 键）施加——分类器拿不到原图框尺寸，故放在 ChainSolution。
+- `other`（或 `P(限速) < gate_threshold`）→ 拒识（返回空 → `classify_into` drop 掉 src 框）
+
+门控位置：**单输出模式**在 `output[0]` 内、偏移 `P*num_chars`（如 `(1,36)` 的末 3 路）；
+**多输出模式**是独立门控头（`gate_head_name`/`gate_head_index`，如 MNN 的 `logits_gate`）。
+`gate_channels=0`（默认）= 无门控纯 OCR（向后兼容旧模型）。
 
 > **为何默认单输出**：三头各带不被 NPU 支持的算子，XMM 导出时图被切成 NPU+CPU 混合多输出，
 > 板端 runtime 只落 head0、head1/head2 不产出 → **0 检出**（详见提交 575bc8d）。改单输出
@@ -164,6 +187,14 @@ cls 分支用 **softmax**（非 sigmoid）：单类时 softmax 恒为 1 → `sco
 | `conf_threshold` | float | `0.5` | `min(各位 prob)` 低于此值 → drop |
 | `class_names` | `[str]` | **必填** | 类名列表（限速字符串，解码 LUT 与 value 的唯一来源） |
 | `category` | string | `""` | 分类器类别标签（如 `"speed_limit"`） |
+| `gate_channels` | int | `0` | 门控路数（v3.5=3）；`0`=无门控纯 OCR。单输出时门控在 OCR 段之后 |
+| `gate_speed_index` | int | `1` | `P(限速)` 在门控向量里的下标 |
+| `gate_nopark_index` | int | `2` | `P(禁停)` 在门控向量里的下标 |
+| `gate_threshold` | float | `0.5` | `P(限速) < 此值` → 非限速牌拒识（`gate_channels>0` 生效） |
+| `gate_head_name` | string | `""` | **仅多输出**：门控头张量名（如 `"logits_gate"`） |
+| `gate_head_index` | int | `num_positions` | **仅多输出**：门控头索引兜底（默认 = OCR 头之后） |
+| `nopark_category` | string | `""` | 门控判 no_parking 时产出的 `category`（如 `"no_parking"`，分桶到 `signs[]`） |
+| `nopark_sign_value` | int | `0` | 门控判 no_parking 时写入 `value`（`AlgSignType`，`SIGN_NO_PARKING=1`） |
 
 ### type: "dualhead_classifier" -- 双头 softmax 分类器（旧方案，保留向后兼容）
 

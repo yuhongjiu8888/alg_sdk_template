@@ -137,16 +137,38 @@ typedef struct AlgSpeedLimit_ {
 } AlgSpeedLimit;
 
 /* ============================================================== */
+/*                  禁令 / 停车牌 (prohibition sign)               */
+/* ============================================================== */
+
+/* v3.5 新增：非限速的牌种（不带可读数字，无法用 AlgSpeedLimitValue 表达）。
+ * 判别轴 = 低分辨率下能否与限速牌分形状：
+ *   - PARE 八边形：Stage1 检测终端类，直接输出（box.score = 检测置信度）
+ *   - NO_PARKING 红圈✕：Stage2 门控第 3 路（box.score = det × P(禁停) 联合置信度）
+ * 0 留作 INVALID。扩展新牌种在尾部追加枚举即可，不影响限速 value 语义。 */
+typedef enum AlgSignType_ {
+    SIGN_INVALID    = 0,
+    SIGN_NO_PARKING = 1,    /* R-6c 禁止停车（红圈 + 黑 E + 红色 ✕） */
+    SIGN_PARE       = 2,    /* 停车让行（巴西 R-1，红色八边形，等同 STOP） */
+} AlgSignType;
+
+/* 单个禁令 / 停车牌识别结果。 */
+typedef struct AlgSign_ {
+    AlgBox       box;    /* 原图坐标系下的框，box.score = 联合置信度 */
+    AlgSignType  type;
+} AlgSign;
+
+/* ============================================================== */
 /*                          完整结果                                */
 /* ============================================================== */
 
 /* 一帧的算法输出。
  *
  *  - 单 solution 跑红绿灯 (traffic_light.json)：只有 traffic_lights 非空。
- *  - 单 solution 跑限速牌 (speed_limit.json)：  只有 speed_limits 非空。
- *  - 二合一 (all.json)：两个数组都可能非空。
+ *  - 单 solution 跑限速牌 (speed_limit.json)：  speed_limits / signs 可能非空
+ *    （signs = PARE / 禁止停车等非限速牌种，v3.5 起）。
+ *  - 二合一 (all.json)：多个数组都可能非空。
  *
- * 两个数组由 SDK 持有；应用通过 AlgFreeResult 一次性释放。 */
+ * 三个数组由 SDK 持有；应用通过 AlgFreeResult 一次性释放。 */
 typedef struct AlgResult_ {
     long long           frame_id;
 
@@ -155,6 +177,9 @@ typedef struct AlgResult_ {
 
     int                 speed_limit_count;
     AlgSpeedLimit*      speed_limits;
+
+    int                 sign_count;      /* v3.5：禁令/停车牌（PARE / 禁止停车） */
+    AlgSign*            signs;
 } AlgResult;
 
 ALG_C_END
