@@ -4,3 +4,4 @@ CMakeFiles
 build_*
 .vscode
 lib/
+deploy/
