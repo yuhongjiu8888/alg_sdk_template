@@ -88,7 +88,7 @@ typedef struct AlgBox_ {
  * 限速值都是 10 的倍数，故 value × 10 == km/h，应用可直接换算或 switch / 查表。
  *
  * value 由后处理器从 cls_cfg.postprocess.class_names 推导（解析类名数值 ÷ 10），
- * 不依赖 class_names 的排列顺序（v3.4 OCR 的 class_names 是"追加排序"而非数值序）。
+ * 不依赖 class_names 的排列顺序（OCR 的 class_names 可能是"追加排序"而非数值序）。
  * 0 留作 INVALID。 */
 typedef enum AlgSpeedLimitValue_ {
     SLV_INVALID = 0,    /* 二阶段分类置信度 < 阈值 / 字符组合非法的框已由 SDK 内部 drop，正常不出现 */
@@ -116,7 +116,7 @@ typedef struct AlgSpeedLimit_ {
 /*                  禁令 / 停车牌 (prohibition sign)               */
 /* ============================================================== */
 
-/* v3.5 新增：非限速的牌种（不带可读数字，无法用 AlgSpeedLimitValue 表达）。
+/* 非限速的牌种（不带可读数字，无法用 AlgSpeedLimitValue 表达）。
  * 判别轴 = 低分辨率下能否与限速牌分形状：
  *   - PARE 八边形：Stage1 检测终端类，直接输出（box.score = 检测置信度）
  *   - NO_PARKING 红圈✕：Stage2 门控第 3 路（box.score = det × P(禁停) 联合置信度）
@@ -140,7 +140,7 @@ typedef struct AlgSign_ {
 /* 一帧的算法输出。
  *
  *  - 单 solution 跑限速牌 (speed_limit.json)：speed_limits / signs 可能非空
- *    （signs = PARE / 禁止停车等非限速牌种，v3.5 起）。
+ *    （signs = PARE / 禁止停车等非限速牌种）。
  *
  * 数组由 SDK 持有；应用通过 AlgFreeResult 一次性释放。 */
 typedef struct AlgResult_ {
@@ -149,7 +149,7 @@ typedef struct AlgResult_ {
     int                 speed_limit_count;
     AlgSpeedLimit*      speed_limits;
 
-    int                 sign_count;      /* v3.5：禁令/停车牌（PARE / 禁止停车） */
+    int                 sign_count;      /* 禁令/停车牌（PARE / 禁止停车） */
     AlgSign*            signs;
 } AlgResult;
 
