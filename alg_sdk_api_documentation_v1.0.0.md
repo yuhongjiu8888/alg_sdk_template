@@ -2,13 +2,13 @@
 
 | 项目 | 版本 | 日期 |
 |------|------|------|
-| 红绿灯检测 + 限速牌识别（alg_sdk） | Version-1.0.0 | 2026 年 06 月 12 日 |
+| 红绿灯检测 + 限速牌识别（alg_sdk） | Version-1.0.0 | 2026 年 07 月 17 日 |
 
 ## 文档控制
 
 | | 姓名 | 职务 | 日期 |
 |------|------|------|------|
-| 作者 | 喻伟 | 算法工程师 | 2026.06.12 |
+| 作者 | 喻伟 | 算法工程师 | 2026.07.17 |
 | 审核 | | | |
 | 通过 | | | |
 
@@ -16,7 +16,7 @@
 
 | 版本 | 作者 | 日期 | 细节 |
 |------|------|------|------|
-| 1.0.0 | 喻伟 | 2026.06.12 | 初版接口文档；红绿灯检测 + 巴西限速牌识别两个落地模型，强类型 C ABI |
+| 1.0.0 | 喻伟 | 2026.07.17 | 初版接口文档； 巴西限速牌+停车牌识别两个落地模型，强类型 C ABI |
 
 ## 目录
 
@@ -31,10 +31,8 @@
 
 本算法库运用深度学习技术，面向端侧（NPU / 嵌入式）CV 推理场景，对车载前视摄像头图像进行实时识别，当前落地两个模型能力：
 
-- **红绿灯检测**：单阶段 YOLOX，416×416 RGB 输入，输出红 / 黄 / 绿 / 熄灭四类信号灯及其在原图坐标系下的检测框与置信度。
-- **限速牌识别**：二阶段流水线（SpeedSignNet 检测 + OCR 三头逐位识别），输出 10 / 20 / … / 120 km/h 共 12 类限速值及其检测框与联合置信度。字符组合非法或分类置信度低于阈值的框由 SDK 内部直接丢弃。
-
-整个 SDK 由一份 JSON 配置驱动启动，JSON 描述 solution 编排（用哪几个模型、如何串接）、每个模型走哪个芯片后端的哪个模型文件、以及前 / 后处理参数。同一份二进制可通过切换配置文件分别运行红绿灯、限速牌，或二者并行（`all.json`），**调阈值 / 改输入尺寸 / 换均值方差均改 JSON 即可，无需重新编译**。
+- **限速牌停车牌识别**：识别巴西限速牌 10 / 20 / … / 120 km/h 共 12 类限速值及其检测框与联合置信度，礼让行人PARE停车牌及禁止泊车E停车牌。
+整个 SDK 由一份 JSON 配置驱动启动，JSON 描述 solution 编排（用哪几个模型、如何串接）、每个模型走哪个芯片后端的哪个模型文件、以及前 / 后处理参数。**调阈值 / 改输入尺寸 / 换均值方差均改 JSON 即可，无需重新编译**。
 
 该算法库主要分为两部分：
 
@@ -82,8 +80,8 @@
 
 - `AlgCreate` 较重（加载模型、初始化后端），**只调用一次**，句柄在整个生命周期内复用。
 - 每帧调用 `AlgRun` 前填充 `AlgImage`，其中 `data` 缓冲区由调用方持有；`AlgRun` 不接管该内存。
-- 每帧调用 `AlgRun` 后，`AlgResult` 内的 `traffic_lights` / `speed_limits` / `signs` 数组由 SDK 分配，**必须配对调用 `AlgFreeResult`** 释放，否则内存泄漏。
-- 结果按 solution 类型填充：红绿灯配置只填 `traffic_lights`，限速牌配置填 `speed_limits`（限速值）+ `signs`（PARE / 禁止停车等牌种，v3.5），二合一配置多者均可能非空。
+- 每帧调用 `AlgRun` 后，`AlgResult` 内的 `speed_limits` / `signs` 数组由 SDK 分配，**必须配对调用 `AlgFreeResult`** 释放，否则内存泄漏。
+- 结果按 solution 类型填充：限速牌配置填 `speed_limits`（限速值）+ `signs`（PARE / 禁止停车等牌种），二合一配置多者均可能非空。
 
 最小调用示例：
 
@@ -278,39 +276,15 @@ typedef struct AlgBox_ {
 } AlgBox;
 ```
 
-`score` 含义随检测器不同：
+`score` 含义：
 
-- **红绿灯**：检测置信度；
 - **限速牌**：联合置信度 = 检测置信度 × OCR 分类置信度。
 
 应用统一只看这一个分数即可。
 
-### 4.2 红绿灯检测（traffic light）
 
-#### AlgTrafficLightColor —— 红绿灯颜色类别
 
-枚举值 = JSON 中 `tld_cfg.postprocess.class_names[label]` 的下标 + 1，0 留作 `INVALID`。类名约定顺序为 `["red_light","yellow_light","green_light","off_light"]`，否则颜色映射错位。
-
-```c
-typedef enum AlgTrafficLightColor_ {
-    TLC_INVALID = 0,   // 检测到但分类异常（正常不出现）
-    TLC_RED     = 1,   // 红灯
-    TLC_YELLOW  = 2,   // 黄灯
-    TLC_GREEN   = 3,   // 绿灯
-    TLC_OFF     = 4,   // 熄灭
-} AlgTrafficLightColor;
-```
-
-#### AlgTrafficLight —— 单个红绿灯检测结果
-
-```c
-typedef struct AlgTrafficLight_ {
-    AlgBox                box;     // 原图坐标系下的框，box.score = 检测置信度
-    AlgTrafficLightColor  color;   // 颜色类别
-} AlgTrafficLight;
-```
-
-### 4.3 限速牌识别（speed limit sign）
+### 4.2 限速牌识别（speed limit sign）
 
 #### AlgSpeedLimitValue —— 限速牌类别
 
@@ -343,7 +317,7 @@ typedef struct AlgSpeedLimit_ {
 } AlgSpeedLimit;
 ```
 
-### 4.4 禁令 / 停车牌（prohibition sign，v3.5 新增）
+### 4.3 禁令 / 停车牌
 
 非限速、不带可读数字的牌种（无法用 `AlgSpeedLimitValue` 表达），单列一个数组。
 
@@ -374,8 +348,6 @@ typedef struct AlgSign_ {
 typedef struct AlgResult_ {
     long long           frame_id;              // 算法处理的图像帧 ID
 
-    int                 traffic_light_count;   // 红绿灯结果数量
-    AlgTrafficLight*    traffic_lights;        // 红绿灯结果数组（SDK 持有）
 
     int                 speed_limit_count;     // 限速牌结果数量
     AlgSpeedLimit*      speed_limits;          // 限速牌结果数组（SDK 持有）
@@ -385,10 +357,5 @@ typedef struct AlgResult_ {
 } AlgResult;
 ```
 
-结果填充规则：
 
-- 单 solution 跑红绿灯（`traffic_light.json`）：仅 `traffic_lights` 非空；
-- 单 solution 跑限速牌（`speed_limit.json`）：`speed_limits` / `signs` 可能非空（`signs` = PARE / 禁止停车等）；
-- 二合一（`all.json`）：多个数组都可能非空。
-
-三个数组由 SDK 持有，应用通过 `AlgFreeResult` 一次性释放。
+两个数组由 SDK 持有，应用通过 `AlgFreeResult` 一次性释放。
