@@ -40,19 +40,23 @@ int FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
         return SIGN_INVALID;
     };
 
-    /* 第一遍：按 category attribute 分桶计数。
-     * 注：红绿灯（category=="traffic_light"）当前不对外输出，静默丢弃。 */
-    int sl_n = 0, sg_n = 0;
+    /* 第一遍：按 category attribute 分桶计数。 */
+    int tl_n = 0, sl_n = 0, sg_n = 0;
     for (const auto& o : objs) {
         if (!o.has_box() || !o.has_attributes()) continue;
         const Attribute* cat = FindAttr(o.attributes, "category");
         if (!cat) continue;
-        if (cat->value_str == "traffic_light") continue;   /* 红绿灯：暂不对外输出 */
+        if (cat->value_str == "traffic_light") ++tl_n;
         else if (cat->value_str == "speed_limit") ++sl_n;
         else if (sign_type_of(cat->value_str) != SIGN_INVALID) ++sg_n;
         else ALG_LOGW("FillAlgResult: 未知 category '%s'，丢弃", cat->value_str.c_str());
     }
 
+    if (tl_n > 0) {
+        result->traffic_lights = static_cast<AlgTrafficLight*>(
+            std::calloc(tl_n, sizeof(AlgTrafficLight)));
+        if (!result->traffic_lights) return -1;
+    }
     if (sl_n > 0) {
         result->speed_limits = static_cast<AlgSpeedLimit*>(
             std::calloc(sl_n, sizeof(AlgSpeedLimit)));
@@ -71,14 +75,17 @@ int FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
 
     /* 第二遍：填强类型字段。value 由后处理器在 Configure 时从
      * class_names 推导，此处直接读取，不再硬编码映射表。 */
-    int si = 0, gi = 0;
+    int ti = 0, si = 0, gi = 0;
     for (const auto& o : objs) {
         if (!o.has_box() || !o.has_attributes()) continue;
         const Attribute* cat = FindAttr(o.attributes, "category");
         if (!cat) continue;
 
         if (cat->value_str == "traffic_light") {
-            continue;                            /* 红绿灯：暂不对外输出 */
+            AlgTrafficLight& dst = result->traffic_lights[ti++];
+            CopyBox(o.box, &dst.box);
+            dst.color = (o.value >= TLC_RED && o.value <= TLC_OFF)
+                        ? static_cast<AlgTrafficLightColor>(o.value) : TLC_INVALID;
         } else if (cat->value_str == "speed_limit") {
             AlgSpeedLimit& dst = result->speed_limits[si++];
             CopyBox(o.box, &dst.box);
@@ -93,6 +100,7 @@ int FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
         }
     }
 
+    result->traffic_light_count = ti;
     result->speed_limit_count   = si;
     result->sign_count          = gi;
     return 0;

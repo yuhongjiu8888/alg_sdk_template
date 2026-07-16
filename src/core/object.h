@@ -2,7 +2,7 @@
  * @file object.h
  * @brief 内部用的 C++ 对象表示。Solution 在 C++ 侧合并各模型输出后，
  * 最终在 C API 边界由 FillAlgResult() 按 attribute 里的 "category" 标签
- * 分桶到强类型的 AlgTrafficLight[] / AlgSpeedLimit[]。
+ * 分桶到强类型的 AlgSpeedLimit[] / AlgSign[]。
  */
 
 #ifndef ALG_CORE_OBJECT_H

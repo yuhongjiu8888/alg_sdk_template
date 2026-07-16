@@ -2,9 +2,9 @@
  * @file alg_types.h
  * @brief alg_sdk 公共 C ABI 类型定义。
  *
- * 本分支聚焦巴西限速牌 / 停车牌识别落地模型。AlgResult 用强类型字段直接表达
- * 每个检测器的产出（speed_limits[] / signs[]），应用代码不需要查 attribute
- * 字符串，也不依赖 JSON 里 class_names 顺序之外的约定。
+ * 本分支聚焦红绿灯检测 + 巴西限速牌识别两个落地模型。AlgResult 用强类型字段
+ * 直接表达每个检测器的产出（traffic_lights[] / speed_limits[]），应用代码
+ * 不需要查 attribute 字符串，也不依赖 JSON 里 class_names 顺序之外的约定。
  */
 
 #ifndef ALG_TYPES_H
@@ -72,13 +72,37 @@ typedef struct AlgImage_ {
 
 /* 原图坐标系下的 2D 检测框。
  * score 含义：
+ *   - 红绿灯：检测置信度
  *   - 限速牌：联合置信度 = 检测置信度 × OCR 分类置信度
- *   - 停车/禁令牌：联合置信度
  * 应用统一只看这一个分数即可。 */
 typedef struct AlgBox_ {
     int   xmin, ymin, xmax, ymax;
     float score;
 } AlgBox;
+
+/* ============================================================== */
+/*                     红绿灯检测 (traffic light)                   */
+/* ============================================================== */
+
+/* 红绿灯颜色类别。
+ *
+ * 枚举值 = JSON 中 tld_cfg.postprocess.class_names[label] 的下标 + 1，0 留作 INVALID。
+ * 顺序约定：class_names 必须按
+ *     ["red_light", "yellow_light", "green_light", "off_light"]
+ * 排列，否则颜色映射会错位。 */
+typedef enum AlgTrafficLightColor_ {
+    TLC_INVALID = 0,    /* 检测到了但分类异常（正常不出现） */
+    TLC_RED     = 1,    /* 红灯 */
+    TLC_YELLOW  = 2,    /* 黄灯 */
+    TLC_GREEN   = 3,    /* 绿灯 */
+    TLC_OFF     = 4,    /* 熄灭 */
+} AlgTrafficLightColor;
+
+/* 单个红绿灯检测结果。 */
+typedef struct AlgTrafficLight_ {
+    AlgBox                box;     /* 原图坐标系下的框，box.score = 检测置信度 */
+    AlgTrafficLightColor  color;
+} AlgTrafficLight;
 
 /* ============================================================== */
 /*                   限速牌识别 (speed limit sign)                  */
@@ -139,12 +163,17 @@ typedef struct AlgSign_ {
 
 /* 一帧的算法输出。
  *
- *  - 单 solution 跑限速牌 (speed_limit.json)：speed_limits / signs 可能非空
+ *  - 单 solution 跑红绿灯 (traffic_light.json)：只有 traffic_lights 非空。
+ *  - 单 solution 跑限速牌 (speed_limit.json)：  speed_limits / signs 可能非空
  *    （signs = PARE / 禁止停车等非限速牌种，v3.5 起）。
+ *  - 二合一 (all.json)：多个数组都可能非空。
  *
- * 数组由 SDK 持有；应用通过 AlgFreeResult 一次性释放。 */
+ * 三个数组由 SDK 持有；应用通过 AlgFreeResult 一次性释放。 */
 typedef struct AlgResult_ {
     long long           frame_id;
+
+    int                 traffic_light_count;
+    AlgTrafficLight*    traffic_lights;
 
     int                 speed_limit_count;
     AlgSpeedLimit*      speed_limits;

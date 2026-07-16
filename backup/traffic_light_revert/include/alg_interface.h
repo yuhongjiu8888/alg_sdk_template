@@ -7,7 +7,7 @@
  *
  * 使用：
  *   AlgHandle h = NULL;
- *   AlgCreate(&h, "/data/speed_limit.json");
+ *   AlgCreate(&h, "/data/traffic_light.json");   // 或 speed_limit.json
  *   AlgRun(h, &image, &result);
  *   AlgFreeResult(&result);
  *   AlgDestroy(h);
@@ -30,7 +30,7 @@ ALG_API AlgStatus AlgDestroy(AlgHandle handle);
 ALG_API AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 
 /**
- * 释放 SDK 在 result 内部分配的内存：speed_limits[] / signs[] 两个数组。
+ * 释放 SDK 在 result 内部分配的内存：traffic_lights[] / speed_limits[] 两个数组。
  * 对零值 result 调用安全。
  */
 ALG_API void AlgFreeResult(AlgResult* result);

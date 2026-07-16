@@ -2,7 +2,8 @@
  * @file test_runner.cpp
  * @brief 通用 SDK 烟雾测试：传入 JSON solution + 一张图或一个目录，跑完打印强类型结果。
  *
- * 同一个二进制可跑（红绿灯输出当前已屏蔽）：
+ * 同一个二进制可跑：
+ *   ./test_runner resources/traffic_light.json   /data/test.jpg out/
  *   ./test_runner resources/speed_limit.json     /data/test.jpg out/
  *   ./test_runner resources/all.json             /data/test.jpg out/
  *
@@ -28,6 +29,17 @@
 
 namespace {
 
+const char* TLCName(AlgTrafficLightColor c) {
+    switch (c) {
+        case TLC_RED:    return "red";
+        case TLC_YELLOW: return "yellow";
+        case TLC_GREEN:  return "green";
+        case TLC_OFF:    return "off";
+        case TLC_INVALID:
+        default:         return "invalid";
+    }
+}
+
 int SLKmh(AlgSpeedLimitValue v) {
     /* 新枚举按 km/h÷10 连续编号（SLV_10=1 … SLV_90=9 … SLV_120=12），value×10 即 km/h。
      * 旧实现漏了 SLV_90，落到 return 0 → 90 显示成 0。 */
@@ -41,6 +53,16 @@ const char* SignName(AlgSignType t) {
         case SIGN_PARE:       return "pare";
         case SIGN_INVALID:
         default:              return "invalid";
+    }
+}
+
+cv::Scalar TLCColor(AlgTrafficLightColor c) {
+    switch (c) {
+        case TLC_RED:    return cv::Scalar(  0,   0, 255);
+        case TLC_YELLOW: return cv::Scalar(  0, 215, 255);
+        case TLC_GREEN:  return cv::Scalar(  0, 200,   0);
+        case TLC_OFF:    return cv::Scalar(160, 160, 160);
+        default:         return cv::Scalar(255,   0, 255);
     }
 }
 
@@ -66,6 +88,11 @@ void DrawBoxLabel(cv::Mat& img, const AlgBox& b, const char* text, cv::Scalar c)
 
 void DrawResult(cv::Mat& img, const AlgResult& r) {
     char buf[64];
+    for (int i = 0; i < r.traffic_light_count; ++i) {
+        const AlgTrafficLight& t = r.traffic_lights[i];
+        std::snprintf(buf, sizeof(buf), "TL.%s %.2f", TLCName(t.color), t.box.score);
+        DrawBoxLabel(img, t.box, buf, TLCColor(t.color));
+    }
     for (int i = 0; i < r.speed_limit_count; ++i) {
         const AlgSpeedLimit& s = r.speed_limits[i];
         std::snprintf(buf, sizeof(buf), "SL.%d %.2f", SLKmh(s.value), s.box.score);
@@ -142,8 +169,14 @@ int RunOne(AlgHandle h, const std::string& image_path, const std::string& out_pa
 
     std::printf("[infer ] %.2f ms\n",
                 (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0);
-    std::printf("[result] frame_id=%lld  speed_limits=%d  signs=%d\n",
-                (long long)r.frame_id, r.speed_limit_count, r.sign_count);
+    std::printf("[result] frame_id=%lld  traffic_lights=%d  speed_limits=%d  signs=%d\n",
+                (long long)r.frame_id, r.traffic_light_count, r.speed_limit_count, r.sign_count);
+    for (int i = 0; i < r.traffic_light_count; ++i) {
+        const AlgTrafficLight& t = r.traffic_lights[i];
+        std::printf("  TL[%d] color=%s score=%.3f  box=(%d,%d)-(%d,%d)\n",
+                    i, TLCName(t.color), t.box.score,
+                    t.box.xmin, t.box.ymin, t.box.xmax, t.box.ymax);
+    }
     for (int i = 0; i < r.speed_limit_count; ++i) {
         const AlgSpeedLimit& sl = r.speed_limits[i];
         std::printf("  SL[%d] %d km/h score=%.3f  box=(%d,%d)-(%d,%d)\n",

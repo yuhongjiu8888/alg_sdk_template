@@ -71,6 +71,10 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result) {
 
 void AlgFreeResult(AlgResult* result) {
     if (!result) return;
+    if (result->traffic_lights) {
+        std::free(result->traffic_lights);
+        result->traffic_lights = nullptr;
+    }
     if (result->speed_limits) {
         std::free(result->speed_limits);
         result->speed_limits = nullptr;
@@ -79,6 +83,7 @@ void AlgFreeResult(AlgResult* result) {
         std::free(result->signs);
         result->signs = nullptr;
     }
+    result->traffic_light_count = 0;
     result->speed_limit_count   = 0;
     result->sign_count          = 0;
 }
