@@ -2,7 +2,7 @@
 
 | 项目 | 版本 | 日期 |
 |------|------|------|
-| 红绿灯检测 + 限速牌识别（alg_sdk） | Version-1.0.0 | 2026 年 07 月 17 日 |
+| 限速牌 / 停车牌识别（alg_sdk） | Version-1.0.0 | 2026 年 07 月 17 日 |
 
 ## 文档控制
 
@@ -29,9 +29,9 @@
 
 ## 一． 算法库介绍
 
-本算法库运用深度学习技术，面向端侧（NPU / 嵌入式）CV 推理场景，对车载前视摄像头图像进行实时识别，当前落地两个模型能力：
+本算法库运用深度学习技术，面向端侧（NPU / 嵌入式）CV 推理场景，对车载前视摄像头图像进行实时识别，当前落地能力：
 
-- **限速牌停车牌识别**：识别巴西限速牌 10 / 20 / … / 120 km/h 共 12 类限速值及其检测框与联合置信度，礼让行人PARE停车牌及禁止泊车E停车牌。
+- **限速牌 / 停车牌识别**：识别巴西限速牌 10 / 20 / … / 120 km/h 共 12 类限速值及其检测框与联合置信度，礼让行人PARE停车牌及禁止泊车E停车牌。
 整个 SDK 由一份 JSON 配置驱动启动，JSON 描述 solution 编排（用哪几个模型、如何串接）、每个模型走哪个芯片后端的哪个模型文件、以及前 / 后处理参数。**调阈值 / 改输入尺寸 / 换均值方差均改 JSON 即可，无需重新编译**。
 
 该算法库主要分为两部分：
@@ -63,8 +63,8 @@
             │  │ AlgRun(handle, &image, &result)         │  │  跑完整条 solution 流水线
             │  └───────────────────┬────────────────────┘  │
             │  ┌───────────────────▼────────────────────┐  │
-            │  │ 读取 result.traffic_lights[] /          │  │  应用按强类型字段处理结果
-            │  │       result.speed_limits[]             │  │
+            │  │ 读取 result.speed_limits[] /            │  │  应用按强类型字段处理结果
+            │  │       result.signs[]                    │  │
             │  └───────────────────┬────────────────────┘  │
             │  ┌───────────────────▼────────────────────┐  │
             │  │ AlgFreeResult(&result)                  │  │  释放本帧 result 内部数组
@@ -81,7 +81,7 @@
 - `AlgCreate` 较重（加载模型、初始化后端），**只调用一次**，句柄在整个生命周期内复用。
 - 每帧调用 `AlgRun` 前填充 `AlgImage`，其中 `data` 缓冲区由调用方持有；`AlgRun` 不接管该内存。
 - 每帧调用 `AlgRun` 后，`AlgResult` 内的 `speed_limits` / `signs` 数组由 SDK 分配，**必须配对调用 `AlgFreeResult`** 释放，否则内存泄漏。
-- 结果按 solution 类型填充：限速牌配置填 `speed_limits`（限速值）+ `signs`（PARE / 禁止停车等牌种），二合一配置多者均可能非空。
+- 结果按 solution 类型填充：限速牌配置填 `speed_limits`（限速值）+ `signs`（PARE / 禁止停车等牌种），两个数组均可能非空。
 
 最小调用示例：
 
@@ -129,7 +129,7 @@ AlgStatus AlgCreate(AlgHandle* handle, const char* config_json_path);
 **参数**：
 
 - `handle`：输出参数，成功时写入创建好的 SDK 句柄（`AlgHandle`）。
-- `config_json_path`：JSON 配置文件路径，如 `traffic_light.json` / `speed_limit.json` / `all.json`。
+- `config_json_path`：JSON 配置文件路径，如 `speed_limit.json`。
 
 **返回值**：返回 `ALG_OK`（0）表示成功；非 0 表示失败（如 `ALG_E_CONFIG` 配置解析失败、`ALG_E_MODEL_NOT_FOUND` 模型 / 后处理类型未注册、`ALG_E_BACKEND` 后端错误）。
 
@@ -159,7 +159,7 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 
 - `handle`：`AlgCreate` 返回的 SDK 句柄。
 - `image`：输入图像描述指针（`AlgImage`），`data` 像素缓冲区由调用方持有。
-- `result`：输出结果指针（`AlgResult`），SDK 填充 `traffic_lights` / `speed_limits` 等字段。调用前建议零初始化（`AlgResult r = {0};`）。
+- `result`：输出结果指针（`AlgResult`），SDK 填充 `speed_limits` / `signs` 等字段。调用前建议零初始化（`AlgResult r = {0};`）。
 
 **返回值**：返回 `ALG_OK`（0）表示成功；非 0 表示失败（如 `ALG_E_PREPROCESS` / `ALG_E_POSTPROCESS` / `ALG_E_BACKEND`）。
 
@@ -171,7 +171,7 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 void AlgFreeResult(AlgResult* result);
 ```
 
-**函数说明**：释放 SDK 在 `result` 内部分配的内存（`traffic_lights[]` / `speed_limits[]` / `signs[]` 三个数组）。对零值 / 已释放的 `result` 调用是安全的。
+**函数说明**：释放 SDK 在 `result` 内部分配的内存（`speed_limits[]` / `signs[]` 两个数组）。对零值 / 已释放的 `result` 调用是安全的。
 
 **参数**：
 
@@ -352,7 +352,7 @@ typedef struct AlgResult_ {
     int                 speed_limit_count;     // 限速牌结果数量
     AlgSpeedLimit*      speed_limits;          // 限速牌结果数组（SDK 持有）
 
-    int                 sign_count;            // 禁令/停车牌结果数量（v3.5）
+    int                 sign_count;            // 禁令/停车牌结果数量
     AlgSign*            signs;                 // 禁令/停车牌结果数组（SDK 持有）
 } AlgResult;
 ```
