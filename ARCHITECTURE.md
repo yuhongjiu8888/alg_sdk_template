@@ -89,6 +89,7 @@ src/
   backend/                     每种芯片一个目录
     backend_factory.h          MakeInferer() / BackendName() 入口（编译期绑定）
     xmm/                       XMM（xmedia_cl + MMZ）
+    svp_acl/                   海思 SVP ACL（.om + cached device buffers）
     rk/                        Rockchip RKNN（桩示例）
 
 cmake/                         构建配置（按 ALG_PLATFORM + ALG_BACKEND 拼接）

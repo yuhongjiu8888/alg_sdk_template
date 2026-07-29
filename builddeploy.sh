@@ -4,6 +4,7 @@
 # 用法：
 #   ./builddeploy.sh                                    # 编译全部目标并打包
 #   ./builddeploy.sh aarch64 xmm                        # 仅编译打包 aarch64-xmm
+#   ./builddeploy.sh aarch64 svp_acl                    # 仅编译打包 v610 SVP ACL
 #   ./builddeploy.sh x86_64 mnn                         # 仅编译打包 x86_64-mnn
 #
 # 输出在 deploy/ 下，每个目标两个 zip：

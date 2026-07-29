@@ -25,13 +25,24 @@ set(CMAKE_CXX_FLAGS "-std=c++14 -O3 -s -Wl,--gc-sections -Wall -fpermissive -fPI
 set(CMAKE_C_FLAGS   "-fpermissive -O3 -s -Wl,--gc-sections -Wall -fPIC -fvisibility=hidden -ffunction-sections -fdata-sections -ffast-math ${CMAKE_C_FLAGS}")
 
 # -----------------------------------------------------------------------------
-# OpenCV
+# OpenCV（SVP ACL 使用 v610 工具链对应的 Hisi 构建，其余后端沿用 SGK 构建）
 # -----------------------------------------------------------------------------
-include_directories(/root/opensource/opencv-4.5.0/build_arm_sgk/install/include/opencv4)
-link_directories(
-    /root/opensource/opencv-4.5.0/build_arm_sgk/install/lib
-    /root/opensource/opencv-4.5.0/build_arm_sgk/install/lib/opencv4/3rdparty
-)
+if(ALG_BACKEND STREQUAL "svp_acl")
+    set(SVP_OPENCV_ROOT
+        "/root/opensource/opencv-4.5.0/build_arm_hisi/install"
+        CACHE PATH "OpenCV install root for HiSilicon v610")
+    include_directories(${SVP_OPENCV_ROOT}/include/opencv4)
+    link_directories(
+        ${SVP_OPENCV_ROOT}/lib
+        ${SVP_OPENCV_ROOT}/lib/opencv4/3rdparty
+    )
+else()
+    include_directories(/root/opensource/opencv-4.5.0/build_arm_sgk/install/include/opencv4)
+    link_directories(
+        /root/opensource/opencv-4.5.0/build_arm_sgk/install/lib
+        /root/opensource/opencv-4.5.0/build_arm_sgk/install/lib/opencv4/3rdparty
+    )
+endif()
 set(OPENCV4_LIB_STATIC
     libopencv_imgcodecs.a libopencv_imgproc.a libopencv_calib3d.a
     libopencv_features2d.a libopencv_flann.a libopencv_videoio.a
@@ -123,8 +134,31 @@ elseif(ALG_BACKEND STREQUAL "rk")
         src/backend/rk/rk_inferer.cpp
         src/backend/rk/rk_backend.cpp
     )
+elseif(ALG_BACKEND STREQUAL "svp_acl")
+    set(ALG_BACKEND_SRCS
+        src/backend/svp_acl/svp_acl_inferer.cpp
+        src/backend/svp_acl/svp_acl_backend.cpp
+    )
+    set(SVP_ACL_ROOT
+        "/root/project/haisi-v610/acllib"
+        CACHE PATH "HiSilicon SVP ACLlib root")
+    set(SVP_ACL_LIB_DIR
+        "${SVP_ACL_ROOT}/lib32_arm-v01c02-linux-musleabi/stub"
+        CACHE PATH "SVP ACL library directory")
+    set(HISI_SECUREC_LIB_DIR
+        "/root/project/haisi-v610/gcc-20250305-arm-v01c02-linux-musleabi/arm-v01c02-linux-musleabi-gcc/target/usr/lib/a7_softfp_neon-vfpv4"
+        CACHE PATH "HiSilicon securec library directory")
+    include_directories(${SVP_ACL_ROOT}/include)
+    link_directories(${SVP_ACL_LIB_DIR} ${HISI_SECUREC_LIB_DIR})
+    set(ALG_BACKEND_LIBS
+        libprotobuf-c.a
+        libss_mpi_sysmem.a
+        libsvp_acl.a
+        libsecurec.a
+    )
 else()
-    message(FATAL_ERROR "Unknown ALG_BACKEND: ${ALG_BACKEND} (expected xmm or rk)")
+    message(FATAL_ERROR
+        "Unknown ALG_BACKEND: ${ALG_BACKEND} (expected xmm, svp_acl or rk)")
 endif()
 
 # -----------------------------------------------------------------------------
@@ -137,12 +171,23 @@ add_library(alg_sdk SHARED
     ${JSONCPP_SRCS}
 )
 target_compile_definitions(alg_sdk PRIVATE ALG_BUILDING_SDK=1)
-target_link_libraries(alg_sdk
-    ${OPENCV4_LIB_STATIC}
-    # ${JSONCPP_LIB_STATIC}
-    ${ALG_BACKEND_LIBS}
-    rt dl pthread
-)
+if(ALG_BACKEND STREQUAL "svp_acl")
+    # SVP ACL/OpenCV 均为静态库，循环依赖需要 linker group。
+    target_link_libraries(alg_sdk
+        -Wl,--start-group
+        ${OPENCV4_LIB_STATIC}
+        ${ALG_BACKEND_LIBS}
+        -Wl,--end-group
+        rt dl pthread
+    )
+else()
+    target_link_libraries(alg_sdk
+        ${OPENCV4_LIB_STATIC}
+        # ${JSONCPP_LIB_STATIC}
+        ${ALG_BACKEND_LIBS}
+        rt dl pthread
+    )
+endif()
 # Android logcat sink 需要 liblog（NDK 构建时）
 if(ANDROID OR ALG_LOG_ANDROID)
     target_link_libraries(alg_sdk log)

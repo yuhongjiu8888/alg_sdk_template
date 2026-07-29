@@ -53,7 +53,8 @@ if(ALG_LOG_ANDROID)
 endif()
 
 if(NOT DEFINED ALG_BACKEND)
-    set(ALG_BACKEND "xmm" CACHE STRING "Inference backend: xmm | rk | mnn")
+    set(ALG_BACKEND "xmm" CACHE STRING
+        "Inference backend: xmm | svp_acl | rk | mnn")
 endif()
 message(STATUS "ALG_BACKEND = ${ALG_BACKEND}")
 

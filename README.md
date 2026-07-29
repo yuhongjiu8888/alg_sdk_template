@@ -65,6 +65,7 @@ src/
 
   backend/                     每种芯片一个目录
     xmm/                       XMM（xmedia_cl + MMZ）
+    svp_acl/                   海思 SVP ACL（.om，自动管理 task_buf/work_buf）
     rk/                        Rockchip RKNN（桩示例）
 
 cmake/CMakeLists_linux_aarch64.cmake
@@ -177,6 +178,8 @@ AlgDestroy(h);
 
 ```bash
 ./build.sh linux aarch64 xmm
+# 海思 v610 + SVP ACL：
+./build.sh linux aarch64 svp_acl
 # 产物：build_linux_aarch64_xmm/libalg_sdk.so + test_runner
 
 ./test_runner resources/traffic_light.json /data/test.jpg out/
@@ -186,6 +189,23 @@ AlgDestroy(h);
 
 依赖：jsoncpp 静态库（路径通过 `-DJSONCPP_ROOT=...` 配置，默认
 `/root/opensource/jsoncpp/build_arm/install`）。
+
+### SVP ACL 后端
+
+SVP ACL 后端只实现 `IInferer`，检测/OCR 后处理和两阶段编排保持不变。`.om`
+中暴露的 `task_buf`、`work_buf` 由后端分配并初始化，但不会作为业务输入暴露给
+`ModelInstance`。
+
+```bash
+./build.sh linux aarch64 svp_acl
+cd build_linux_aarch64_svp_acl
+./test_runner \
+  ../resources/config/svp_acl/speed_limit.json /path/to/input.jpg output/
+```
+
+默认工具链与依赖路径对齐 v610 编译服务器，可用 CMake cache 参数覆盖：
+`HISI_TOOLCHAIN_ROOT`、`SVP_ACL_ROOT`、`SVP_ACL_LIB_DIR`、
+`HISI_SECUREC_LIB_DIR`、`SVP_OPENCV_ROOT`。
 
 ## 训练侧契约对照
 
