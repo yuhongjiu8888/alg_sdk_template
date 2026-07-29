@@ -47,7 +47,7 @@ set(OPENCV4_LIB_STATIC
     libopencv_imgcodecs.a libopencv_imgproc.a libopencv_calib3d.a
     libopencv_features2d.a libopencv_flann.a libopencv_videoio.a
     libopencv_core.a liblibjpeg-turbo.a liblibopenjp2.a liblibpng.a
-    liblibwebp.a libade.a libzlib.a libIlmImf.a liblibtiff.a
+    libade.a libzlib.a libIlmImf.a liblibtiff.a
     libittnotify.a libquirc.a libzlib.a)
 
 # -----------------------------------------------------------------------------
