@@ -1,96 +1,101 @@
-# Pipeline JSON Configuration Reference
+# alg_sdk JSON 配置说明
 
-## Top-level structure
+业务配置由 `solution` 和 `models` 两个对象组成，分别定义执行阶段和模型实例。本文说明配置字段及处理规则，完整示例位于 [配置目录](config)。
 
-```json
-{
-  "solution": { ... },
-  "models": { ... }
-}
-```
+## 顶层结构
 
-Both keys are required.
+`solution` 与 `models` 均为必填项，`models` 和 `solution.stages` 不得为空。模型文件路径以进程工作目录为基准解析；配置修改后需重新创建 SDK 实例。
 
 ---
 
 ## solution
 
-| Key | Type | Required | Default | Description |
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---|---|---|
-| `type` | string | no | `"chain"` | Execution strategy, currently only `"chain"` |
-| `stages` | array | **yes** | - | Ordered pipeline stages (non-empty) |
+| `type` | string | 否 | `"chain"` | 执行策略，本版本仅支持 `"chain"` |
+| `stages` | array | 是 | - | 按执行顺序排列的阶段，数组不得为空 |
 
 ### solution.stages[*]
 
-| Key | Type | Required | Default | Description |
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---|---|---|
-| `name` | string | **yes** | - | Unique stage ID, referenced by later stages |
-| `model` | string | **yes** | - | Key into top-level `models` object |
-| `input` | string | no | `"image"` | `"image"` or `"objects_from:<stage>"` |
-| `crop` | object | no | - | Crop config, only for `objects_from:` input |
-| `crop.expand_ratio` | float | no | `1.0` | Bbox expansion factor before cropping |
-| `crop.square` | bool | no | `false` | Expand crop to square |
-| `crop.pad_value` | int | no | `-1` | `>=0`：扩边框越界处用该灰度值填充、保正方不形变（等价训练端 `cv2.warpAffine(borderValue=…)`）；`-1`：旧行为，clamp 到图内（越界时 ROI 非正方，下游 resize 会形变）。逐位 OCR 等对裁剪几何敏感的分类器应设为训练裁剪用的灰边值（限速牌为 `114`） |
-| `produces` | string | no | `"objects"` | Output routing (see below) |
-| `score_threshold` | float | no | `0.0` | 仅 `classify_into:`：合并后联合分 `det_score × cls_conf`（最终对外 `box.score`）低于此值则 drop。检测/分类各自的 `conf_threshold` 只卡各自分数，两头都勉强过线时乘积仍可能偏低，此项按联合分兜底过滤。`0` = 关闭 |
-| `passthrough` | array | no | `[]` | 仅 `objects_from:`：**终端类透传**。上游某 `label` 的框不进本 stage 子模型，直接打 `category`/牌种透出（见下） |
-| `min_box_short` | object | no | `{}` | `{ "<category>": <px> }`：合并/透传后的框，若其 `category` 命中且**框短边 < 阈值**则 drop（精度优先，如禁停 `nopark_min_size`） |
+| `name` | string | 是 | - | 阶段名称，应保持唯一，供后续阶段引用 |
+| `model` | string | 是 | - | 引用顶层 `models` 中的模型实例名称 |
+| `input` | string | 否 | `"image"` | `"image"` 或 `"objects_from:<stage>"` |
+| `crop` | object | 否 | - | 裁剪配置，仅用于 `objects_from:` 输入 |
+| `crop.expand_ratio` | float | 否 | `1.0` | 围绕检测框中心的裁剪扩展比例 |
+| `crop.square` | bool | 否 | `false` | 将裁剪区域扩展为正方形 |
+| `crop.pad_value` | int | 否 | `-1` | `0`～`255`：使用指定灰度值填充越界区域，保持裁剪几何；`-1`：裁到图内，越界时裁剪形状可能改变。限速牌识别使用与训练裁剪一致的 `114` |
+| `produces` | string | 否 | `"objects"` | 阶段输出规则，见下文 |
+| `score_threshold` | float | 否 | `0.0` | 仅 `classify_into:`：联合分 `det_score × cls_conf` 低于此值时丢弃对象；独立于检测和识别各自的阈值。`0` 表示关闭，不作用于透传分支 |
+| `passthrough` | array | 否 | `[]` | 仅 `objects_from:`：匹配上游 `label` 后设置 `category` 和业务值，跳过子模型 |
+| `min_box_short` | object | 否 | `{}` | `{ "<category>": <px> }`：按类别检查合并或透传后的原图框，短边小于配置值时丢弃 |
 
-**`passthrough[*]`**（v3.5：Stage1 终端类如 `pare` 八边形，不进 Stage2 OCR 直接输出）：
+### 透传规则 `passthrough[*]`
 
-| Key | Type | Default | Description |
+PARE 等由检测阶段确定的类别采用透传方式，跳过第二阶段 OCR，保留检测置信度。
+
+| 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `label` | int | **必填** | 上游检测的类别 idx（如 pare=1）。命中即跳过裁剪+子模型 |
-| `category` | string | **必填** | 透出的 `category`（`FillAlgResult` 据此分桶，如 `"pare"`） |
-| `sign_value` | int | `0` | 写入 `object.value`（如 `AlgSignType` 的 `SIGN_PARE=2`） |
-| `min_score` | float | `0.0` | 检测分 `box.score` 低于此值则 drop（`0`=不额外过滤；pare 弱类易误检可设 `0.85`，对齐 deploy 的 `pare_score_thr`） |
+| `label` | int | **必填** | 上游检测类别索引，例如 PARE 为 1；匹配后跳过裁剪和子模型 |
+| `category` | string | **必填** | 写入对象的 `category`，用于公共结果映射，例如 `"pare"` |
+| `sign_value` | int | `0` | 写入 `object.value`，例如 `SIGN_PARE=2`；公共牌种仍按 `category` 确定 |
+| `min_score` | float | `0.0` | 检测分 `box.score` 低于此值时丢弃，`0` 表示关闭额外过滤；阈值按业务验证结果设置 |
 
-`produces` 可选值：
-- `"objects"` -- 产出新的顶层检测框
-- `"classify_into:<stage>"` -- 分类结果合并到目标 stage 的检测框
-- `"attributes_into:<stage>"` -- 属性写入目标 stage 的检测框
-- `"keypoints_into:<stage>"` / `"mask_into:<stage>"` -- 预留
+### 输出规则 `produces`
+
+- `"objects"`：生成顶层对象，参与最终结果汇总。
+- `"classify_into:<stage>"`：用首个子结果更新上游类别、业务值和属性，将识别分乘到检测分；子结果为空时丢弃上游框。
+- `"attributes_into:<stage>"`：用首个子结果替换上游属性集合，不改变检测分。
+- `"keypoints_into:<stage>"` / `"mask_into:<stage>"`：写回内部预留字段，公共 C ABI 未定义对应输出。
+
+二阶段输入和写回目标应引用同一上游阶段，例如 `objects_from:detector` 与 `classify_into:detector`。模型引用须存在，阶段引用须指向此前的阶段。
+
+### 固定 ROI
+
+`input="image"` 的阶段可配置 `roi` 对象，字段为 `x`、`y`、`width`、`height`，单位为原图像素。宽高应为正，区域应与实际输入分辨率匹配。SDK 裁剪后执行模型，并将检测框恢复到原图坐标。`objects_from:` 阶段不得同时配置固定 ROI。
 
 ---
 
 ## models
 
-`models` 是一个对象，每个 key 是自定义的模型实例名，value 包含该模型的完整配置。
+`models` 以模型实例名称为键，定义各实例的模型路径、前处理和后处理参数。创建 SDK 时会初始化其中的全部模型。
 
 ### models.\<name\>
 
-| Key | Type | Required | Description |
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `model_path` | string | **yes** | 模型文件路径 |
-| `preprocess` | object | **yes** | 前处理配置 |
-| `postprocess` | object | **yes** | 后处理配置（必须包含 `type` 字段） |
+| `model_path` | string | 是 | 模型文件路径 |
+| `preprocess` | object | 是 | 前处理配置 |
+| `postprocess` | object | 是 | 后处理配置（必须包含 `type` 字段） |
 
 ---
 
 ## models.\<name\>.preprocess
 
-| Key | Type | Required | Default | Description |
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---|---|---|
-| `input_size` | `[w, h]` | yes* | - | 网络输入尺寸，与 `input_width`/`input_height` 二选一 |
-| `input_width` | int | fallback | `0` | 网络输入宽度（`input_size` 不存在时使用） |
-| `input_height` | int | fallback | `0` | 网络输入高度（`input_size` 不存在时使用） |
-| `color` | string | no | `"BGR"` | 像素颜色顺序：`"BGR"` / `"RGB"` / `"GRAY"` |
-| `resize` | string | no | `"letterbox_tl"` | 缩放策略（见下表） |
-| `layout` | string | no | `"NCHW"` | Tensor 内存布局：`"NCHW"` / `"NHWC"` |
-| `mean` | `[f, f, f]` | no | `[0, 0, 0]` | 归一化均值（逐通道） |
-| `std` | `[f, f, f]` | no | `[1, 1, 1]` | 归一化标准差（逐通道） |
-| `scale` | float | no | `1.0` | 全局缩放系数 |
-| `pad_value` | int | no | `0` | letterbox 填充值 (0-255) |
+| `input_size` | `[w, h]` | 二选一 | - | 网络输入尺寸，与 `input_width`/`input_height` 二选一 |
+| `input_width` | int | 备选 | `0` | 网络输入宽度（`input_size` 不存在时使用） |
+| `input_height` | int | 备选 | `0` | 网络输入高度（`input_size` 不存在时使用） |
+| `color` | string | 否 | `"BGR"` | 像素颜色顺序：`"BGR"` / `"RGB"` / `"GRAY"` |
+| `resize` | string | 否 | `"letterbox_tl"` | 缩放策略（见下表） |
+| `layout` | string | 否 | `"NCHW"` | 网络输入布局；通用前处理仅输出 `"NCHW"`，配置 `"NHWC"` 返回前处理错误 |
+| `mean` | `[f, f, f]` | 否 | `[0, 0, 0]` | 归一化均值（逐通道） |
+| `std` | `[f, f, f]` | 否 | `[1, 1, 1]` | 归一化标准差（逐通道） |
+| `scale` | float | 否 | `1.0` | 全局缩放系数 |
+| `pad_value` | int | 否 | `0` | letterbox 填充值 (0-255) |
 
-归一化公式：`y = (x - mean) * (scale / std)`
+FLOAT32 输入的有效图像区域采用 `y = (x - mean) * (scale / std)`，`std` 不得为 0；填充区域直接写入 `pad_value`。UINT8 输入要求 `mean=0`、`std=1`、`scale=1`，归一化由模型按其约定完成。输入宽高须与模型实际尺寸一致。
 
-**resize 策略：**
+### 缩放策略
 
 | 值 | 说明 |
 |---|---|
 | `"stretch"` | 直接拉伸，会改变宽高比 |
-| `"letterbox_tl"` | 保持宽高比，padding 补到左上 |
-| `"letterbox_center"` | 保持宽高比，padding 居中 |
+| `"letterbox_tl"` | 比例为网络宽除以原图较长边，图像贴左上角；须检查缩放后高度是否超过网络高度 |
+| `"letterbox_tl_fit"` | 宽高比例取较小值，保持宽高比，图像贴左上角，右侧和下方填充 |
+| `"letterbox_center"` | 宽高比例取较小值，保持宽高比并居中填充 |
 
 ---
 
@@ -98,13 +103,13 @@ Both keys are required.
 
 `type` 字段决定使用哪个后处理器，其余参数由具体后处理器解读。
 
-### type: "yolox_det" -- YOLOX 多尺度无锚框检测
+### type: "yolox_det"： YOLOX 多尺度无锚框检测
 
 期望 N 个输出 tensor（每个 stride 一个），形状 `(1, bbox+obj+cls, H, W)` 或 `(1, H, W, C)`。
 
 channel 布局：`[bbox_channels..., obj_channels..., num_classes...]`
 
-| Key | Type | Default | Description |
+| 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `num_classes` | int | `1` | 检测类别数 |
 | `bbox_channels` | int | `4` | bbox 回归通道数 (cx, cy, w, h) |
@@ -117,15 +122,13 @@ channel 布局：`[bbox_channels..., obj_channels..., num_classes...]`
 | `class_names` | `[str]` | `[]` | 类名列表，提供时输出 Object 附带 `"class"` 属性 |
 | `category` | string | `""` | 检测器类别标签，提供时输出 Object 附带 `"category"` 属性 |
 
-### type: "yolov5_anchor_det" -- YOLOv5 锚框单尺度检测
+### type: "yolov5_anchor_det"： YOLOv5 锚框单尺度检测
 
 期望 1 个输出 tensor，channel 布局同 yolox_det。
 
-打分（与训练 `model_src/postprocess.py` 一致）：`score = sigmoid(obj) × softmax(cls)`。
-cls 分支用 **softmax**（非 sigmoid）：单类时 softmax 恒为 1 → `score = sigmoid(obj)`；
-该 cls 通道在单类下 CE 梯度为 0、从未被训练，若误用 sigmoid 会乘上任意值把分数压低导致漏检。
+检测分为 `score = sigmoid(obj) × softmax(cls)`。类别分支采用 softmax；单类时该概率为 1，检测分等于 `sigmoid(obj)`。模型导出与部署后处理应保持这一约定。
 
-| Key | Type | Default | Description |
+| 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `num_classes` | int | `1` | 检测类别数 |
 | `bbox_channels` | int | `4` | bbox 回归通道数 (tx, ty, tw, th) |
@@ -137,74 +140,58 @@ cls 分支用 **softmax**（非 sigmoid）：单类时 softmax 恒为 1 → `sco
 | `max_det` | int | `64` | NMS 后最大保留数 |
 | `obj_prefilter` | float | `0.05` | objectness 早剪枝阈值 |
 
-### type: "ocr_classifier" -- 定长多位字符 OCR 分类器 + 门控（限速牌 v3.5，当前方案）
+### type: "ocr_classifier"：逐位 OCR 与门控分类
 
-逐位读数字的 OCR 网络后处理。对接训练侧
-`alg_speed_limit/src/classifier_src/classifier.py` 的 SpeedSignOCR（P=3 位：百/十/个位，
-每位 `num_chars`=11 = `'0'..'9'` + blank）。后处理**自动适配两种模型输出布局**：
+OCR 后处理根据 `class_names` 建立可接受的数字组合。限速牌使用三位字符，分别表示百位、十位和个位；每位包含数字和 blank，共 11 个类别。
 
-- **单输出模式（推荐，XMM 板端默认）**：模型出 1 个 `(1, P*num_chars)`/`(1, P, num_chars)`
-  张量（如 `(1,33)`），各位在该张量内按 `[p*num_chars, p*num_chars+num_chars)` 连续切片。
-  `NumOutputs==1 且 P>1` 时自动启用。
-- **多输出头模式（向后兼容）**：模型出 P 个 `(1, num_chars)` 张量，按 name/index 解析各头。
-  `NumOutputs>=P` 时启用。
+单输出模型按每位 `num_chars` 连续读取，三位数字占 33 个元素；启用三路门控后共 36 个元素。多输出模型使用独立字符头，通过 `head_names` 优先匹配，名称不可用时按 `head_indices` 读取。
 
-解码完全由 `class_names` 推导（**不硬编码**字符表）：每个类名按数字串右对齐拆成 P 位字符
-（缺位补 blank），如 `"90"→(blank,9,0)`、`"120"→(1,2,0)`，据此构建解码 LUT；推理时各位
-`softmax + argmax` 得 `(h,t,u)`，查 LUT 得 `cls_id`，非法组合（含个位非 `'0'`）→ 拒识。
-联合置信度 `cls_conf = min(各位 max-prob)`，`< conf_threshold` → 丢弃（开放集兜底）。
-输出 Object 的 `value = 类名数值 ÷ 10`（即 `AlgSpeedLimitValue`），与 `class_names` 排列顺序无关。
+类名按数字串右对齐，不足位补 blank，例如 `"90"` 对应 `(blank,9,0)`，`"120"` 对应 `(1,2,0)`。各位经 softmax 和 argmax 得到字符后查询解码表；不属于配置组合的结果予以拒识。OCR 分类分为各位最大概率的最小值，低于 `conf_threshold` 时返回空结果。输出业务值为类名数值除以 10，与类别列表顺序无关。
 
-**v3.5 门控（3 路 other/speed/no_parking）**：`gate_channels > 0` 时启用。门控向量 `argmax` 定牌种：
-- `speed`（且 `P(限速) ≥ gate_threshold`）→ 走上面的 OCR 解码，输出限速值（`category` = `category` 参数，如 `speed_limit`）
-- `no_parking` → **不读 OCR**，直接产出禁停正类：`category` = `nopark_category`（如 `"no_parking"`）、
-  `value` = `nopark_sign_value`（`AlgSignType` 的 `SIGN_NO_PARKING=1`）、`box.score` = `P(禁停)`。
-  `FillAlgResult` 据 `category` 分桶到 `AlgResult.signs[]`。禁停的最小框尺寸（`nopark_min_size`）由
-  **stage 的 `min_box_short`**（按 `category` 键）施加——分类器拿不到原图框尺寸，故放在 ChainSolution。
-- `other`（或 `P(限速) < gate_threshold`）→ 拒识（返回空 → `classify_into` drop 掉 src 框）
+#### 门控分类
 
-门控位置：**单输出模式**在 `output[0]` 内、偏移 `P*num_chars`（如 `(1,36)` 的末 3 路）；
-**多输出模式**是独立门控头（`gate_head_name`/`gate_head_index`，如 MNN 的 `logits_gate`）。
-`gate_channels=0`（默认）= 无门控纯 OCR（向后兼容旧模型）。
+`gate_channels>0` 时启用门控，根据最大概率类别判断处理路径：
 
-> **为何默认单输出**：三头各带不被 NPU 支持的算子，XMM 导出时图被切成 NPU+CPU 混合多输出，
-> 板端 runtime 只落 head0、head1/head2 不产出 → **0 检出**（详见提交 575bc8d）。改单输出
-> 后该坑消除（检测器单输出在该板一直正常）。训练侧 `export_onnx.py` 已默认导出单输出
-> `(1,33)`，`--multi-output` 保留旧三头供 MNN/调试。
->
-> 多输出头模式下三头同形状 `(1,11)` 无法靠 size 区分顺序，后处理**优先按输出张量 name 匹配**
-> （`head_names`），name 不可用（如 XMM 输出名为空）时退回 `head_indices`；MNN 会按张量名
-> 保留输出，故 name 匹配可覆盖 MNN 输出顺序被打乱的情况。单输出模式下 `head_names`/`head_indices`
-> 不参与（各位都读 `output[0]`）。
+- `speed`：门控限速概率达到 `gate_threshold` 后接受 OCR 结果，公共联合分为检测分乘 OCR 分。
+- `no_parking`：设置 `nopark_category` 和 `nopark_sign_value`，识别分使用禁停门控概率；不使用数字 OCR 阈值过滤。
+- 其他类别或限速概率不足：返回空结果，由 `classify_into` 丢弃上游框。
 
-| Key | Type | Default | Description |
+单输出模式下，门控位于 `output[0]` 的 `num_positions*num_chars` 偏移之后；多输出模式下，通过 `gate_head_name` / `gate_head_index` 定位独立门控头。`gate_channels=0` 时仅进行 OCR。
+
+禁停最小尺寸由 stage 的 `min_box_short` 按原图框短边过滤。分类器只接收裁剪图，因此尺寸规则在编排层执行。
+
+XMM 使用单输出布局，以避免特定多输出模型被划分为 NPU / CPU 子图后输出不完整的问题。多输出头形状相同时，使用张量名称明确各字符位的对应关系。单输出模式不使用 `head_names` 和 `head_indices`。
+
+#### OCR 参数
+
+| 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `num_positions` | int | 由 `class_names` 最长位数推导 | 位数 = 头数（高位→低位） |
+| `num_positions` | int | 由 `class_names` 最长位数推导 | 字符位数，按高位到低位排列 |
 | `num_chars` | int | `11` | 每头类别数（`'0'..'9'` + blank） |
 | `blank_index` | int | `10` | 占位符在字符表中的下标 |
-| `head_names` | `[str]` | `[]` | **仅多输出模式**：按名匹配各位对应的输出张量（高位→低位），推荐填 |
-| `head_indices` | `[int]` | `[0,1,..]` | **仅多输出模式**：name 不可用时的索引兜底（高位→低位） |
-| `conf_threshold` | float | `0.5` | `min(各位 prob)` 低于此值 → drop |
+| `head_names` | `[str]` | `[]` | 仅多输出模式：按名称匹配各位对应的输出张量，按高位到低位排列 |
+| `head_indices` | `[int]` | `[0,1,..]` | **仅多输出模式**：name 不可用时的备选索引（高位→低位） |
+| `conf_threshold` | float | `0.5` | `min(各位 prob)` 低于此值时丢弃 |
 | `class_names` | `[str]` | **必填** | 类名列表（限速字符串，解码 LUT 与 value 的唯一来源） |
 | `category` | string | `""` | 分类器类别标签（如 `"speed_limit"`） |
-| `gate_channels` | int | `0` | 门控路数（v3.5=3）；`0`=无门控纯 OCR。单输出时门控在 OCR 段之后 |
+| `gate_channels` | int | `0` | 门控路数（随附配置为 3）；`0`=无门控纯 OCR。单输出时门控在 OCR 段之后 |
 | `gate_speed_index` | int | `1` | `P(限速)` 在门控向量里的下标 |
 | `gate_nopark_index` | int | `2` | `P(禁停)` 在门控向量里的下标 |
-| `gate_threshold` | float | `0.5` | `P(限速) < 此值` → 非限速牌拒识（`gate_channels>0` 生效） |
+| `gate_threshold` | float | `0.5` | 限速门控概率低于此值时拒识；仅在门控启用的限速分支生效 |
 | `gate_head_name` | string | `""` | **仅多输出**：门控头张量名（如 `"logits_gate"`） |
-| `gate_head_index` | int | `num_positions` | **仅多输出**：门控头索引兜底（默认 = OCR 头之后） |
-| `nopark_category` | string | `""` | 门控判 no_parking 时产出的 `category`（如 `"no_parking"`，分桶到 `signs[]`） |
+| `gate_head_index` | int | `num_positions` | **仅多输出**：门控头备选索引（默认 = OCR 头之后） |
+| `nopark_category` | string | `""` | 门控判 no_parking 时产出的 `category`（如 `"no_parking"`，映射到 `signs[]`） |
 | `nopark_sign_value` | int | `0` | 门控判 no_parking 时写入 `value`（`AlgSignType`，`SIGN_NO_PARKING=1`） |
 
-### type: "dualhead_classifier" -- 双头 softmax 分类器（旧方案，保留向后兼容）
+### type: "dualhead_classifier"：双头 softmax 分类器
 
-> v3.4 起限速牌改用 `ocr_classifier`（支持 90/110/120）。本类型仍注册可用，仅作向后兼容。
+该处理器用于双头模型兼容。随附限速牌配置使用 `ocr_classifier`，覆盖 10～120 km/h 的 12 类限速值。
 
 期望 2 个输出 tensor（head_a: 首位数字, head_b: 位数判断）。
 
 组装规则：`argmax(head_b) == is_3digit_class` 时 `cls_id = three_digit_class_index`，否则 `cls_id = argmax(head_a)`。
 
-| Key | Type | Default | Description |
+| 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `head_a_index` | int | `0` | 第一个输出 tensor 索引 |
 | `head_b_index` | int | `1` | 第二个输出 tensor 索引 |
@@ -218,6 +205,14 @@ cls 分支用 **softmax**（非 sigmoid）：单类时 softmax 恒为 1 → `sco
 
 ---
 
+## 车牌处理器
+
+`rtmdet_det` 与 `lprnet_rec` 分别用于车牌检测和 CTC 识别。配套参数见 [车牌配置](config/svp_acl/license_plate.json)，包括检测阈值、NMS、字符集、时间步和 blank 索引。
+
+车牌识别分为保留字符概率的乘积，`lprnet_rec.conf_threshold` 默认 `0.0`，不进行识别分过滤。文本为空时也可能保留结果，应用需检查文本及业务格式。公共字段定义见 [接口文档](../alg_sdk_api_documentation_v1.0.0.md)。
+
 ## 完整示例
 
-见 [all.json](all.json)，包含三种后处理类型的完整三阶段链式 pipeline（检测 -> 检测 -> 分类）。
+- [SVP ACL 限速牌](config/svp_acl/speed_limit.json)：检测、OCR 和禁令 / 停车牌处理。
+- [SVP ACL 组合业务](config/svp_acl/all.json)：限速牌、禁令 / 停车牌及车牌识别。
+- [XMM 组合业务](config/xmm/all.json)、[MNN 组合业务](config/mnn/all.json)：内部红绿灯及限速牌处理；公共结果不包含红绿灯。

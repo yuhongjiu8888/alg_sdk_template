@@ -1,395 +1,179 @@
-# 新手指导 — 接口调用关系与架构速览
+# alg_sdk 开发接入指南
 
-本文档帮助新人快速理解 alg_sdk_template 的整体架构、接口调用关系和数据流向。
+本指南说明 alg_sdk 的工程接入流程、主要模块和问题定位方法，适用于应用集成和后续维护。完整接口定义见 [接口文档](alg_sdk_api_documentation_v1.0.0.md)，设计说明见 [架构文档](ARCHITECTURE.md)。
 
-## 项目简介
+## 1. 接入范围
 
-alg_sdk_template 是一个面向边缘端 CV 推理的 C++ SDK，当前支持两个业务模型：
+SDK 通过六个 C 函数完成实例管理、同步推理和结果释放，公共结果包含限速牌、禁令 / 停车牌和车牌。红绿灯模型及处理流程保留在工程内部，未纳入公共结果结构。
 
-- **红绿灯检测** — 单阶段 YOLOX，416x416 RGB，4 类 (red/yellow/green/off)
-- **巴西限速牌识别** — 两阶段流水线：SpeedSignNet 检测 + OCR 三头逐位识别，12 类 (10~120 km/h)
+应用接入需要准备目标架构、后端运行库、配套模型和业务配置。XMM、SVP ACL 和 MNN 提供推理实现；RK 保留接口桩，不用于业务验证。
 
-SDK 对外暴露 **强类型 C ABI**（6 个函数），内部通过 JSON 配置驱动整个推理流水线，切换模型/调参不需要重新编译 C++ 代码。
+## 2. 构建和验证
 
----
-
-## 整体分层架构
-
-```
-+---------------------------------------------------------------------+
-|                      应用层 (test_runner / 用户代码)                   |
-|         AlgCreate -> AlgRun -> AlgFreeResult -> AlgDestroy            |
-+--------------------------------+------------------------------------+
-                                 |  C ABI (alg_interface.h / alg_types.h)
-+--------------------------------v------------------------------------+
-|                   接口层 (src/interface/alg_interface.cpp)            |
-|            Context { ChainSolution }  + FillAlgResult                 |
-+--------------------------------+------------------------------------+
-                                 |
-+--------------------------------v------------------------------------+
-|               编排层 (src/core/solution/chain_solution.cpp)           |
-|     顺序执行 stages -> ROI 裁剪 -> classify_into 合并 -> drop 过滤    |
-+------+-----------------+-----------------+-------------------------+
-       |                 |                 |
-+------v------+  +-------v-------+  +------v------+
-| ModelInstance|  | ModelInstance |  |ModelInstance|
-| pre->infer->|  | pre->infer->  |  |pre->infer-> |
-|    post     |  |    post       |  |   post      |
-+------+------+  +-------+-------+  +------+------+
-       |                 |                 |
-  +----v-----+     +-----v-----+     +----v-----+
-  |Preprocess |     | Inferer   |     |Postproc  |
-  |(Letterbox)|     | (XMM/RK)  |     |(Registry)|
-  +----------+     +-----------+     +----------+
-```
-
-三个正交变化轴：
-- **换芯片** — 在 `src/backend/<chip>/` 实现 `IInferer` 接口即可
-- **加模型** — 在 `src/models/<type>/` 实现 `IPostprocessor` + 一行 `REGISTER_ALG_POST` 注册
-- **串业务** — 写 JSON 配置文件，描述 stages 编排关系，无需改 C++ 代码
-
----
-
-## 公共 C API（6 个函数）
-
-所有对外接口定义在 `include/alg_interface.h`，类型定义在 `include/alg_types.h`。
-
-```c
-// ---- 生命周期 ----
-AlgStatus AlgCreate(AlgHandle* handle, const char* config_json_path);
-AlgStatus AlgDestroy(AlgHandle handle);
-
-// ---- 推理 ----
-AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
-void      AlgFreeResult(AlgResult* result);   // 释放 result 内部分配的数组
-
-// ---- 信息查询 ----
-const char* AlgVersion(void);       // "alg_sdk.v1.0.0+xmm"
-const char* AlgBackendName(void);   // "xmm" / "rk"
-```
-
-### 核心数据结构
-
-```c
-// 输入图像描述（用户持有 data 指针）
-typedef struct AlgImage_ {
-    AlgPixelFormat format;   // BGR / RGB / GRAY / NV12 / NV21
-    int width, height;
-    int stride;              // 每行字节数，0 = 自动推算
-    int data_len;
-    const void* data;
-} AlgImage;
-
-// 输出结果（SDK 内部分配，用户通过 AlgFreeResult 释放）
-typedef struct AlgResult_ {
-    long long           frame_id;
-    int                 traffic_light_count;
-    AlgTrafficLight*    traffic_lights;     // 红绿灯结果数组
-    int                 speed_limit_count;
-    AlgSpeedLimit*      speed_limits;       // 限速牌结果数组
-} AlgResult;
-```
-
----
-
-## 完整调用时序
-
-```
-用户代码                         SDK 内部
---------                         --------
-AlgCreate(&h, "xxx.json")
-  |
-  +---> LoadSolutionConfig()           // JSON -> SolutionConfig (POD 结构体)
-  +---> ChainSolution::Init()
-  |       +---> ModelInstance::Init() x N
-  |               +---> MakeInferer() -> Load(model_path)       // 后端加载模型
-  |               +---> LetterboxPreprocessor::Configure()      // 前处理配置
-  |               +---> PostprocessorRegistry::Create(type)
-  |                       +---> Configure(inferer, json_params) // 后处理配置
-  |
-  v
-AlgRun(h, &image, &result)
-  |
-  +---> ChainSolution::Run()
-  |       +---> DecodeSourceToBgrInto()       // 解码原图 (仅多阶段时)
-  |       +---> RunStage(0)
-  |       |       +---> ModelInstance::Run()
-  |       |               +---> pre_->Apply()        // LetterboxPreprocessor
-  |       |               |       输出: TensorView (NCHW, 写入 NPU input buffer)
-  |       |               +---> inferer_->Forward()  // NPU 推理
-  |       |               +---> post_->Apply()       // 后处理 -> Object[]
-  |       +---> RunStage(1)
-  |       |       +---> CropFromDecoded()     // ROI 裁剪 (零拷贝)
-  |       |       +---> ModelInstance::Run()  // 裁剪图跑子模型
-  |       |       +---> MergeFields()         // classify_into: label覆盖 + score相乘
-  |       +---> ...更多 stages...
-  |       +---> 聚合: 收集所有 produces="objects" 的 stage 结果, 过滤 drop=true 的
-  |
-  +---> FillAlgResult(objs, result)           // Object[] -> 强类型 C 结构体
-  |       按 category attribute 分桶:
-  |         "traffic_light" -> AlgTrafficLight[]  (Object.value -> color enum)
-  |         "speed_limit"   -> AlgSpeedLimit[]    (Object.value -> SLV enum, value×10=km/h)
-  v
-result 返回给用户
-
-AlgFreeResult(&result)     // 释放 traffic_lights[] / speed_limits[]
-AlgDestroy(h)              // 销毁整个 Context
-```
-
----
-
-## 单模型实例内部流水线 (ModelInstance)
-
-每个 `ModelInstance` 封装一个模型的完整推理三件套：
-
-```
-ModelInstance::Run(image, &objects)
-    |
-    +-- pre_->Apply(image, inputView, state)     // LetterboxPreprocessor
-    |      解码像素 -> resize -> mean/std 归一化
-    |      输出: TensorView (NCHW, 填充到 NPU input buffer)
-    |
-    +-- inferer_->Forward()                       // IInferer (XMM/RK)
-    |      输入/输出: TensorView (零拷贝到芯片内存)
-    |
-    +-- post_->Apply(inferer, state, &objects)    // IPostprocessor
-           解码模型输出 -> NMS -> letterbox 坐标反变换
-           输出: vector<Object> (原图坐标系)
-```
-
----
-
-## 后处理器注册表
-
-三种后处理器通过 `REGISTER_ALG_POST` 宏自动注册到全局单例 `PostprocessorRegistry`：
-
-| 注册名                | 实现文件                                                    | 用途                    |
-|-----------------------|-------------------------------------------------------------|------------------------|
-| `yolox_det`           | `src/models/yolox_det/yolox_det_postprocessor.cpp`          | 红绿灯检测 (多尺度 YOLOX head) |
-| `yolov5_anchor_det`   | `src/models/yolov5_anchor_det/yolov5_anchor_det_postprocessor.cpp` | 限速牌检测 (anchor-based YOLOv5) |
-| `ocr_classifier`      | `src/models/ocr_classifier/ocr_classifier_postprocessor.cpp` | 限速数字识别 (OCR 三头逐位 + class_names 解码，12 类) |
-| `dualhead_classifier` | `src/models/dualhead_classifier/dualhead_classifier_postprocessor.cpp` | 旧限速数字分类 (双头 softmax，9 类，保留向后兼容) |
-
-注册机制：编译期通过 `__attribute__((used))` 保证静态注册不被 `--gc-sections` 丢弃，运行期 `ModelInstance::Init` 通过 `PostprocessorRegistry::Create(cfg.post_type)` 按名字查找。
-
----
-
-## 数据流全景
-
-```
-用户传入 AlgImage (BGR/RGB/NV12/...)
-    |
-    v
-LetterboxPreprocessor::Apply()
-    |  解码像素 -> resize (letterbox/stretch/center) -> mean/std 归一化
-    |  输出: TensorView (NCHW, 写入 NPU input buffer)
-    v
-IInferer::Forward()
-    |  NPU 推理，结果在 output buffer
-    v
-IPostprocessor::Apply()
-    |  解码模型输出 -> NMS -> letterbox 坐标反变换
-    |  输出: vector<Object> { box, label, attributes, drop }
-    v
-ChainSolution 编排
-    |  ROI 裁剪 (零拷贝 cv::Mat 视图)
-    |  classify_into: label 覆盖 + score 相乘
-    |  drop 过滤
-    v
-FillAlgResult()
-    |  按 category attribute 分桶:
-    |    "traffic_light" -> AlgTrafficLight[]  (Object.value -> color enum)
-    |    "speed_limit"   -> AlgSpeedLimit[]    (Object.value -> SLV enum, value×10=km/h)
-    v
-AlgResult (强类型 C 结构体, 用户直接访问)
-```
-
----
-
-## JSON 配置驱动关系
-
-### 单阶段示例：红绿灯 (traffic_light.json)
-
-```json
-{
-  "solution": {
-    "type": "chain",
-    "stages": [
-      { "name": "tld", "model": "tld_cfg", "input": "image", "produces": "objects" }
-    ]
-  },
-  "models": {
-    "tld_cfg": {
-      "model_path": "/data/traffic_light_int8.xmm",
-      "preprocess":  { "input_size": [416, 416], "color": "RGB", "resize": "letterbox_tl" },
-      "postprocess": { "type": "yolox_det", "num_classes": 4, "conf_threshold": 0.4 }
-    }
-  }
-}
-```
-
-只有一个 stage，`input: "image"` 表示从原图输入，`produces: "objects"` 表示直接输出检测结果。
-
-### 两阶段示例：限速牌 (speed_limit.json)
-
-```json
-{
-  "solution": {
-    "type": "chain",
-    "stages": [
-      { "name": "detector",   "model": "ssn_cfg", "input": "image",                "produces": "objects" },
-      { "name": "classifier", "model": "cls_cfg",  "input": "objects_from:detector",
-        "crop": { "expand_ratio": 1.5, "square": true },
-        "produces": "classify_into:detector" }
-    ]
-  }
-}
-```
-
-关键字段语义：
-- `input: "image"` — 从原图输入 (第一阶段)
-- `input: "objects_from:detector"` — 用 detector 的检测框作为 ROI 输入 (第二阶段)
-- `crop` — ROI 裁剪参数 (expand_ratio 扩边比例, square 是否正方形)
-- `produces: "classify_into:detector"` — 分类结果覆盖 detector 对象的 label，联合置信度 = det_score x cls_score，低于阈值则 drop
-
----
-
-## 内部核心类关系
-
-```
-                     +----------------+
-                     |  IInferer      |  <-- 芯片后端接口 (唯一的芯片变化点)
-                     |  Load()        |
-                     |  Forward()     |
-                     |  InputView()   |
-                     |  OutputView()  |
-                     +-------+--------+
-                             |
-              +--------------+--------------+
-              |                             |
-     +--------v--------+          +--------v--------+
-     |  XmmInferer     |          |  RkInferer      |
-     |  (xmedia_cl)    |          |  (桩实现)        |
-     +-----------------+          +-----------------+
-
-                     +------------------+
-                     |  IPostprocessor  |  <-- 后处理接口 (按模型类型派生)
-                     |  Configure()     |
-                     |  Apply()         |
-                     +--------+---------+
-                              |
-           +------------------+------------------+
-           |                  |                  |
-  +--------v-------+ +-------v--------+ +------v--------------+
-  | YoloxDet       | | Yolov5Anchor   | | OcrClassifier       |
-  | Postprocessor  | | DetPostprocessor| | Postprocessor       |
-  | (红绿灯)       | | (限速牌检测)    | | (限速数字 OCR)       |
-  +----------------+ +----------------+ +---------------------+
-
-                     +------------------+
-                     |  IPreprocessor   |  <-- 前处理接口 (目前只有一个实现)
-                     |  Configure()     |
-                     |  Apply()         |
-                     +--------+---------+
-                              |
-                     +--------v---------+
-                     | Letterbox        |
-                     | Preprocessor     |
-                     | (NV12/BGR/RGB/   |
-                     |  GRAY, NEON优化)  |
-                     +------------------+
-
-     +-------------------+
-     |  ModelInstance     |  <-- 组装 pre + infer + post 三件套
-     |  Init(config)      |
-     |  Run(image, objs)  |
-     +--------+----------+
-              |
-     +--------v----------+
-     |  ChainSolution     |  <-- 多模型编排器
-     |  Init(config)      |      解析 stage 引用 -> 索引
-     |  Run(image, objs)  |      顺序执行 + ROI裁剪 + 合并 + drop
-     +-------------------+
-```
-
----
-
-## 快速上手
-
-### 1. 编译
+在仓库根目录选择对应平台：
 
 ```bash
-./build.sh linux aarch64 xmm   # 或 rk
-# 产物: build/linux_aarch64/libalg_sdk.so + test_runner
+./build.sh linux aarch64 xmm
+./build.sh linux aarch64 svp_acl
+./build.sh linux x86_64 mnn
 ```
 
-### 2. 运行测试
+构建目录默认为 `build_linux_<arch>_<backend>/`。脚本会清理对应目录后重新构建，测试数据及交付文件应保存在目录之外。海思构建参数沿用 `aarch64` 名称，实际工具链为 ARM 32 位 `arm-linux-musleabi`。
+
+程序在匹配的运行环境中执行。以海思构建目录为例：
 
 ```bash
-# 红绿灯检测
-./build/linux_aarch64/test_runner resources/traffic_light.json /data/test.jpg out/
-
-# 限速牌识别
-./build/linux_aarch64/test_runner resources/speed_limit.json /data/test.jpg out/
-
-# 二合一并行
-./build/linux_aarch64/test_runner resources/all.json /data/test.jpg out/
+cd build_linux_aarch64_svp_acl
+./test_runner ../resources/config/svp_acl/speed_limit.json /data/test.jpg out
+./test_runner ../resources/config/svp_acl/license_plate.json /data/plate.jpg out
+./loop_runner ../resources/config/svp_acl/all.json /data/test.jpg -n 1000
 ```
 
-### 3. 集成到应用
+`test_runner` 支持图片或图片目录，输出结果明细和标注图片。`loop_runner` 用于连续推理验证，可使用 `-n` 指定循环次数，使用 `-size`、`-fmt` 指定原始 YUV 帧的尺寸和格式。
+
+配置中的模型相对路径以进程工作目录为基准。默认的 `../resources/model/...` 路径要求程序从仓库一级构建目录运行；设备部署目录不同时，应同步调整配置或改用绝对路径。
+
+## 3. 公共接口与资源管理
+
+| 接口 | 调用要求 |
+|------|----------|
+| `AlgCreate` | 传入配置路径和句柄输出指针，检查返回状态后使用句柄 |
+| `AlgRun` | 同步处理一帧；输入缓冲在返回前保持有效 |
+| `AlgFreeResult` | 释放三个结果数组并清空数量，可对已清空结果重复调用 |
+| `AlgDestroy` | 释放有效句柄，应用随后将句柄变量设为 `NULL` |
+| `AlgVersion` | 获取版本字符串，由 SDK 持有 |
+| `AlgBackendName` | 获取编译后端名称，由 SDK 持有 |
+
+`AlgResult` 首次使用必须零初始化。通过顶层指针检查后，`AlgRun` 会先释放结果结构中的旧数组；`AlgDestroy` 不代替应用释放已经返回的结果。跨帧保存数据时应复制数组内容，避免浅拷贝后重复释放。
+
+下面示例用于单帧接入验证，输入图像由调用方准备。连续采集场景应将创建和销毁移到帧循环之外，复用同一句柄。
 
 ```c
+#include <stdio.h>
 #include "alg_interface.h"
 
-// 1. 创建实例
-AlgHandle h;
-AlgCreate(&h, "/data/speed_limit.json");
+AlgStatus RunImage(const char* config_path, const AlgImage* image)
+{
+    AlgHandle handle = NULL;
+    AlgResult result = {0};
+    AlgStatus status;
 
-// 2. 准备图像
-AlgImage img = { ALG_PIX_BGR, width, height, stride, data_len, data };
+    if (!image) return ALG_E_INVALID_ARG;
+    status = AlgCreate(&handle, config_path);
+    if (status != ALG_OK) return status;
 
-// 3. 推理
-AlgResult r = {};
-AlgRun(h, &img, &r);
+    status = AlgRun(handle, image, &result);
+    if (status == ALG_OK) {
+        printf("frame=%lld, speed_limits=%d, signs=%d, license_plates=%d\n",
+               result.frame_id, result.speed_limit_count,
+               result.sign_count, result.license_plate_count);
+        for (int i = 0; i < result.speed_limit_count; ++i) {
+            const AlgSpeedLimit* item = &result.speed_limits[i];
+            if (item->value != SLV_INVALID)
+                printf("limit=%d km/h, score=%.3f\n",
+                       (int)item->value * 10, item->box.score);
+        }
+        for (int i = 0; i < result.sign_count; ++i) {
+            const AlgSign* item = &result.signs[i];
+            printf("sign=%d, score=%.3f\n", (int)item->type, item->box.score);
+        }
+        for (int i = 0; i < result.license_plate_count; ++i) {
+            const AlgLicensePlate* item = &result.license_plates[i];
+            if (item->text[0] != '\0')
+                printf("plate=%s, score=%.3f\n", item->text, item->box.score);
+        }
+    }
 
-// 4. 读取结果
-for (int i = 0; i < r.traffic_light_count; i++)
-    printf("灯: %d, 置信度: %.2f\n", r.traffic_lights[i].color, r.traffic_lights[i].box.score);
-
-for (int i = 0; i < r.speed_limit_count; i++)
-    // value 是 AlgSpeedLimitValue 枚举，value × 10 == km/h（SLV_60=6 → 60 km/h）
-    printf("限速: %d km/h, 置信度: %.2f\n", r.speed_limits[i].value * 10, r.speed_limits[i].box.score);
-
-// 5. 释放
-AlgFreeResult(&r);
-AlgDestroy(h);
+    AlgFreeResult(&result);
+    {
+        AlgStatus destroy_status = AlgDestroy(handle);
+        handle = NULL;
+        if (status == ALG_OK) status = destroy_status;
+    }
+    return status;
+}
 ```
 
----
+应用侧应串行调用 SDK。同一句柄复用内部执行状态，不同句柄还共享非原子帧计数器，多个句柄之间也不保证线程安全。
 
-## 扩展指南
+## 4. 图像和结果约定
 
-| 扩展方向       | 做法                                                              |
-|---------------|------------------------------------------------------------------|
-| 新增芯片后端   | 在 `src/backend/<chip>/` 实现 `IInferer`，提供 `MakeInferer()` + `BackendName()` |
-| 新增后处理算法 | 在 `src/models/<type>/` 实现 `IPostprocessor`，用 `REGISTER_ALG_POST("name", ...)` 注册 |
-| 新增业务场景   | 写一个 JSON 配置文件，引用已有的 model/postprocess type，无需改 C++ 代码 |
-| 新增结果类型   | 在 `alg_types.h` 添加结构体，在 `object.cpp` 的 `FillAlgResult()` 中添加分桶逻辑 |
+| 内容 | 接入要求 |
+|------|----------|
+| BGR / RGB | 8 位交错三通道数据，`stride` 为每行字节数，0 表示 `width*3` |
+| GRAY | 8 位单通道数据，`stride=0` 表示 `width` |
+| NV12 / NV21 | 宽高为偶数，Y 平面后紧接色度平面，无额外行或平面对齐 |
+| `data_len` | 填写实际可用字节数；应用负责缓冲大小和边界校验 |
+| 检测坐标 | 对应传入原图，SDK 负责恢复配置 ROI 和裁剪产生的偏移 |
+| 限速值 | `SLV_10`～`SLV_120` 的枚举值乘 10 得到 km/h |
+| PARE 分数 | 第一阶段检测分 |
+| 禁停分数 | 检测分乘门控概率 |
+| 限速分数 | 检测分乘 OCR 分类分 |
+| 车牌分数 | 检测分乘 `rec_score`；有效车牌还需检查文本和业务格式 |
+| `frame_id` | 动态库内共享的成功调用计数，不是采集帧号或跟踪标识 |
 
----
+图片文件应先解码为像素再传入。JSON 的 `preprocess.color` 定义模型输入颜色顺序，`AlgImage.format` 定义源图像格式，两者不要求相同。
 
-## 关键源文件索引
+## 5. 配置与执行关系
 
-| 文件                                          | 职责                                      |
-|----------------------------------------------|------------------------------------------|
-| `include/alg_types.h`                        | C ABI 类型定义 (AlgImage, AlgResult, 枚举等)  |
-| `include/alg_interface.h`                    | C API 声明 (6 个公共函数)                   |
-| `src/interface/alg_interface.cpp`            | C API 实现, Context 包装 ChainSolution      |
-| `src/core/solution/chain_solution.cpp`       | 多模型编排核心: stage 执行 + ROI + 合并       |
-| `src/core/instance/model_instance.cpp`       | 单模型 pre->infer->post 流水线              |
-| `src/core/preprocess/letterbox_preprocessor.cpp` | 图像前处理 (NEON 优化)                   |
-| `src/core/postprocess/nms.cpp`               | 通用 NMS 实现                              |
-| `src/core/registry/postprocessor_registry.cpp` | 后处理器注册表                            |
-| `src/core/object.cpp`                        | FillAlgResult: 内部 Object -> 强类型 ABI     |
-| `src/core/config/config.cpp`                 | JSON 配置解析                              |
-| `src/core/tensor.h`                          | TensorView: 芯片中立的张量描述符              |
+业务配置分为 `solution` 和 `models`。前者描述阶段顺序和数据来源，后者描述模型文件、前处理参数和后处理类型。
+
+限速牌的阶段配置片段如下，完整配置还需包含对应的 `models`：
+
+```json
+{
+  "type": "chain",
+  "stages": [
+    {
+      "name": "detector", "model": "ssn_cfg",
+      "input": "image", "produces": "objects"
+    },
+    {
+      "name": "classifier", "model": "cls_cfg",
+      "input": "objects_from:detector",
+      "crop": { "expand_ratio": 1.5, "square": true, "pad_value": 114 },
+      "score_threshold": 0.6,
+      "passthrough": [
+        { "label": 1, "category": "pare", "sign_value": 2, "min_score": 0.0 }
+      ],
+      "min_box_short": { "no_parking": 40 },
+      "produces": "classify_into:detector"
+    }
+  ]
+}
+```
+
+`image` 表示原图输入；`objects_from:detector` 表示依次裁剪检测框；`classify_into:detector` 将识别类别和分数写回原检测框。未通过识别的框被标记为丢弃，PARE 命中透传规则后跳过 OCR。完整参数见 [配置说明](resources/CONFIG.md)。
+
+一次调用的内部执行顺序为：
+
+1. `LoadSolutionConfig` 解析配置，`ChainSolution::Init` 建立模型和阶段引用。
+2. `ModelInstance::Init` 加载后端模型并配置前后处理。
+3. `ChainSolution::Run` 顺序执行阶段，按输入格式和 ROI 需求选择图像转换及裁剪路径。
+4. 每个模型依次执行 `pre_->Apply`、`inferer_->Forward` 和 `post_->Apply`。
+5. 编排层执行识别写回与过滤，`FillAlgResult` 转换为公共数组。
+
+## 6. 模块维护入口
+
+| 文件或目录 | 维护内容 |
+|------------|----------|
+| [alg_interface.h](include/alg_interface.h)、[alg_types.h](include/alg_types.h) | 公共接口和数据结构 |
+| [alg_interface.cpp](src/interface/alg_interface.cpp) | 句柄、结果释放和帧号 |
+| [chain_solution.cpp](src/core/solution/chain_solution.cpp) | 阶段执行、裁剪及结果写回 |
+| [model_instance.cpp](src/core/instance/model_instance.cpp) | 单模型初始化和执行 |
+| [config.cpp](src/core/config/config.cpp) | 配置字段及引用校验 |
+| [letterbox_preprocessor.cpp](src/core/preprocess/letterbox_preprocessor.cpp) | 图像前处理 |
+| [object.cpp](src/core/object.cpp) | 公共结果类别映射 |
+| [postprocessor_registry.cpp](src/core/registry/postprocessor_registry.cpp) | 后处理器注册和创建 |
+| [模型后处理目录](src/models) | 检测、OCR 和车牌识别后处理 |
+| [后端目录](src/backend) | 平台适配和后端资源管理 |
+
+新增后端需维护工具链和链接依赖；新增模型类型需实现后处理并加入构建；新增公共结果类型需同时维护类型定义、转换、释放和调用示例。具体流程见 [架构设计](ARCHITECTURE.md)。
+
+## 7. 问题定位
+
+按配置加载、模型加载、图像前处理、后处理和结果转换的顺序定位问题。首先记录 `AlgVersion()`、`AlgBackendName()`、配置路径和返回码，再检查对应阶段的日志。
+
+无检测结果时，应分别检查检测阈值、识别阈值、联合分、ROI 和最小框过滤，并确认最终类别属于公共结果范围。模型成功加载不代表输入布局或模型配置正确。
+
+日志级别和文件输出见 [日志说明](src/core/log/README.md)。修改模型或配置后，应保留测试环境、输入数据、结果和耗时记录，作为版本比较和交付依据。

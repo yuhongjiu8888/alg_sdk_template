@@ -1,8 +1,8 @@
 # ALG SDK 接口文档
 
-| 项目 | 版本 | 日期 |
-|------|------|------|
-| 限速牌 / 停车牌识别（alg_sdk） | Version-1.0.0 | 2026 年 07 月 17 日 |
+| 项目 | 版本 | 更新日期 |
+|------|------|----------|
+| 限速牌 / 禁令停车牌 / 车牌识别（alg_sdk） | Version-1.0.0 | 2026 年 09 月 07 日 |
 
 ## 文档控制
 
@@ -14,235 +14,171 @@
 
 ## 文档发布
 
-| 版本 | 作者 | 日期 | 细节 |
+| 版本 | 作者 | 日期 | 说明 |
 |------|------|------|------|
-| 1.0.0 | 喻伟 | 2026.07.17 | 初版接口文档； 巴西限速牌+停车牌识别两个落地模型，强类型 C ABI |
+| 1.0.0 | 喻伟 | 2026.07.17 | 初版接口文档：限速牌及停车牌识别 |
+| 1.0.0（文档修订） | 喻伟 | 2026.09.07 | 完善公共接口参数、返回值及数据结构说明 |
+
+本文档说明 alg_sdk 1.0.0 的公共函数、枚举和结构体。接口声明见交付头文件 `alg_interface.h`，数据类型见 `alg_types.h`。应用应使用与动态库配套的头文件。
 
 ## 目录
 
-- [一． 算法库介绍](#一-算法库介绍)
-- [二． 算法库调用流程介绍](#二-算法库调用流程介绍)
-- [三． 接口说明](#三-接口说明)
-- [四． 数据类型说明](#四-数据类型说明)
+- [一．接口说明](#一接口说明)
+- [二．数据类型与结构体](#二数据类型与结构体)
 
----
+## 一．接口说明
 
-## 一． 算法库介绍
+公共接口支持 C / C++ 调用，在 C++ 中采用 `extern "C"` 声明。返回 `AlgStatus` 的函数以 `ALG_OK`（0）表示成功，负数表示错误，错误码见 2.2。
 
-本算法库运用深度学习技术，面向端侧（NPU / 嵌入式）CV 推理场景，对车载前视摄像头图像进行实时识别，当前落地能力：
+SDK 不保证线程安全，应用应串行调用接口，并同步管理输入图像和结果结构的访问。
 
-- **限速牌 / 停车牌识别**：识别巴西限速牌 10 / 20 / … / 120 km/h 共 12 类限速值及其检测框与联合置信度，礼让行人PARE停车牌及禁止泊车E停车牌。
-整个 SDK 由一份 JSON 配置驱动启动，JSON 描述 solution 编排（用哪几个模型、如何串接）、每个模型走哪个芯片后端的哪个模型文件、以及前 / 后处理参数。**调阈值 / 改输入尺寸 / 换均值方差均改 JSON 即可，无需重新编译**。
+| 接口 | 功能 | 返回类型 |
+|------|------|----------|
+| `AlgCreate` | 创建并初始化实例 | `AlgStatus` |
+| `AlgDestroy` | 销毁实例 | `AlgStatus` |
+| `AlgRun` | 同步处理一帧图像 | `AlgStatus` |
+| `AlgFreeResult` | 释放结果数组 | `void` |
+| `AlgVersion` | 获取版本信息 | `const char*` |
+| `AlgBackendName` | 获取运行后端名称 | `const char*` |
 
-该算法库主要分为两部分：
-
-1. **头文件部分**：提供 C 接口声明（`alg_interface.h`）与数据结构定义（`alg_types.h`）。
-2. **动态库部分**：`libalg_sdk.so`，对应算法的动态库（已编入指定芯片后端，如 `xmm` / `rk`）。
-
-上述两部分缺一不可，任何一个部分的不匹配（头文件与库版本、后端与模型文件不一致）都将导致系统无法正常使用。
-
-**返回码约定**：所有返回 `AlgStatus` 的接口，`ALG_OK`（0）表示成功，负数表示对应错误码（见[四．数据类型说明](#四-数据类型说明)）。
-
----
-
-## 二． 算法库调用流程介绍
-
-典型调用顺序如下（创建一次、循环复用、退出销毁）：
-
-```
-            ┌─────────────────────────────────────────────┐
-            │  AlgCreate(&handle, "speed_limit.json")      │  从 JSON 配置创建实例并初始化
-            └───────────────────────┬─────────────────────┘
-                                    │
-            ┌───────────────────────▼─────────────────────┐
-            │                  循环：每一帧                  │
-            │  ┌────────────────────────────────────────┐  │
-            │  │ 填充 AlgImage（格式 / 宽高 / 跨度 / data）│  │
-            │  └───────────────────┬────────────────────┘  │
-            │  ┌───────────────────▼────────────────────┐  │
-            │  │ AlgRun(handle, &image, &result)         │  │  跑完整条 solution 流水线
-            │  └───────────────────┬────────────────────┘  │
-            │  ┌───────────────────▼────────────────────┐  │
-            │  │ 读取 result.speed_limits[] /            │  │  应用按强类型字段处理结果
-            │  │       result.signs[]                    │  │
-            │  └───────────────────┬────────────────────┘  │
-            │  ┌───────────────────▼────────────────────┐  │
-            │  │ AlgFreeResult(&result)                  │  │  释放本帧 result 内部数组
-            │  └─────────────────────────────────────────┘  │
-            └───────────────────────┬─────────────────────┘
-                                    │
-            ┌───────────────────────▼─────────────────────┐
-            │  AlgDestroy(handle)                          │  销毁实例，释放全部资源
-            └─────────────────────────────────────────────┘
-```
-
-流程要点：
-
-- `AlgCreate` 较重（加载模型、初始化后端），**只调用一次**，句柄在整个生命周期内复用。
-- 每帧调用 `AlgRun` 前填充 `AlgImage`，其中 `data` 缓冲区由调用方持有；`AlgRun` 不接管该内存。
-- 每帧调用 `AlgRun` 后，`AlgResult` 内的 `speed_limits` / `signs` / `license_plates` 数组由 SDK 分配，**必须配对调用 `AlgFreeResult`** 释放，否则内存泄漏。
-- 结果按 solution 类型填充：限速牌配置填 `speed_limits`（限速值）+ `signs`（PARE / 禁止停车等牌种），车牌配置填 `license_plates`（文本 + 联合置信度），各数组均可能非空。
-
-最小调用示例：
-
-```c
-#include "alg_interface.h"
-
-AlgHandle h = NULL;
-if (AlgCreate(&h, "/data/speed_limit.json") != ALG_OK) return -1;
-
-AlgImage img = {0};
-img.format   = ALG_PIX_BGR;
-img.width    = w;
-img.height   = h_;
-img.stride   = stride;          /* 每行字节跨度；0 表示按 width*bpp 推算 */
-img.data_len = stride * h_;
-img.data     = pixel_buffer;    /* 调用方持有 */
-
-AlgResult r = {0};
-if (AlgRun(h, &img, &r) == ALG_OK) {
-    for (int i = 0; i < r.speed_limit_count; ++i) {
-        AlgSpeedLimit* sl = &r.speed_limits[i];
-        printf("%d km/h @ (%d,%d) score=%.2f\n",
-               sl->value * 10, sl->box.xmin, sl->box.ymin, sl->box.score);
-    }
-}
-AlgFreeResult(&r);
-
-AlgDestroy(h);
-```
-
----
-
-## 三． 接口说明
-
-> 接口声明见 `include/alg_interface.h`，全部以 `extern "C"` 导出，C / C++ 均可调用。
-
-### 3.1 AlgCreate
+### 1.1 AlgCreate
 
 ```c
 AlgStatus AlgCreate(AlgHandle* handle, const char* config_json_path);
 ```
 
-**函数说明**：从一份 JSON 配置创建 SDK 实例并完成初始化（解析配置、加载模型、初始化芯片后端）。
+创建算法实例，成功后通过 `handle` 返回句柄。
 
-**参数**：
+| 参数 | 方向 | 说明 |
+|------|------|------|
+| `handle` | 输出 | 句柄变量的地址，不得为 `NULL`；调用前将句柄变量初始化为 `NULL` |
+| `config_json_path` | 输入 | 随 SDK 提供的初始化文件路径，不得为 `NULL` |
 
-- `handle`：输出参数，成功时写入创建好的 SDK 句柄（`AlgHandle`）。
-- `config_json_path`：JSON 配置文件路径，如 `speed_limit.json`。
+返回 `ALG_OK` 表示创建成功；失败时返回对应错误码，不改写句柄变量。任一参数为 `NULL` 时返回 `ALG_E_INVALID_ARG`。
 
-**返回值**：返回 `ALG_OK`（0）表示成功；非 0 表示失败（如 `ALG_E_CONFIG` 配置解析失败、`ALG_E_MODEL_NOT_FOUND` 模型 / 后处理类型未注册、`ALG_E_BACKEND` 后端错误）。
+创建成功的句柄可重复用于处理多帧图像。每个成功创建的实例须调用一次 `AlgDestroy`，不得用新句柄直接覆盖尚未销毁的句柄。
 
-### 3.2 AlgDestroy
+### 1.2 AlgDestroy
 
 ```c
 AlgStatus AlgDestroy(AlgHandle handle);
 ```
 
-**函数说明**：销毁 SDK 实例，释放其占用的全部资源（模型、后端上下文、内部缓冲）。
+释放实例占用的资源。
 
-**参数**：
+| 参数 | 方向 | 说明 |
+|------|------|------|
+| `handle` | 输入 | 由 `AlgCreate` 成功创建且尚未销毁的句柄 |
 
-- `handle`：`AlgCreate` 返回的 SDK 句柄。
+有效句柄返回 `ALG_OK`；`NULL` 返回 `ALG_E_INVALID_ARG`。销毁后，调用方应将句柄变量设为 `NULL`，不得再次销毁或继续用于推理。
 
-**返回值**：返回 `ALG_OK`（0）表示成功；非 0 表示失败。
+该函数不释放已经返回的 `AlgResult` 数组，结果须通过 `AlgFreeResult` 单独释放。
 
-### 3.3 AlgRun
+### 1.3 AlgRun
 
 ```c
 AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 ```
 
-**函数说明**：对一帧图像跑完整条 solution 流水线（前处理 → 推理 → 后处理 → 结果聚合），输出该帧识别结果。
+同步处理一帧图像，并返回限速牌、禁令 / 停车牌及车牌结果。
 
-**参数**：
+| 参数 | 方向 | 说明 |
+|------|------|------|
+| `handle` | 输入 | 有效的算法实例句柄 |
+| `image` | 输入 | 图像描述指针，不得为 `NULL`；字段要求见 2.4 |
+| `result` | 输入 / 输出 | 结果结构指针，不得为 `NULL`；首次使用必须零初始化，例如 `AlgResult result = {0};` |
 
-- `handle`：`AlgCreate` 返回的 SDK 句柄。
-- `image`：输入图像描述指针（`AlgImage`），`data` 像素缓冲区由调用方持有。
-- `result`：输出结果指针（`AlgResult`），SDK 填充 `speed_limits` / `signs` 等字段。调用前建议零初始化（`AlgResult r = {0};`）。
+返回 `ALG_OK` 表示本帧处理完成，没有检出目标也返回成功。返回非零时，本次结果不得用于业务处理。
 
-**返回值**：返回 `ALG_OK`（0）表示成功；非 0 表示失败（如 `ALG_E_PREPROCESS` / `ALG_E_POSTPROCESS` / `ALG_E_BACKEND`）。
+调用要求：
 
-> **注意**：成功返回后，`result` 内的数组由 SDK 分配，须配对调用 `AlgFreeResult` 释放。
+- 图像缓冲由调用方持有，在函数返回前须保持有效且不被修改。
+- 复用同一结果结构时，SDK 会先释放其中的旧数组，再写入本帧结果；旧数组指针随之失效。
+- 若任一顶层参数指针为 `NULL`，返回 `ALG_E_INVALID_ARG`，原有结果不变。
+- 通过顶层指针检查后，后续处理若返回错误码，结果数组为空、数量为 0，`frame_id` 不更新。
+- 最后一次结果使用结束后，仍须调用 `AlgFreeResult`。
 
-### 3.4 AlgFreeResult
+调用方负责像素指针、图像布局和缓冲长度的有效性；非法图像数据不保证以错误码返回。
+
+### 1.4 AlgFreeResult
 
 ```c
 void AlgFreeResult(AlgResult* result);
 ```
 
-**函数说明**：释放 SDK 在 `result` 内部分配的内存（`speed_limits[]` / `signs[]` / `license_plates[]` 数组）。对零值 / 已释放的 `result` 调用是安全的。
+释放 SDK 分配的结果数组。
 
-**参数**：
+| 参数 | 方向 | 说明 |
+|------|------|------|
+| `result` | 输入 / 输出 | 零初始化、由 SDK 填充或已经释放的有效结果结构指针 |
 
-- `result`：`AlgRun` 填充过的结果指针。
+释放 `speed_limits`、`signs` 和 `license_plates`，将对应指针设为 `NULL`、数量设为 0。该函数不释放 `AlgResult` 结构体本身，不修改 `frame_id`，也不释放输入图像。
 
-**返回值**：无。
+无返回值。传入 `NULL`、零初始化的结果或已释放的结果均安全。不得对同一结果的多个浅拷贝分别调用此函数，也不得将调用方自行管理的数组交给该函数释放。
 
-### 3.5 AlgVersion
+### 1.5 AlgVersion
 
 ```c
 const char* AlgVersion(void);
 ```
 
-**函数说明**：获取版本信息，形如 `"alg_sdk.v1.0.0+<backend>"`，方便日志记录与崩溃定位。
+返回版本字符串，格式为 `"alg_sdk.v1.0.0+<backend>"`，例如 `"alg_sdk.v1.0.0+svp_acl"`。
 
-**返回值**：版本信息字符串（SDK 持有，调用方不可释放）。
+无需创建实例即可调用。字符串由 SDK 持有，调用方不可修改或释放；动态库卸载后不可继续访问该指针。
 
-### 3.6 AlgBackendName
+### 1.6 AlgBackendName
 
 ```c
 const char* AlgBackendName(void);
 ```
 
-**函数说明**：获取库编译进来的芯片后端名（如 `"xmm"` / `"rk"`）。
+返回 SDK 使用的后端名称字符串，例如 `"xmm"`、`"svp_acl"` 或 `"mnn"`，具体内容由交付版本决定。
 
-**返回值**：后端名字符串（SDK 持有，调用方不可释放）。
+无需创建实例即可调用。字符串由 SDK 持有，调用方不可修改或释放；动态库卸载后不可继续访问该指针。
 
-### 接口一览表
+## 二．数据类型与结构体
 
-| 接口 | 说明 | 返回值 |
-|------|------|--------|
-| `AlgCreate` | 从 JSON 配置创建并初始化实例 | `AlgStatus` |
-| `AlgDestroy` | 销毁实例，释放全部资源 | `AlgStatus` |
-| `AlgRun` | 对一帧图像跑完整 solution | `AlgStatus` |
-| `AlgFreeResult` | 释放 result 内部数组 | `void` |
-| `AlgVersion` | 获取版本字符串 | `const char*` |
-| `AlgBackendName` | 获取后端名 | `const char*` |
-
----
-
-## 四． 数据类型说明
-
-> 类型定义见 `include/alg_types.h`。
-
-### 4.1 基础类型
-
-#### AlgHandle —— 不透明 SDK 句柄
+### 2.1 AlgHandle：实例句柄
 
 ```c
 typedef struct AlgContext* AlgHandle;
 ```
 
-#### AlgStatus —— 返回码（0 = 成功，负数 = 错误）
+不透明句柄，由 `AlgCreate` 创建、`AlgDestroy` 销毁。调用方不得访问或修改句柄指向的内容。
+
+### 2.2 AlgStatus：返回码
 
 ```c
 typedef enum AlgStatus_ {
     ALG_OK                = 0,
-    ALG_E_INVALID_ARG     = -1,   // 参数非法
-    ALG_E_NOT_INITIALIZED = -2,   // 未初始化
-    ALG_E_BACKEND         = -3,   // 芯片后端错误
-    ALG_E_MODEL_NOT_FOUND = -4,   // 后处理类型 / 模型未注册
-    ALG_E_PREPROCESS      = -5,   // 前处理失败
-    ALG_E_POSTPROCESS     = -6,   // 后处理失败
-    ALG_E_OOM             = -7,   // 内存不足
-    ALG_E_IO              = -8,   // IO 错误
-    ALG_E_CONFIG          = -9,   // JSON 配置文件解析失败
-    ALG_E_UNKNOWN         = -99,  // 未知错误
+    ALG_E_INVALID_ARG     = -1,
+    ALG_E_NOT_INITIALIZED = -2,
+    ALG_E_BACKEND         = -3,
+    ALG_E_MODEL_NOT_FOUND = -4,
+    ALG_E_PREPROCESS      = -5,
+    ALG_E_POSTPROCESS     = -6,
+    ALG_E_OOM             = -7,
+    ALG_E_IO              = -8,
+    ALG_E_CONFIG          = -9,
+    ALG_E_UNKNOWN         = -99,
 } AlgStatus;
 ```
 
-#### AlgPixelFormat —— 输入像素格式
+| 返回码 | 含义 |
+|--------|------|
+| `ALG_OK` | 成功，包括处理完成但未检出目标 |
+| `ALG_E_INVALID_ARG` | 参数非法 |
+| `ALG_E_NOT_INITIALIZED` | 相关处理模块尚未初始化；传入空句柄时返回 `ALG_E_INVALID_ARG` |
+| `ALG_E_BACKEND` | 后端初始化、模型加载或推理失败 |
+| `ALG_E_MODEL_NOT_FOUND` | 所需后处理类型不可用，不是模型文件缺失的统一返回码 |
+| `ALG_E_PREPROCESS` | 图像前处理失败 |
+| `ALG_E_POSTPROCESS` | 模型输出处理失败 |
+| `ALG_E_OOM` | 检测到内存分配失败 |
+| `ALG_E_IO` | 初始化文件无法打开 |
+| `ALG_E_CONFIG` | 初始化文件格式或内容错误 |
+| `ALG_E_UNKNOWN` | 未知错误，保留值 |
+
+### 2.3 AlgPixelFormat：像素格式
 
 ```c
 typedef enum AlgPixelFormat_ {
@@ -254,20 +190,51 @@ typedef enum AlgPixelFormat_ {
 } AlgPixelFormat;
 ```
 
-#### AlgImage —— 输入图像描述
+| 格式 | 像素排列 |
+|------|----------|
+| `ALG_PIX_BGR` | 每像素 3 字节，按 B、G、R 交错排列 |
+| `ALG_PIX_RGB` | 每像素 3 字节，按 R、G、B 交错排列 |
+| `ALG_PIX_GRAY` | 每像素 1 字节灰度值 |
+| `ALG_PIX_NV12` | YUV420 半平面格式，Y 平面后紧接交错 UV 平面 |
+| `ALG_PIX_NV21` | YUV420 半平面格式，Y 平面后紧接交错 VU 平面 |
+
+输入均为原始 8 位像素。JPEG / PNG 等压缩数据须由调用方解码后再传入。
+
+### 2.4 AlgImage：输入图像
 
 ```c
 typedef struct AlgImage_ {
-    AlgPixelFormat format;     // 像素格式
-    int            width;      // 图像宽度
-    int            height;     // 图像高度
-    int            stride;     // 每行像素跨度（字节）；0 表示按 width * bpp 推算
-    int            data_len;   // 像素数据字节数
-    const void*    data;       // 像素数据缓冲区（调用方持有）
+    AlgPixelFormat format;
+    int            width;
+    int            height;
+    int            stride;
+    int            data_len;
+    const void*    data;
 } AlgImage;
 ```
 
-#### AlgBox —— 原图坐标系下的 2D 检测框
+| 字段 | 说明 |
+|------|------|
+| `format` | 像素格式，取值见 2.3 |
+| `width` | 图像宽度，单位为像素，须大于 0 |
+| `height` | 图像高度，单位为像素，须大于 0 |
+| `stride` | 每行字节跨度，取值要求见下表 |
+| `data_len` | 实际可用像素缓冲字节数，计算时须避免整数溢出并确保可由 `int` 表示 |
+| `data` | 调用方持有的可读像素缓冲地址，不得为 `NULL` |
+
+设 `W=width`、`H=height`、`S` 为实际行字节跨度，完整帧的内存要求为：
+
+| 格式 | `stride` 要求 | 完整帧缓冲要求 |
+|------|---------------|----------------|
+| BGR / RGB | `0` 表示 `S=W*3`；正数时须 `S>=W*3` | 至少 `S*H` 字节 |
+| GRAY | `0` 表示 `S=W`；正数时须 `S>=W` | 至少 `S*H` 字节 |
+| NV12 / NV21 | 仅支持紧凑布局，填 `0` 或 `W`，不用于调整行跨度 | 至少 `W*H*3/2` 字节 |
+
+`stride` 不应为负。NV12 / NV21 的宽高须为偶数，色度平面从 `data + W*H` 开始，不支持分离平面指针、行尾额外填充或平面间隔。存在对齐填充的图像须先整理为紧凑连续帧。
+
+SDK 不通过 `data_len` 完成缓冲边界检查，调用方须保证实际可用内存满足上述布局，并在 `AlgRun` 返回前保持缓冲有效。
+
+### 2.5 AlgBox：检测框
 
 ```c
 typedef struct AlgBox_ {
@@ -276,23 +243,26 @@ typedef struct AlgBox_ {
 } AlgBox;
 ```
 
-`score` 含义：
+| 字段 | 说明 |
+|------|------|
+| `xmin` / `ymin` | 检测框左上角坐标 |
+| `xmax` / `ymax` | 检测框右下角坐标 |
+| `score` | 检测或识别结果的置信度，含义见下表 |
 
-- **限速牌**：联合置信度 = 检测置信度 × OCR 分类置信度。
+坐标以传入 `AlgRun` 的原图左上角为原点，x 向右、y 向下，单位为像素。框宽高分别按 `xmax-xmin`、`ymax-ymin` 计算，调用方直接使用返回坐标。
 
-应用统一只看这一个分数即可。
+| 结果类型 | `score` 含义 |
+|----------|--------------|
+| 限速牌 | 检测置信度 × 数字识别置信度 |
+| 禁止停车牌 | 检测置信度 × 禁停分类置信度 |
+| PARE 停车让行牌 | 检测置信度 |
+| 车牌 | 检测置信度 × `rec_score` |
 
-
-
-### 4.2 限速牌识别（speed limit sign）
-
-#### AlgSpeedLimitValue —— 限速牌类别
-
-枚举编号即 km/h ÷ 10（`SLV_10`=1 → 10 km/h，…，`SLV_120`=12 → 120 km/h），限速值均为 10 的倍数，故 `value × 10 == km/h`。`value` 由后处理器从 `cls_cfg.postprocess.class_names` 推导（解析类名数值 ÷ 10），不依赖 `class_names` 的排列顺序。0 留作 `INVALID`。
+### 2.6 AlgSpeedLimitValue / AlgSpeedLimit：限速牌
 
 ```c
 typedef enum AlgSpeedLimitValue_ {
-    SLV_INVALID = 0,   // 置信度过低 / 字符组合非法的框已由 SDK 内部 drop，正常不出现
+    SLV_INVALID = 0,
     SLV_10      = 1,
     SLV_20      = 2,
     SLV_30      = 3,
@@ -306,73 +276,90 @@ typedef enum AlgSpeedLimitValue_ {
     SLV_110     = 11,
     SLV_120     = 12,
 } AlgSpeedLimitValue;
-```
 
-#### AlgSpeedLimit —— 单个限速牌识别结果
-
-```c
 typedef struct AlgSpeedLimit_ {
-    AlgBox              box;     // 原图坐标系下的框，box.score = det × cls 联合置信度
-    AlgSpeedLimitValue  value;   // 限速值类别（枚举编号即隐含 km/h，value × 10 = km/h）
+    AlgBox             box;
+    AlgSpeedLimitValue value;
 } AlgSpeedLimit;
 ```
 
-### 4.3 禁令 / 停车牌
+| 字段 | 说明 |
+|------|------|
+| `box` | 原图检测框及联合置信度 |
+| `value` | 限速类别；有效值乘 10 得到 km/h，例如 `SLV_60=6` 表示 60 km/h |
 
-非限速、不带可读数字的牌种（无法用 `AlgSpeedLimitValue` 表达），单列一个数组。
+`SLV_INVALID` 表示无效限速值，不应作为有效限速结果使用。
 
-#### AlgSignType —— 牌种
+### 2.7 AlgSignType / AlgSign：禁令及停车牌
 
 ```c
 typedef enum AlgSignType_ {
     SIGN_INVALID    = 0,
-    SIGN_NO_PARKING = 1,   // R-6c 禁止停车（红圈 + 黑 E + 红色 ✕），Stage2 门控识别
-    SIGN_PARE       = 2,   // 停车让行（巴西 R-1，红色八边形），Stage1 检测直出
+    SIGN_NO_PARKING = 1,
+    SIGN_PARE       = 2,
 } AlgSignType;
-```
 
-#### AlgSign —— 单个禁令 / 停车牌识别结果
-
-```c
 typedef struct AlgSign_ {
-    AlgBox       box;    // 原图坐标系下的框，box.score = 联合置信度
-    AlgSignType  type;
+    AlgBox      box;
+    AlgSignType type;
 } AlgSign;
 ```
 
-### 4.4 车牌
+| 牌种 | 含义 |
+|------|------|
+| `SIGN_INVALID` | 无效牌种 |
+| `SIGN_NO_PARKING` | 禁止停车牌 |
+| `SIGN_PARE` | PARE 停车让行牌，红色八边形 |
 
-车牌识别（RTMDet 检测 + LPRNet CTC 识别），按框输出识别文本与联合置信度。
+`box` 为原图检测框及置信度，`type` 表示牌种。不同牌种的分数含义见 2.5。
 
-#### AlgLicensePlate —— 单个车牌识别结果
+### 2.8 AlgLicensePlate：车牌
 
 ```c
 typedef struct AlgLicensePlate_ {
-    AlgBox  box;        // 原图坐标系下的框，box.score = det × rec 联合置信度
-    char    text[32];   // 识别文本（'0'-'9','A'-'Z'，无分隔符，如 "ABC1D23"；未识别到时为空串）
-    float   rec_score;  // 识别单独置信度（CTC greedy 被保留字符概率之积，排错/二次过滤用）
+    AlgBox box;
+    char   text[32];
+    float  rec_score;
 } AlgLicensePlate;
 ```
 
-### 4.5 完整结果
+| 字段 | 说明 |
+|------|------|
+| `box` | 原图检测框；`box.score` 为检测置信度与识别置信度的乘积 |
+| `text` | 以 `\0` 结尾的车牌文本，最多 31 字节有效内容；更长结果会截断 |
+| `rec_score` | 单独的识别置信度，为识别过程中保留字符概率的乘积 |
 
-#### AlgResult —— 一帧的算法输出
+车牌文本使用数字和大写英文字母，不含分隔符，例如 `ABC1D23`。未识别到字符时，`text` 可为空字符串，`rec_score` 保持初始值 `1.0`；调用方应同时检查 `text[0] != '\0'` 和业务要求的文本格式。
+
+### 2.9 AlgResult：单帧结果
 
 ```c
 typedef struct AlgResult_ {
-    long long           frame_id;              // 算法处理的图像帧 ID
+    long long        frame_id;
 
+    int              speed_limit_count;
+    AlgSpeedLimit*   speed_limits;
 
-    int                 speed_limit_count;     // 限速牌结果数量
-    AlgSpeedLimit*      speed_limits;          // 限速牌结果数组（SDK 持有）
+    int              sign_count;
+    AlgSign*         signs;
 
-    int                 sign_count;            // 禁令/停车牌结果数量
-    AlgSign*            signs;                 // 禁令/停车牌结果数组（SDK 持有）
-
-    int                 license_plate_count;   // 车牌结果数量
-    AlgLicensePlate*    license_plates;        // 车牌结果数组（SDK 持有）
+    int              license_plate_count;
+    AlgLicensePlate* license_plates;
 } AlgResult;
 ```
 
+| 字段 | 说明 |
+|------|------|
+| `frame_id` | 成功处理的帧序号，从 0 开始 |
+| `speed_limit_count` | 限速牌结果数量 |
+| `speed_limits` | 限速牌数组，元素类型为 `AlgSpeedLimit` |
+| `sign_count` | 禁令 / 停车牌结果数量 |
+| `signs` | 禁令 / 停车牌数组，元素类型为 `AlgSign` |
+| `license_plate_count` | 车牌结果数量 |
+| `license_plates` | 车牌数组，元素类型为 `AlgLicensePlate` |
 
-两个数组由 SDK 持有，应用通过 `AlgFreeResult` 一次性释放。
+每个数组按对应数量遍历；未返回该类结果时，数量为 0、指针为 `NULL`。数组索引不表示跨帧跟踪 ID。
+
+`frame_id` 由同一 SDK 动态库的所有句柄共享，每次 `AlgRun` 成功后递增，包括成功但没有检出目标的帧。该字段不随句柄销毁重建而重置，也不在失败调用或 `AlgFreeResult` 时更新。需要关联采集帧号或时间戳时，由调用方自行记录。
+
+结果数组由 SDK 分配，通过 `AlgFreeResult` 统一释放。数组有效期截止于显式释放，或同一结果结构下一次通过顶层指针检查的 `AlgRun` 调用。跨帧保存时应复制数组内容；仅复制 `AlgResult` 结构体不会获得独立的数组所有权。

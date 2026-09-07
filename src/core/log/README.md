@@ -1,56 +1,72 @@
-# alg_log —— 异步多 sink 日志模块（借鉴 spdlog）
+# alg_log 日志模块设计与使用说明
 
-给端侧 SDK 在不改动现有 `ALG_LOGE/W/I/D` 调用接口的前提下，增加**异步落盘**能力。
+`alg_log` 为 SDK 提供异步日志、滚动文件和多目标输出能力，兼容 `ALG_LOGE`、`ALG_LOGW`、`ALG_LOGI`、`ALG_LOGD` 调用方式。异步队列和输出目标的组织方式参考 spdlog 的设计，启动信息采用与 glog 类似的记录格式。
 
-## 解决什么问题
-原来日志只走 `fprintf` 到终端：单次 `fprintf` ~10–50µs（系统调用 + locale + 流锁），
-**单行太长时还会阻塞算法热路径**。本模块把"格式化"留在调用线程、把"真正的 write/fflush"
-甩到后台线程，并对单行做长度上限截断，从根上消除这个阻塞。
+## 设计说明
 
-## 设计
-- **异步**：调用线程 `vsnprintf` 进定长环形缓冲槽位即返回；后台 worker 线程批量落盘。
-  队列满时**丢弃 + 计数**（绝不阻塞推理），并周期性打一条 `log queue overflow: N dropped`。
-- **多 sink**：滚动文件 / 控制台 / Android logcat，任意组合。
-  - 文件：单文件写满 `max_file_size`（默认 **10MB**）即滚动，循环保留 `max_files`（默认 5）份：
-    `alg.log, alg.log.1, … alg.log.N`（`.N` 最旧，被覆盖）。
-  - 控制台：沿用旧行为，`E/W → stderr`，`I/D → stdout`。
-  - Android：`__ANDROID__` 下用 `__android_log_print`，tag 默认 `alg`。
-- **启动表头（仿 glog）**：每次启动/`init` 在日志流开头裸写一段表头
-  （`Log file created at` / `Running on machine` / `Process id` / `Log line format`），
-  append 模式下多次重启被表头自然分段，一眼看出哪段是重启后的输出。
-- **零默认开销**：不开 `ALG_LOG_FILE` 时，`ALG_LOGE/W/I/D` 行为与改动前逐字节一致
-  （直接 `fprintf`，`I/D` 仍编译期消除），且不链接本模块。
+日志格式化在调用线程执行，异步模式下的文件和终端写入由后台线程处理，以减少日志 I/O 对推理耗时的影响。队列采用互斥锁保护；队列满时丢弃消息并累计数量，不等待空闲槽位。该机制减少了等待日志写入的时间，但仍存在格式化、加锁和入队开销。
 
-## 开启（编译期）
+| 能力 | 实现方式 |
+|------|----------|
+| 异步写入 | 调用线程格式化并入队，后台线程批量输出 |
+| 文件滚动 | 按单文件大小滚动，按保留数量清理最早的记录 |
+| 控制台 | Error / Warn 输出到标准错误，Info / Debug 输出到标准输出 |
+| Android logcat | Android 编译环境下使用 `__android_log_print`，默认标签为 `alg` |
+| 启动信息 | 记录启动时间、主机、进程和日志格式，区分多次运行记录 |
+| 长度限制 | 单条消息超过缓冲上限时截断 |
+
+未启用 `ALG_LOG_FILE` 时，SDK 日志宏直接调用 `fprintf`；Info / Debug 是否编入由相应编译选项决定。日志模块源码列入工程构建，但宏调用路径不启用异步文件输出。
+
+## 编译配置
+
+在已配置平台工具链和后端依赖的构建目录中执行：
+
 ```bash
-cmake .. -DLINUX_AARCH64=ON -DALG_BACKEND=xmm \
-         -DALG_LOG_FILE=ON \
-         -DALG_LOG_FILE_PATH=/data/log/alg.log \
-         -DALG_LOG_FILE_MAX_SIZE=10485760 \   # 单文件上限(字节)
-         -DALG_LOG_FILE_MAX_FILES=5 \         # 滚动保留份数
-         -DALG_LOG_INFO=ON                    # 想把 info 也落盘才加；debug 用 -DALG_LOG_DEBUG=ON
-# Android NDK 构建时加 -DALG_LOG_ANDROID=ON（自动链接 liblog）
+cmake .. -DALG_LOG_FILE=ON \
+  -DALG_LOG_FILE_PATH=/data/log/alg.log \
+  -DALG_LOG_FILE_MAX_SIZE=10485760 \
+  -DALG_LOG_FILE_MAX_FILES=5 \
+  -DALG_LOG_INFO=ON
 ```
 
-## 运行期覆盖（路径常在部署时才确定）
+`ALG_LOG_FILE_MAX_SIZE` 单位为字节。Info 日志通过 `ALG_LOG_INFO=ON` 编入，Debug 日志通过 `ALG_LOG_DEBUG=ON` 编入。Android 构建可设置 `ALG_LOG_ANDROID=ON`，并由对应构建配置链接日志依赖。
+
+## 运行期配置
+
+日志模块提供独立的 C++ 配置入口，声明见 [alg_log.h](alg_log.h)。这些入口不属于公共业务 C API，使用时需包含日志模块头文件。
+
 ```cpp
 #include "core/log/alg_log.h"
-alg::log::Config c;          // 缺省值来自上面的编译期 -D
-c.file_path     = "/data/log/alg.log";
-c.max_file_size = 10 * 1024 * 1024;
-c.max_files     = 5;
-c.to_console    = false;     // 板端通常关掉终端输出
-c.level         = alg::log::Level::Info;
-alg::log::init(c);
-// ... 正常用 ALG_LOGE/W/I/D ...
-alg::log::shutdown();        // 进程退出前刷盘（单例析构时也会自动做）
+
+void ConfigureSdkLog()
+{
+    alg::log::Config config;
+    config.file_path = "/data/log/alg.log";
+    config.max_file_size = 10 * 1024 * 1024;
+    config.max_files = 5;
+    config.to_console = false;
+    config.level = alg::log::Level::Info;
+    alg::log::init(config);
+}
+
+void ShutdownSdkLog()
+{
+    alg::log::shutdown();
+}
 ```
 
-## 可调宏（`-D` 覆盖，默认值见 `alg_log.h`）
-| 宏 | 默认 | 含义 |
-|---|---|---|
-| `ALG_LOG_FILE_PATH` | `"alg_sdk.log"` | 文件基路径 |
-| `ALG_LOG_FILE_MAX_SIZE` | `10485760` | 单文件字节上限 |
-| `ALG_LOG_FILE_MAX_FILES` | `5` | 滚动保留份数（循环覆盖） |
-| `ALG_LOG_QUEUE_SIZE` | `1024` | 环形槽位数（×单行上限 ≈ 内存占用） |
-| `ALG_LOG_MSG_MAX` | `1024` | 单行字节上限，超长截断 |
+部署前应确认日志目录存在且具备写入权限。`init` 可重新配置日志模块；未显式调用时，首次写入采用默认配置初始化。应用结束时可调用 `shutdown` 刷新日志并停止后台线程；模块单例析构时也会执行关闭操作。
+
+`set_level` 调整运行期过滤级别，`flush` 请求刷新日志。运行期级别设置不能恢复编译时已移除的 Info / Debug 日志。
+
+## 默认参数
+
+| 宏 | 默认值 | 含义 |
+|----|--------|------|
+| `ALG_LOG_FILE_PATH` | `"alg_sdk.log"` | 文件基础路径 |
+| `ALG_LOG_FILE_MAX_SIZE` | `10485760` | 单文件大小阈值，单位为字节 |
+| `ALG_LOG_FILE_MAX_FILES` | `5` | 文件保留数量配置 |
+| `ALG_LOG_QUEUE_SIZE` | `1024` | 队列槽位数 |
+| `ALG_LOG_MSG_MAX` | `1024` | 单条消息缓冲字节数 |
+
+路径、文件大小和保留数量可通过同名 CMake 参数设置；队列及消息缓冲上限的宏定义见 [alg_log.h](alg_log.h)，队列大小还可通过 `Config.queue_size` 调整。

@@ -1,290 +1,136 @@
-# alg_sdk — 红绿灯检测 + 巴西限速牌识别 + 车牌识别
+# alg_sdk 项目说明
 
-面向端侧 CV 推理的 C++ SDK。本分支 (`tld_speedlimit`) 在 master 通用框架基础上裁掉
-原通用示例，聚焦落地模型：
+alg_sdk 是面向车载及嵌入式设备的视觉推理 SDK，负责将检测、识别和结果处理封装为统一的 C 接口。项目将芯片适配、模型后处理和业务编排分层实现，用于复用不同设备上的算法接入流程，集中维护模型配置及部署资源。
 
-- **红绿灯检测 (`traffic_light.json`)** — 单阶段 YOLOX，416×416 RGB，4 类
-  red/yellow/green/off；对应训练侧 [`alg_traffic_light_detection`](../alg_traffic_light_detection/)。
-- **巴西限速牌识别 (`speed_limit.json`)** — 二阶段 SpeedSignNet 检测 + OCR 三头逐位识别
-  12 类 10/20/.../80/90/100/110/120；对应训练侧 [`alg_speed_limit`](../alg_speed_limit/) v3.4。
-  字符组合非法或分类置信度低于阈值的框由 `classify_into:` 语义直接 drop。
-- **车牌识别 (`license_plate.json`，SVP ACL)** — 二阶段 RTMDet 检测 + LPRNet CTC 识别；
-  原 [`haisi_demo/src/license`](../haisi-v610/deploy/haisi_demo/src/license) 板端 demo
-  整合进 SDK（检测解码、CTC greedy 解码与 demo 严格对齐），输出 `license_plates[]`
-  （文本 + det×rec 联合置信度）。
-- **二合一并行 (`all.json`)** — 上面两个 solution 在同一份配置里跑；ChainSolution 把
-  多个 `produces:"objects"` 的 stage 在最终聚合处取并集，两个检测器互不依赖。
+## 功能范围
 
-**强类型 C ABI**：`AlgResult` 直接给有类型的数组，应用不需要查 attribute 字符串：
+| 业务 | 实现方案 | 交付接口 |
+|------|----------|----------|
+| 巴西限速牌识别 | SpeedSignNet 检测与逐位 OCR 识别，覆盖 10～120 km/h、间隔 10 的 12 类限速值 | `AlgResult.speed_limits[]` |
+| 禁令 / 停车牌识别 | PARE 由检测阶段输出；禁止停车由第二阶段门控分类 | `AlgResult.signs[]` |
+| 车牌识别 | RTMDet 检测与 LPRNet CTC 识别，提供 SVP ACL 模型和配置 | `AlgResult.license_plates[]` |
+| 红绿灯检测 | 保留 YOLOX 模型、后处理和配置，支持内部推理流程 | 未纳入公共结果结构 |
 
-```c
-typedef struct AlgResult_ {
-    long long           frame_id;
-    int                 traffic_light_count;
-    AlgTrafficLight*    traffic_lights;     // color: TLC_RED/YELLOW/GREEN/OFF
-    int                 speed_limit_count;
-    AlgSpeedLimit*      speed_limits;       // value: SLV_10..SLV_120（value*10 = km/h）
-    int                 sign_count;
-    AlgSign*            signs;              // type: SIGN_NO_PARKING / SIGN_PARE
-    int                 license_plate_count;
-    AlgLicensePlate*    license_plates;     // text + box.score（det×rec 联合置信度）
-} AlgResult;
-```
+限速牌和车牌均采用检测后裁剪识别的处理流程，识别结果写回原检测框。业务配置可组合多个模型，执行顺序由 `solution.stages` 确定。`all.json` 表示组合业务配置，具体包含的业务按后端区分，不表示模型并发执行。
 
-应用代码通过强类型字段直接判断，无需 string 比较。
+## 平台适配
 
-三个变化维度仍然全部解耦：
+| 后端 | 使用环境 | 模型格式 | 实现状态 |
+|------|----------|----------|----------|
+| `xmm` | XMM 板端运行环境 | `.xmm` | 提供模型加载、推理和内存管理实现 |
+| `svp_acl` | 海思 v610 / SVP ACL | `.om` | 提供模型加载、推理及辅助缓冲管理实现 |
+| `mnn` | x86_64 / MNN | `.mnn` | 提供本地推理实现 |
+| `rk` | Rockchip RKNN | — | 保留接口桩，模型加载返回 `ALG_E_BACKEND` |
 
-- **换芯片** = 只重写一个 `IInferer` 实现。
-- **加模型** = 新建一个目录，派生一个 `IPostprocessor` + 一行 `REGISTER_ALG_POST` 注册。
-- **串业务**（检测 → 分类 → ...）= 不写 C++，**写一份 JSON 配置**就行。
-- **调阈值 / 改输入尺寸 / 换均值方差** = 改 JSON，**不需要重新编译**。
+一份动态库在编译时选择一个后端。模型文件、运行依赖和目标架构须与动态库配套。SVP ACL 后端管理模型所需的 `task_buf`、`work_buf`，这些辅助缓冲不作为业务图像输入暴露给上层。
 
-## 目录结构（本分支）
+## 工程结构
 
-```
-include/                       公共 C ABI（alg_types.h, alg_interface.h）
+```text
+include/                  公共 C API 和数据类型
 resources/
-  traffic_light.json           红绿灯检测：单阶段 YOLOX
-  speed_limit.json             限速牌：检测 + OCR 三头识别（带 classify_into 过滤）
-  license_plate.json           车牌（SVP ACL）：RTMDet 检测 + LPRNet CTC 识别
-  all.json                     上述 solution 合并的并行版本（一份配置跑多件事）
-
+  config/<backend>/       按后端组织的业务配置
+  model/<backend>/        与配置配套的模型文件
+  CONFIG.md               配置字段说明
 src/
-  interface/                   C API → ChainSolution 胶水层
+  interface/              C API 实现和句柄管理
   core/
-    object.h/cpp               内部 C++ Object（box + attributes + drop 标记）+
-                               FillAlgResult 把它按 category attribute 分桶到强类型 ABI
-    tensor.h                   芯片中立的 TensorView
-    status.h logger.h
-    config/                    JSON → SolutionConfig 解析层
-    infer/inferer.h            IInferer（每芯片一份实现）
-    preprocess/                IPreprocessor + 通用 LetterboxPreprocessor
-    postprocess/               IPostprocessor 基类 + 通用 NMS
-    registry/                  后处理类型注册表（按名字 → builder）
-    instance/                  ModelInstance（单个网络的 pre/infer/post 三件套）
-    solution/                  ChainSolution（多模型编排，含 classify_into）
-                               + CropFromBox 工具
-
-  models/                      每种模型类型一个目录
-    yolox_det/                 mmyolo YOLOXHead 多尺度（红绿灯）
-    yolov5_anchor_det/         单尺度 anchor + sigmoid 解码（SpeedSignNet）
-    ocr_classifier/            三头逐位数字 OCR + class_names 驱动解码 + 置信度过滤（12 类）
-    dualhead_classifier/       旧双头数字识别（9 类，保留向后兼容）
-    rtmdet_det/                RTMDet 多尺度单类检测（车牌，cls/bbox × stride 8/16/32）
-    lprnet_rec/                LPRNet CTC 车牌识别（32 时间步 × 37 类字符）
-
-  backend/                     每种芯片一个目录
-    xmm/                       XMM（xmedia_cl + MMZ）
-    svp_acl/                   海思 SVP ACL（.om，自动管理 task_buf/work_buf）
-    rk/                        Rockchip RKNN（桩示例）
-
-cmake/CMakeLists_linux_aarch64.cmake
-test/test_runner.cpp           通用 runner：./test_runner <solution.json> <image>
+    config/               配置解析与引用检查
+    instance/             单模型前处理、推理和后处理
+    solution/             多阶段编排、ROI 裁剪和结果合并
+    preprocess/           图像转换、缩放与张量写入
+    postprocess/          后处理接口及通用 NMS
+    registry/             后处理器注册
+    log/                  日志输出与文件管理
+    tensor.h              跨后端张量描述
+    object.h / object.cpp 内部对象及公共结果转换
+  backend/                XMM、SVP ACL、MNN 和 RK 适配
+  models/                 检测及识别后处理器
+cmake/                    平台构建配置
+toolchain/                交叉编译工具链
+test/                    图片验证和循环推理程序
+backup/                   历史接口归档
 ```
 
-## 公共 API
+芯片适配通过 `IInferer` 封装，模型输出解析通过 `IPostprocessor` 实现，已支持模型之间的业务组合由 JSON 配置描述。新增后端或模型类型还需要维护构建配置；新增公共结果类型需要同步调整头文件和结果转换。
 
-```c
-AlgHandle h = NULL;
-AlgCreate(&h, "/data/all.json");           // 或 traffic_light.json / speed_limit.json
-AlgResult r = {0};
-AlgRun(h, &image, &r);
+## 公共接口
 
-for (int i = 0; i < r.traffic_light_count; ++i) {
-    AlgTrafficLight* tl = &r.traffic_lights[i];
-    if (tl->color == TLC_RED) handle_red_light(&tl->box);
-    /* tl->box: xmin/ymin/xmax/ymax + score
-     * tl->color: TLC_RED / TLC_YELLOW / TLC_GREEN / TLC_OFF */
-}
-for (int i = 0; i < r.speed_limit_count; ++i) {
-    AlgSpeedLimit* sl = &r.speed_limits[i];
-    printf("%d km/h limit @ (%d,%d) score=%.2f\n",
-           sl->value * 10, sl->box.xmin, sl->box.ymin, sl->box.score);
-    /* sl->value:     SLV_10 .. SLV_120（枚举编号 = km/h ÷ 10，故 value*10 即 km/h）
-     * sl->box.score: det × cls 联合置信度 */
-}
+| 接口 | 职责 |
+|------|------|
+| `AlgCreate` | 读取配置、加载模型并创建实例 |
+| `AlgRun` | 同步处理一帧图像并返回业务结果数组 |
+| `AlgFreeResult` | 释放结果数组，清空指针和数量 |
+| `AlgDestroy` | 销毁实例及其内部资源 |
+| `AlgVersion` | 返回 SDK 版本和后端标识 |
+| `AlgBackendName` | 返回编译后端名称 |
 
-AlgFreeResult(&r);
-AlgDestroy(h);
-```
+调用流程为创建实例、循环处理帧、释放结果、销毁实例。首次使用 `AlgResult` 必须零初始化；同一结果结构再次传入 `AlgRun` 时，SDK 会先释放旧数组。输入像素由应用持有，输出数组通过 `AlgFreeResult` 释放。
 
-## JSON 配置
+完整函数声明、数据类型和调用示例见 [接口文档](alg_sdk_api_documentation_v1.0.0.md)。公共 API 不包含红绿灯、关键点和分割结果字段。
 
-### 红绿灯（单阶段 YOLOX）
+## 模型与配置
 
-```json
-{
-  "solution": { "type": "chain", "stages": [
-    { "name": "tld", "model": "tld_cfg", "input": "image", "produces": "objects" }
-  ]},
-  "models": {
-    "tld_cfg": {
-      "model_path": "/data/traffic_light_int8.xmm",
-      "preprocess":  { "input_size": [416, 416], "color": "RGB",
-                       "resize": "letterbox_tl", "layout": "NCHW", "pad_value": 114 },
-      "postprocess": { "type": "yolox_det",
-                       "num_classes": 4, "strides": [8, 16, 32],
-                       "conf_threshold": 0.4, "nms_threshold": 0.5,
-                       "class_names": ["red_light","yellow_light","green_light","off_light"] }
-    }
-  }
-}
-```
+| 配置 | 处理内容 |
+|------|----------|
+| [xmm/speed_limit.json](resources/config/xmm/speed_limit.json) | 限速牌及禁令 / 停车牌 |
+| [mnn/speed_limit.json](resources/config/mnn/speed_limit.json) | 限速牌及禁令 / 停车牌，本地推理 |
+| [svp_acl/speed_limit.json](resources/config/svp_acl/speed_limit.json) | 限速牌及禁令 / 停车牌，海思平台 |
+| [svp_acl/license_plate.json](resources/config/svp_acl/license_plate.json) | 车牌检测与识别 |
+| [svp_acl/all.json](resources/config/svp_acl/all.json) | 限速牌、禁令 / 停车牌与车牌组合流程 |
+| [xmm/all.json](resources/config/xmm/all.json)、[mnn/all.json](resources/config/mnn/all.json) | 内部红绿灯与限速牌组合流程；公共输出为限速牌及禁令 / 停车牌 |
 
-### 限速牌（检测 + OCR 三头识别，带 classify_into 过滤）
+限速牌检测输入为 576×320，识别输入为 96×96，均采用 RGB。OCR 支持单输出及多输出布局；三位数字加三路门控的单输出共 36 个元素。多输出模型通过张量名称和索引配置识别各输出头。
 
-```json
-{
-  "solution": { "type": "chain", "stages": [
-    { "name": "detector",   "model": "ssn_cfg", "input": "image",
-      "produces": "objects" },
-    { "name": "classifier", "model": "cls_cfg",
-      "input": "objects_from:detector",
-      "crop":  { "expand_ratio": 1.5, "square": true, "pad_value": 114 },
-      "produces": "classify_into:detector" }
-  ]},
-  "models": {
-    "ssn_cfg": {
-      "model_path": "/data/speedsignnet.xmm",
-      "preprocess":  { "input_size": [576, 320], "color": "RGB",
-                       "resize": "letterbox_center", "pad_value": 114 },
-      "postprocess": { "type": "yolov5_anchor_det",
-                       "num_classes": 1, "stride": 8, "anchor": [36, 36],
-                       "conf_threshold": 0.25, "nms_threshold": 0.45 }
-    },
-    "cls_cfg": {
-      "model_path": "/data/classifier.xmm",
-      "preprocess":  { "input_size": [64, 64], "color": "RGB",
-                       "resize": "stretch" },
-      "postprocess": { "type": "ocr_classifier", "category": "speed_limit",
-                       "num_positions": 3, "num_chars": 11, "blank_index": 10,
-                       "conf_threshold": 0.5,
-                       "class_names": ["10","20","30","40","50","60","70","80","100","90","110","120"] }
-    }
-  }
-}
-```
+车牌检测输入为 640×448，采用 `letterbox_tl_fit`；识别输入为 256×64，采用居中 letterbox。识别字符集为数字和大写英文字母，使用 CTC greedy 解码。
 
-> **OCR 输出布局**：上例 `.xmm` 为**单输出模型**（`classifier.xmm` 出 1 个 `(1,33)` 张量，
-> 各位按 `base=p*num_chars` 切片）——这是 XMM 板端默认，绕开多输出被切 NPU+CPU 混合图、
-> 只落 head0 的坑。SDK 自动识别（`NumOutputs==1 && num_positions>1`），无需配 `head_names`/
-> `head_indices`。MNN 仍可用三头多输出模型，此时再加
-> `"head_names":["logits_h","logits_t","logits_u"]`（按张量名匹配，覆盖 MNN 输出乱序）。
+`classify_into` 将识别分乘到检测分，并过滤未通过识别的对象；PARE 通过 `passthrough` 保留检测分。各模型阈值、裁剪范围、最小框尺寸及归一化参数由配套配置定义，参数明细见 [配置说明](resources/CONFIG.md)。
 
-### 车牌（检测 + LPRNet CTC 识别）
+配置在实例创建时加载，调整后需重建实例。配置中的相对模型路径以进程工作目录为基准；部署时可改为设备上的绝对路径。输入尺寸和归一化必须符合模型约定，固定尺寸模型不能仅通过修改 JSON 改变输入形状。
 
-由 `haisi_demo/src/license` 板端 demo 整合而来，二阶段 `classify_into` 链路与限速牌一致，
-识别置信度乘到检测框上，低于阈值（`conf_threshold`，0=不过滤）的框被 drop：
+## 构建与运行
 
-```json
-{
-  "solution": { "type": "chain", "stages": [
-    { "name": "detector",   "model": "det_cfg", "input": "image",
-      "produces": "objects" },
-    { "name": "recognizer", "model": "rec_cfg", "input": "objects_from:detector",
-      "crop":  { "expand_ratio": 1.0, "square": false },
-      "produces": "classify_into:detector" }
-  ]},
-  "models": {
-    "det_cfg": {
-      "model_path": "../resources/model/svp_acl/license_detection_10m.om",
-      "preprocess":  { "input_size": [640, 448], "color": "RGB",
-                       "resize": "letterbox_tl_fit", "pad_value": 114 },
-      "postprocess": { "type": "rtmdet_det", "num_classes": 1, "bbox_channels": 4,
-                       "strides": [8, 16, 32], "input_size": [640, 448],
-                       "conf_threshold": 0.25, "nms_threshold": 0.45,
-                       "min_bbox_size": 4.0, "max_det": 5 }
-    },
-    "rec_cfg": {
-      "model_path": "../resources/model/svp_acl/license_recognizer.om",
-      "preprocess":  { "input_size": [256, 64], "color": "RGB",
-                       "resize": "letterbox_center", "pad_value": 0 },
-      "postprocess": { "type": "lprnet_rec", "category": "license_plate",
-                       "characters": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-                       "blank_index": 36, "timesteps": 32, "channels": 37 }
-    }
-  }
-}
-```
-
-> **模型契约**（与 `license_bralizera` demo 严格对齐）：
-> - **Stage1** `license_detection_10m.om`：RTMDet tiny 单类（精简参数量 + INT8 量化，
->   由 `export.sh` 经 ATC 校准导出），输入 `1x3x448x640` RGB_PLANAR，
->   左上角 min-scale letterbox（`resize:"letterbox_tl_fit"`）、pad 114；UINT8 输入直写
->   0..255，归一化（mean/std）由 AIPP 烘进模型；输出 6 个 head（cls/bbox × stride 8/16/32），
->   后处理 sigmoid → 阈值 → 单类 NMS(IoU 0.45) → 按 PreprocessState 反映射回原图。
-> - **Stage2** `license_recognizer.om`：LPRNet，输入 `1x3x64x256` RGB_PLANAR，紧致 crop +
->   居中 letterbox（pad 0），AIPP 做 /255；输出 `1x32x37`（32 时间步 × 37 类：
->   `'0'-'9','A'-'Z'` 36 字符 + blank），CTC greedy 解码，识别分数为被保留字符概率之积。
-> - `letterbox_tl_fit` 是**新增**的 resize 模式：min-scale 保持宽高比 + 贴左上角（右下 pad），
->   与 demo 的 `_resize_pad_top_left` 一致；对竖图也不会像 `letterbox_tl` 那样溢出高度。
-
-### Stage 语义新增
-
-| produces 取值                    | 行为                                                   |
-|----------------------------------|--------------------------------------------------------|
-| `"objects"`                      | 本 stage 自己产生 top-level 对象                        |
-| `"attributes_into:<stage>"`      | 把属性数组合并到上游 stage 的 box                       |
-| **`"classify_into:<stage>"`**    | **分类器：合并 attributes 到 src，src 的内部 label 改成分类 id，box.score 乘以分类置信度作联合得分；分类器返回空（如低于阈值）→ 直接 drop 掉这个 src 框** |
-
-`classify_into:` 是本分支为支持「检测 + 识别 + 阈值过滤」二阶段链路新增的语义，
-框架最小改动：
-- `Object` 加了一个内部 `drop` 标记（不暴露到 C ABI）；
-- `ChainSolution::Run` 在最终聚合时跳过 `drop=true` 的对象。
-
-## 编译
+在仓库根目录选择对应构建命令：
 
 ```bash
 ./build.sh linux aarch64 xmm
-# 海思 v610 + SVP ACL：
 ./build.sh linux aarch64 svp_acl
-# 产物：build_linux_aarch64_xmm/libalg_sdk.so + test_runner
-
-./test_runner resources/traffic_light.json /data/test.jpg out/
-./test_runner resources/speed_limit.json   /data/test.jpg out/
-./test_runner resources/all.json           /data/test.jpg out/      # 两件事一起跑
-./test_runner resources/config/svp_acl/license_plate.json /data/plate.jpg out/
-./test_runner resources/config/svp_acl/all.json            /data/test.jpg out/  # 限速牌 + 车牌一起跑
+./build.sh linux x86_64 mnn
 ```
 
-依赖：jsoncpp 静态库（路径通过 `-DJSONCPP_ROOT=...` 配置，默认
-`/root/opensource/jsoncpp/build_arm/install`）。
+默认产物位于 `build_linux_<arch>_<backend>/`，包含动态库、`test_runner` 和 `loop_runner`。构建脚本会清理并重建对应目录，交付资料和测试数据应存放在构建目录之外。
 
-### SVP ACL 后端
+海思构建沿用脚本中的 `aarch64` 入口名称，实际采用 ARM 32 位 `arm-linux-musleabi` 工具链。平台依赖见 [板端构建配置](cmake/CMakeLists_linux_aarch64.cmake)、[本地构建配置](cmake/CMakeLists_linux_x86_64.cmake) 和 [海思工具链](toolchain/hisi_v610_linux.toolchain.cmake)。JSONCPP 源码随工程编入。
 
-SVP ACL 后端只实现 `IInferer`，检测/OCR 后处理和两阶段编排保持不变。`.om`
-中暴露的 `task_buf`、`work_buf` 由后端分配并初始化，但不会作为业务输入暴露给
-`ModelInstance`。
+海思环境的工具链及依赖路径可通过 CMake 参数 `HISI_TOOLCHAIN_ROOT`、`SVP_ACL_ROOT`、`SVP_ACL_LIB_DIR`、`HISI_SECUREC_LIB_DIR` 和 `SVP_OPENCV_ROOT` 配置。
+
+在匹配的目标设备或本地运行环境中，从仓库一级构建目录启动验证程序：
 
 ```bash
-./build.sh linux aarch64 svp_acl
 cd build_linux_aarch64_svp_acl
-./test_runner \
-  ../resources/config/svp_acl/speed_limit.json /path/to/input.jpg output/
+./test_runner ../resources/config/svp_acl/all.json /data/test.jpg out
+./loop_runner ../resources/config/svp_acl/all.json /data/test.jpg -n 1000
+./loop_runner ../resources/config/svp_acl/license_plate.json /data/frame.yuv \
+  -size 1920x1080 -fmt nv12 -n 1000
 ```
 
-默认工具链与依赖路径对齐 v610 编译服务器，可用 CMake cache 参数覆盖：
-`HISI_TOOLCHAIN_ROOT`、`SVP_ACL_ROOT`、`SVP_ACL_LIB_DIR`、
-`HISI_SECUREC_LIB_DIR`、`SVP_OPENCV_ROOT`。
+`test_runner` 支持图片或图片目录，`loop_runner` 支持图片和原始 YUV 帧循环输入。上述相对路径要求部署目录保留构建目录与 `resources` 的同级关系。
 
-## 训练侧契约对照
+## 接入与交付约束
 
-| 项                  | 红绿灯 (yolox_det)              | 限速牌 (yolov5_anchor_det + ocr_classifier)      |
-|---------------------|---------------------------------|---------------------------------------------------|
-| 训练框架            | mmyolo 0.6.0                    | 自研（YOLOv5 风格 head + OCR 三头逐位识别）       |
-| 输入分辨率          | 416×416 RGB                     | 320×576 RGB（检测）/ 64×64 RGB（分类）            |
-| letterbox pad_value | 114                             | 114                                               |
-| 归一化              | NPU 入口 scale=255 内部完成      | (x-mean)/std 烘进量化模型                         |
-| 检测 head channels  | 9 = 4(box) + 1(obj) + 4(cls)    | 6 = 4(box) + 1(obj) + 1(cls)                      |
-| 解码 grid offset    | 0（mmdet `MlvlPointGenerator`） | YOLOv5 `(σ*2-0.5+grid)*stride`                    |
-| 解码 wh             | `exp(w_log) * stride`           | `(σ(t)*2)^2 * anchor`                             |
-| score 公式          | `σ(obj) * σ(max(cls))`          | `σ(obj) * softmax(cls)` = `σ(obj)`（单类）         |
-| NMS                 | class-aware                     | class-aware                                       |
-| 默认阈值            | conf 0.4 / iou 0.5              | conf 0.25 / iou 0.45（检测）+ min(三头) 0.5（分类）|
+- 图像格式支持 BGR、RGB、GRAY、NV12 和 NV21。NV12 / NV21 要求紧凑连续布局和偶数宽高，不支持额外的行或平面对齐。
+- 网络前处理输出 NCHW，支持 UINT8 和 FLOAT32 输入类型，输入尺寸须与模型一致。
+- SDK 调用由应用串行调度；共享结果和图像缓冲的访问需要同步。
+- 车牌空文本仍可能返回结果，应用需结合非空文本和业务格式判断有效性。
+- 每次交付应配套提供头文件、动态库、配置、模型及目标运行依赖。实际性能和识别效果以对应设备、模型和测试数据的验证记录为依据。
 
-## 如何加新模型 / 换芯片
+## 文档索引
 
-参考 `ARCHITECTURE.md`，三轴正交。本分支聚焦红绿灯 + 限速牌 + 车牌三个落地模型，C ABI 仅
-保留 box + attributes（不含 keypoints / embedding）；如需关键点 / embedding 等其它
-输出形态，回到 master 分支或基于 master 拉新分支扩展。
+| 文档 | 用途 |
+|------|------|
+| [接口文档](alg_sdk_api_documentation_v1.0.0.md) | 公共接口、数据类型、资源管理和部署约束 |
+| [架构设计](ARCHITECTURE.md) | 模块职责、数据流和扩展方式 |
+| [开发接入指南](NEWCOMER_GUIDE.md) | 工程接入、配置选择和问题定位 |
+| [配置说明](resources/CONFIG.md) | 业务编排和模型参数 |
+| [日志模块](src/core/log/README.md) | 日志编译选项及运行期配置 |
+| [红绿灯接口归档](backup/traffic_light_revert/README.md) | 历史公共接口与恢复流程 |
