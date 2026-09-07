@@ -2,9 +2,9 @@
  * @file alg_types.h
  * @brief alg_sdk 公共 C ABI 类型定义。
  *
- * 本分支聚焦巴西限速牌 / 停车牌识别落地模型。AlgResult 用强类型字段直接表达
- * 每个检测器的产出（speed_limits[] / signs[]），应用代码不需要查 attribute
- * 字符串，也不依赖 JSON 里 class_names 顺序之外的约定。
+ * 本分支聚焦巴西限速牌 / 停车牌识别 + 车牌识别落地模型。AlgResult 用强类型字段
+ * 直接表达每个检测器的产出（speed_limits[] / signs[] / license_plates[]），应用
+ * 代码不需要查 attribute 字符串，也不依赖 JSON 里 class_names 顺序之外的约定。
  */
 
 #ifndef ALG_TYPES_H
@@ -74,6 +74,7 @@ typedef struct AlgImage_ {
  * score 含义：
  *   - 限速牌：联合置信度 = 检测置信度 × OCR 分类置信度
  *   - 停车/禁令牌：联合置信度
+ *   - 车牌：联合置信度 = 检测置信度 × 识别置信度
  * 应用统一只看这一个分数即可。 */
 typedef struct AlgBox_ {
     int   xmin, ymin, xmax, ymax;
@@ -134,6 +135,21 @@ typedef struct AlgSign_ {
 } AlgSign;
 
 /* ============================================================== */
+/*                      车牌识别 (license plate)                    */
+/* ============================================================== */
+
+/* 单个车牌识别结果。
+ *   box.score = det × rec 联合置信度（与限速牌一致，应用统一只看这一个分数）
+ *   text      = 识别文本（字符集 '0'-'9','A'-'Z'，无分隔符，如 "ABC1D23"；
+ *               未识别到内容时为空串）
+ *   rec_score = 识别单独置信度（CTC greedy 被保留字符概率之积，排错/二次过滤用） */
+typedef struct AlgLicensePlate_ {
+    AlgBox  box;
+    char    text[32];    /* 理论最长 = LPRNet 时间步数(32) */
+    float   rec_score;
+} AlgLicensePlate;
+
+/* ============================================================== */
 /*                          完整结果                                */
 /* ============================================================== */
 
@@ -141,6 +157,7 @@ typedef struct AlgSign_ {
  *
  *  - 单 solution 跑限速牌 (speed_limit.json)：speed_limits / signs 可能非空
  *    （signs = PARE / 禁止停车等非限速牌种）。
+ *  - 单 solution 跑车牌 (license_plate.json)：license_plates 可能非空。
  *
  * 数组由 SDK 持有；应用通过 AlgFreeResult 一次性释放。 */
 typedef struct AlgResult_ {
@@ -151,6 +168,9 @@ typedef struct AlgResult_ {
 
     int                 sign_count;      /* 禁令/停车牌（PARE / 禁止停车） */
     AlgSign*            signs;
+
+    int                 license_plate_count;
+    AlgLicensePlate*    license_plates;
 } AlgResult;
 
 ALG_C_END

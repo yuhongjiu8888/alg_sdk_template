@@ -80,8 +80,8 @@
 
 - `AlgCreate` 较重（加载模型、初始化后端），**只调用一次**，句柄在整个生命周期内复用。
 - 每帧调用 `AlgRun` 前填充 `AlgImage`，其中 `data` 缓冲区由调用方持有；`AlgRun` 不接管该内存。
-- 每帧调用 `AlgRun` 后，`AlgResult` 内的 `speed_limits` / `signs` 数组由 SDK 分配，**必须配对调用 `AlgFreeResult`** 释放，否则内存泄漏。
-- 结果按 solution 类型填充：限速牌配置填 `speed_limits`（限速值）+ `signs`（PARE / 禁止停车等牌种），两个数组均可能非空。
+- 每帧调用 `AlgRun` 后，`AlgResult` 内的 `speed_limits` / `signs` / `license_plates` 数组由 SDK 分配，**必须配对调用 `AlgFreeResult`** 释放，否则内存泄漏。
+- 结果按 solution 类型填充：限速牌配置填 `speed_limits`（限速值）+ `signs`（PARE / 禁止停车等牌种），车牌配置填 `license_plates`（文本 + 联合置信度），各数组均可能非空。
 
 最小调用示例：
 
@@ -171,7 +171,7 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 void AlgFreeResult(AlgResult* result);
 ```
 
-**函数说明**：释放 SDK 在 `result` 内部分配的内存（`speed_limits[]` / `signs[]` 两个数组）。对零值 / 已释放的 `result` 调用是安全的。
+**函数说明**：释放 SDK 在 `result` 内部分配的内存（`speed_limits[]` / `signs[]` / `license_plates[]` 数组）。对零值 / 已释放的 `result` 调用是安全的。
 
 **参数**：
 
@@ -340,6 +340,20 @@ typedef struct AlgSign_ {
 } AlgSign;
 ```
 
+### 4.4 车牌
+
+车牌识别（RTMDet 检测 + LPRNet CTC 识别），按框输出识别文本与联合置信度。
+
+#### AlgLicensePlate —— 单个车牌识别结果
+
+```c
+typedef struct AlgLicensePlate_ {
+    AlgBox  box;        // 原图坐标系下的框，box.score = det × rec 联合置信度
+    char    text[32];   // 识别文本（'0'-'9','A'-'Z'，无分隔符，如 "ABC1D23"；未识别到时为空串）
+    float   rec_score;  // 识别单独置信度（CTC greedy 被保留字符概率之积，排错/二次过滤用）
+} AlgLicensePlate;
+```
+
 ### 4.5 完整结果
 
 #### AlgResult —— 一帧的算法输出
@@ -354,6 +368,9 @@ typedef struct AlgResult_ {
 
     int                 sign_count;            // 禁令/停车牌结果数量
     AlgSign*            signs;                 // 禁令/停车牌结果数组（SDK 持有）
+
+    int                 license_plate_count;   // 车牌结果数量
+    AlgLicensePlate*    license_plates;        // 车牌结果数组（SDK 持有）
 } AlgResult;
 ```
 

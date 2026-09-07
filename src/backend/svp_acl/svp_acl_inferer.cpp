@@ -135,14 +135,17 @@ Status MakeTensorView(const svp_acl_mdl_io_dims& dims,
         return ALG_E_BACKEND;
     }
     const int bytes = BytesPerElement(dtype);
+    /* ATC 输出可能按 16/32 字节对齐行（如 1x32x37 FLOAT 行跨 160B、密集行宽 148B）。
+     * dense 时 row_stride=0（绝大多数）；非 dense 记录实际行字节跨度，
+     * 由按行读取的后处理器（lprnet_rec 等）负责按 row_stride 定位。 */
+    size_t row_stride = 0;
     if (dims.dim_count > 0) {
         const size_t dense_row =
             static_cast<size_t>(dims.dims[dims.dim_count - 1]) * bytes;
         if (stride != dense_row) {
-            ALG_LOGE("svp_acl: tensor '%s' stride=%zu, dense_row=%zu; "
-                     "current TensorView requires dense storage",
+            row_stride = stride;
+            ALG_LOGI("svp_acl: tensor '%s' has padded row stride %zu (dense %zu)",
                      dims.name, stride, dense_row);
-            return ALG_E_BACKEND;
         }
     }
     view->name = dims.name;
@@ -156,6 +159,7 @@ Status MakeTensorView(const svp_acl_mdl_io_dims& dims,
     view->quant.quantized = false;
     view->data = address;
     view->size_bytes = size;
+    view->row_stride = row_stride;
     return ALG_OK;
 }
 

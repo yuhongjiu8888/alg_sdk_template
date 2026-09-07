@@ -77,6 +77,10 @@ set(ALG_MODEL_SRCS
     src/models/ocr_classifier/ocr_classifier_register.cpp
     src/models/dualhead_classifier/dualhead_classifier_postprocessor.cpp
     src/models/dualhead_classifier/dualhead_classifier_register.cpp
+    src/models/rtmdet_det/rtmdet_det_postprocessor.cpp
+    src/models/rtmdet_det/rtmdet_det_register.cpp
+    src/models/lprnet_rec/lprnet_rec_postprocessor.cpp
+    src/models/lprnet_rec/lprnet_rec_register.cpp
 )
 
 #第三方库json
@@ -124,3 +128,6 @@ target_link_libraries(alg_sdk
 # -----------------------------------------------------------------------------
 add_executable(test_runner test/test_runner.cpp)
 target_link_libraries(test_runner alg_sdk pthread)
+
+add_executable(loop_runner test/loop_runner.cpp)
+target_link_libraries(loop_runner alg_sdk pthread)

@@ -13,7 +13,7 @@
 | 加模型类型成本接近为零      | 新模型 = 一个目录 + 一行注册；不改公共头、不改 C API、不改 Solution |
 | 业务编排无需重编            | 检测→识别→...的整条流水线写在 JSON 里                              |
 | 参数调优无需重编            | 阈值、输入尺寸、均值方差等全部 JSON 化                              |
-| 同一个 .so 适配不同业务     | 红绿灯检测、限速牌识别、并行版共用一个二进制，只换 JSON               |
+| 同一个 .so 适配不同业务     | 红绿灯检测、限速牌识别、车牌识别、并行版共用一个二进制，只换 JSON      |
 | 零额外内存拷贝              | 前处理直接写进芯片输入张量，不走中间 buffer                         |
 
 ---
@@ -85,6 +85,8 @@ src/
     yolov5_anchor_det/         单尺度 anchor + sigmoid decode（SpeedSignNet）
     ocr_classifier/            三头逐位数字 OCR + class_names 驱动解码 + 置信度过滤（限速牌 12 类）
     dualhead_classifier/       旧双头数字识别（限速牌 9 类，保留向后兼容）
+    rtmdet_det/                RTMDet 多尺度单类检测（车牌，prior=(grid)*stride + 单类 NMS）
+    lprnet_rec/                LPRNet CTC 车牌识别（32 时间步 × 37 类，greedy 解码）
 
   backend/                     每种芯片一个目录
     backend_factory.h          MakeInferer() / BackendName() 入口（编译期绑定）
@@ -246,12 +248,15 @@ return ⋃ { state[s].objects | s in stages if s.produces == "objects" }
 | Solution / postprocessor 操作               | 应用层看到的最终结构                              |
 
 `FillAlgResult()` 在 C API 边界做一次翻译：
-- 按 `attributes["category"].value_str` 分桶到 `traffic_lights[]` / `speed_limits[]` / `signs[]`
-  （`category` ∈ {`traffic_light`, `speed_limit`, `no_parking`, `pare`}；后两者 = v3.5 禁令/停车牌 → `signs[]`）
+- 按 `attributes["category"].value_str` 分桶到 `traffic_lights[]` / `speed_limits[]` /
+  `signs[]` / `license_plates[]`（`category` ∈ {`traffic_light`, `speed_limit`,
+  `license_plate`, `no_parking`, `pare`}；`no_parking`/`pare` = v3.5 禁令/停车牌 → `signs[]`）
 - 读取后处理器写入的 `Object.value`（业务 enum 编号，0 留给 INVALID）填强类型字段；
   红绿灯取颜色 enum，限速牌取 `AlgSpeedLimitValue`（ocr_classifier 由 class_names 解析数值 ÷ 10 得出），
-  禁令/停车牌取 `AlgSignType`（`no_parking` / `pare` 两类，`signs[].type` 由 category 直接决定）
-- malloc 出来的三个数组由用户通过 `AlgFreeResult()` 一次释放
+  禁令/停车牌取 `AlgSignType`（`no_parking` / `pare` 两类，`signs[].type` 由 category 直接决定），
+  车牌取 lprnet_rec 以 attribute 透出的 `text` / `rec_score`（`license_plates[].text`，
+  `box.score` = det×rec 联合置信度）
+- malloc 出来的四个数组由用户通过 `AlgFreeResult()` 一次释放
 
 ---
 
@@ -439,7 +444,7 @@ AlgTrafficLight[]/AlgSpeedLimit[]  malloc (C API 出口)  用户 AlgFreeResult �
 
 端侧前处理的操作组合空间很小：
 ```
-{resize | letterbox_tl | letterbox_center}
+{resize | letterbox_tl | letterbox_tl_fit | letterbox_center}
 × {BGR | RGB | Gray}
 × {NCHW | NHWC}
 × {可选 mean/std/scale}

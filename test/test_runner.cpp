@@ -5,6 +5,7 @@
  * 同一个二进制可跑（红绿灯输出当前已屏蔽）：
  *   ./test_runner resources/speed_limit.json     /data/test.jpg out/
  *   ./test_runner resources/all.json             /data/test.jpg out/
+ *   ./test_runner resources/config/svp_acl/license_plate.json /data/test.jpg out/
  *
  * 第二个参数也可以是目录，批量跑目录下所有图片（句柄只创建一次，复用跑全部）：
  *   ./test_runner resources/speed_limit.json     /data/imgs/  out/
@@ -76,6 +77,11 @@ void DrawResult(cv::Mat& img, const AlgResult& r) {
         std::snprintf(buf, sizeof(buf), "%s %.2f", SignName(g.type), g.box.score);
         DrawBoxLabel(img, g.box, buf, cv::Scalar(0, 128, 255));  /* 橙色：禁令/停车牌 */
     }
+    for (int i = 0; i < r.license_plate_count; ++i) {
+        const AlgLicensePlate& lp = r.license_plates[i];
+        std::snprintf(buf, sizeof(buf), "%s %.2f", lp.text, lp.box.score);
+        DrawBoxLabel(img, lp.box, buf, cv::Scalar(0, 255, 0));  /* 绿色：车牌 */
+    }
 }
 
 bool IsDir(const char* path) {
@@ -142,8 +148,9 @@ int RunOne(AlgHandle h, const std::string& image_path, const std::string& out_pa
 
     std::printf("[infer ] %.2f ms\n",
                 (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0);
-    std::printf("[result] frame_id=%lld  speed_limits=%d  signs=%d\n",
-                (long long)r.frame_id, r.speed_limit_count, r.sign_count);
+    std::printf("[result] frame_id=%lld  speed_limits=%d  signs=%d  license_plates=%d\n",
+                (long long)r.frame_id, r.speed_limit_count, r.sign_count,
+                r.license_plate_count);
     for (int i = 0; i < r.speed_limit_count; ++i) {
         const AlgSpeedLimit& sl = r.speed_limits[i];
         std::printf("  SL[%d] %d km/h score=%.3f  box=(%d,%d)-(%d,%d)\n",
@@ -155,6 +162,12 @@ int RunOne(AlgHandle h, const std::string& image_path, const std::string& out_pa
         std::printf("  SG[%d] %s score=%.3f  box=(%d,%d)-(%d,%d)\n",
                     i, SignName(g.type), g.box.score,
                     g.box.xmin, g.box.ymin, g.box.xmax, g.box.ymax);
+    }
+    for (int i = 0; i < r.license_plate_count; ++i) {
+        const AlgLicensePlate& lp = r.license_plates[i];
+        std::printf("  LP[%d] plate='%s' score=%.3f rec=%.3f  box=(%d,%d)-(%d,%d)\n",
+                    i, lp.text, lp.box.score, lp.rec_score,
+                    lp.box.xmin, lp.box.ymin, lp.box.xmax, lp.box.ymax);
     }
 
     DrawResult(bgr, r);

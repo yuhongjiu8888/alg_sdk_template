@@ -258,6 +258,14 @@ Status LetterboxPreprocessor::Apply(const AlgImage& image, TensorView& input,
             new_w = static_cast<int>(image.width * scale);
             new_h = static_cast<int>(image.height * scale);
             break;
+        case ResizeMode::kLetterboxTLFit:
+            /* 保持宽高比 + 同时适配宽高（min-scale），贴左上角、右下 pad。
+             * 车牌 RTMDet 640x448 的 _resize_pad_top_left 语义。 */
+            scale = std::min(static_cast<float>(net_w_) / image.width,
+                             static_cast<float>(net_h_) / image.height);
+            new_w = static_cast<int>(image.width * scale);
+            new_h = static_cast<int>(image.height * scale);
+            break;
         case ResizeMode::kLetterboxCenter:
             scale = std::min(static_cast<float>(net_w_) / image.width,
                              static_cast<float>(net_h_) / image.height);

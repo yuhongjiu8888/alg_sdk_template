@@ -97,12 +97,12 @@ function package_artifacts() {
         fi
     fi
 
-    # ---- speed_limit.json ----
+    # ---- 业务 JSON 配置（speed_limit / license_plate / ...）----
     # 保持 resources/config/<backend>/ 目录结构，与 JSON 内相对路径一致
     mkdir -p "${pkg_dir}/resources/config/${backend}"
-    cp "resources/config/${backend}/speed_limit.json" \
+    cp resources/config/${backend}/*.json \
        "${pkg_dir}/resources/config/${backend}/" 2>/dev/null || {
-        echo "ERROR: resources/config/${backend}/speed_limit.json not found"
+        echo "ERROR: no config json under resources/config/${backend}/"
         exit 1
     }
 

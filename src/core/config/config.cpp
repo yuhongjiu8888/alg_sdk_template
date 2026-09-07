@@ -24,6 +24,7 @@ ColorOrder ParseColor(const std::string& s) {
 ResizeMode ParseResize(const std::string& s) {
     if (s == "stretch")           return ResizeMode::kStretch;
     if (s == "letterbox_center")  return ResizeMode::kLetterboxCenter;
+    if (s == "letterbox_tl_fit")  return ResizeMode::kLetterboxTLFit;
     return ResizeMode::kLetterboxTL; /* 默认与 sgk-sdk 行为一致 */
 }
 

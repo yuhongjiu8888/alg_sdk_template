@@ -63,6 +63,12 @@ struct TensorView {
     QuantInfo   quant;
     void*       data = nullptr;
     size_t      size_bytes = 0;
+    /* 行字节跨度（行优先内存布局，仅对「按行对齐的非紧凑张量」非 0）。
+     * 0 = dense：data 按 shape 紧凑连续、无行间 padding（绝大多数情况）。
+     * 非 0 = 每行的实际字节跨度可能 > 行宽 × 元素大小（如 SVP ACL 输出按
+     * 16 字节对齐，1x32x37 的 FLOAT 输出行跨 160B 而密集行宽 148B）。
+     * 按行读取的后处理器必须用 row_stride（若为 0 则用行宽）定位各行。 */
+    size_t      row_stride = 0;
 
     int N() const { return shape.ndims >= 4 ? shape.dims[0] : 1; }
     int C() const {

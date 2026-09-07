@@ -47,6 +47,21 @@ bool CropFromDecoded(const cv::Mat& decoded_bgr, const AlgBox& box,
                      const CropConfig& cfg,
                      cv::Mat* holder, AlgImage* out, CropTransform* xf);
 
+/**
+ * 直接从 NV12/NV21 原图抠 ROI 子图转成 BGR（替代"全帧解码 + CropFromDecoded"）。
+ *
+ * 调用场景：整帧是 NV12/NV21 时，若每个子模型都做一次全帧 YUV→BGR 解码会白耗
+ * 大量 CPU（1080p 一次 ~25ms）。此函数把解码范围收窄到框周边：从 Y/UV 平面各取
+ * 子图视图（step=原图宽 W，非连续），再对**小区域**做 cvtColorTwoPlane。
+ *
+ * 注意：NV12 色度为半分辨率，子图坐标在函数内做偶对齐（clamp 分支）或偶对齐后
+ * 拷贝（padded 分支，对齐偏移由 pad 填充兜底），与 CropFromDecoded 输出语义一致
+ * （BGR + stride + xf 偏移映射回原图）。
+ */
+bool CropFromNV12(const AlgImage& src, const AlgBox& box,
+                  const CropConfig& cfg,
+                  cv::Mat* holder, AlgImage* out, CropTransform* xf);
+
 }  // namespace alg
 
 #endif  // ALG_CORE_SOLUTION_CROP_UTIL_H

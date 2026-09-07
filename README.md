@@ -1,17 +1,21 @@
-# alg_sdk — 红绿灯检测 + 巴西限速牌识别
+# alg_sdk — 红绿灯检测 + 巴西限速牌识别 + 车牌识别
 
 面向端侧 CV 推理的 C++ SDK。本分支 (`tld_speedlimit`) 在 master 通用框架基础上裁掉
-原通用示例，聚焦两个落地模型：
+原通用示例，聚焦落地模型：
 
 - **红绿灯检测 (`traffic_light.json`)** — 单阶段 YOLOX，416×416 RGB，4 类
   red/yellow/green/off；对应训练侧 [`alg_traffic_light_detection`](../alg_traffic_light_detection/)。
 - **巴西限速牌识别 (`speed_limit.json`)** — 二阶段 SpeedSignNet 检测 + OCR 三头逐位识别
   12 类 10/20/.../80/90/100/110/120；对应训练侧 [`alg_speed_limit`](../alg_speed_limit/) v3.4。
   字符组合非法或分类置信度低于阈值的框由 `classify_into:` 语义直接 drop。
+- **车牌识别 (`license_plate.json`，SVP ACL)** — 二阶段 RTMDet 检测 + LPRNet CTC 识别；
+  原 [`haisi_demo/src/license`](../haisi-v610/deploy/haisi_demo/src/license) 板端 demo
+  整合进 SDK（检测解码、CTC greedy 解码与 demo 严格对齐），输出 `license_plates[]`
+  （文本 + det×rec 联合置信度）。
 - **二合一并行 (`all.json`)** — 上面两个 solution 在同一份配置里跑；ChainSolution 把
   多个 `produces:"objects"` 的 stage 在最终聚合处取并集，两个检测器互不依赖。
 
-**强类型 C ABI**：`AlgResult` 直接给两个有类型的数组，应用不需要查 attribute 字符串：
+**强类型 C ABI**：`AlgResult` 直接给有类型的数组，应用不需要查 attribute 字符串：
 
 ```c
 typedef struct AlgResult_ {
@@ -20,6 +24,10 @@ typedef struct AlgResult_ {
     AlgTrafficLight*    traffic_lights;     // color: TLC_RED/YELLOW/GREEN/OFF
     int                 speed_limit_count;
     AlgSpeedLimit*      speed_limits;       // value: SLV_10..SLV_120（value*10 = km/h）
+    int                 sign_count;
+    AlgSign*            signs;              // type: SIGN_NO_PARKING / SIGN_PARE
+    int                 license_plate_count;
+    AlgLicensePlate*    license_plates;     // text + box.score（det×rec 联合置信度）
 } AlgResult;
 ```
 
@@ -39,7 +47,8 @@ include/                       公共 C ABI（alg_types.h, alg_interface.h）
 resources/
   traffic_light.json           红绿灯检测：单阶段 YOLOX
   speed_limit.json             限速牌：检测 + OCR 三头识别（带 classify_into 过滤）
-  all.json                     上述两条 solution 合并的并行版本（一份配置跑两件事）
+  license_plate.json           车牌（SVP ACL）：RTMDet 检测 + LPRNet CTC 识别
+  all.json                     上述 solution 合并的并行版本（一份配置跑多件事）
 
 src/
   interface/                   C API → ChainSolution 胶水层
@@ -62,6 +71,8 @@ src/
     yolov5_anchor_det/         单尺度 anchor + sigmoid 解码（SpeedSignNet）
     ocr_classifier/            三头逐位数字 OCR + class_names 驱动解码 + 置信度过滤（12 类）
     dualhead_classifier/       旧双头数字识别（9 类，保留向后兼容）
+    rtmdet_det/                RTMDet 多尺度单类检测（车牌，cls/bbox × stride 8/16/32）
+    lprnet_rec/                LPRNet CTC 车牌识别（32 时间步 × 37 类字符）
 
   backend/                     每种芯片一个目录
     xmm/                       XMM（xmedia_cl + MMZ）
@@ -161,6 +172,54 @@ AlgDestroy(h);
 > `head_indices`。MNN 仍可用三头多输出模型，此时再加
 > `"head_names":["logits_h","logits_t","logits_u"]`（按张量名匹配，覆盖 MNN 输出乱序）。
 
+### 车牌（检测 + LPRNet CTC 识别）
+
+由 `haisi_demo/src/license` 板端 demo 整合而来，二阶段 `classify_into` 链路与限速牌一致，
+识别置信度乘到检测框上，低于阈值（`conf_threshold`，0=不过滤）的框被 drop：
+
+```json
+{
+  "solution": { "type": "chain", "stages": [
+    { "name": "detector",   "model": "det_cfg", "input": "image",
+      "produces": "objects" },
+    { "name": "recognizer", "model": "rec_cfg", "input": "objects_from:detector",
+      "crop":  { "expand_ratio": 1.0, "square": false },
+      "produces": "classify_into:detector" }
+  ]},
+  "models": {
+    "det_cfg": {
+      "model_path": "../resources/model/svp_acl/license_detection_10m.om",
+      "preprocess":  { "input_size": [640, 448], "color": "RGB",
+                       "resize": "letterbox_tl_fit", "pad_value": 114 },
+      "postprocess": { "type": "rtmdet_det", "num_classes": 1, "bbox_channels": 4,
+                       "strides": [8, 16, 32], "input_size": [640, 448],
+                       "conf_threshold": 0.25, "nms_threshold": 0.45,
+                       "min_bbox_size": 4.0, "max_det": 5 }
+    },
+    "rec_cfg": {
+      "model_path": "../resources/model/svp_acl/license_recognizer.om",
+      "preprocess":  { "input_size": [256, 64], "color": "RGB",
+                       "resize": "letterbox_center", "pad_value": 0 },
+      "postprocess": { "type": "lprnet_rec", "category": "license_plate",
+                       "characters": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                       "blank_index": 36, "timesteps": 32, "channels": 37 }
+    }
+  }
+}
+```
+
+> **模型契约**（与 `license_bralizera` demo 严格对齐）：
+> - **Stage1** `license_detection_10m.om`：RTMDet tiny 单类（精简参数量 + INT8 量化，
+>   由 `export.sh` 经 ATC 校准导出），输入 `1x3x448x640` RGB_PLANAR，
+>   左上角 min-scale letterbox（`resize:"letterbox_tl_fit"`）、pad 114；UINT8 输入直写
+>   0..255，归一化（mean/std）由 AIPP 烘进模型；输出 6 个 head（cls/bbox × stride 8/16/32），
+>   后处理 sigmoid → 阈值 → 单类 NMS(IoU 0.45) → 按 PreprocessState 反映射回原图。
+> - **Stage2** `license_recognizer.om`：LPRNet，输入 `1x3x64x256` RGB_PLANAR，紧致 crop +
+>   居中 letterbox（pad 0），AIPP 做 /255；输出 `1x32x37`（32 时间步 × 37 类：
+>   `'0'-'9','A'-'Z'` 36 字符 + blank），CTC greedy 解码，识别分数为被保留字符概率之积。
+> - `letterbox_tl_fit` 是**新增**的 resize 模式：min-scale 保持宽高比 + 贴左上角（右下 pad），
+>   与 demo 的 `_resize_pad_top_left` 一致；对竖图也不会像 `letterbox_tl` 那样溢出高度。
+
 ### Stage 语义新增
 
 | produces 取值                    | 行为                                                   |
@@ -185,6 +244,8 @@ AlgDestroy(h);
 ./test_runner resources/traffic_light.json /data/test.jpg out/
 ./test_runner resources/speed_limit.json   /data/test.jpg out/
 ./test_runner resources/all.json           /data/test.jpg out/      # 两件事一起跑
+./test_runner resources/config/svp_acl/license_plate.json /data/plate.jpg out/
+./test_runner resources/config/svp_acl/all.json            /data/test.jpg out/  # 限速牌 + 车牌一起跑
 ```
 
 依赖：jsoncpp 静态库（路径通过 `-DJSONCPP_ROOT=...` 配置，默认
@@ -224,6 +285,6 @@ cd build_linux_aarch64_svp_acl
 
 ## 如何加新模型 / 换芯片
 
-参考 `ARCHITECTURE.md`，三轴正交。本分支聚焦红绿灯 + 限速牌两个落地模型，C ABI 仅
+参考 `ARCHITECTURE.md`，三轴正交。本分支聚焦红绿灯 + 限速牌 + 车牌三个落地模型，C ABI 仅
 保留 box + attributes（不含 keypoints / embedding）；如需关键点 / embedding 等其它
 输出形态，回到 master 分支或基于 master 拉新分支扩展。

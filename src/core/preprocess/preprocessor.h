@@ -21,6 +21,8 @@ enum class ColorOrder : int { kBGR, kRGB, kGray };
 enum class ResizeMode : int {
     kStretch,       /* resize directly to (W, H), aspect-ratio distortion */
     kLetterboxTL,   /* keep aspect ratio, pad to top-left (matches sgk-sdk FCOS) */
+    kLetterboxTLFit,/* keep aspect ratio, fit both dims (min-scale), pad top-left
+                       —— 车牌 RTMDet 640x448 demo 的 _resize_pad_top_left */
     kLetterboxCenter
 };
 

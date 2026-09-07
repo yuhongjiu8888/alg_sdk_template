@@ -1,0 +1,64 @@
+{
+  "solution": {
+    "type": "chain",
+    "stages": [
+      {
+        "name": "detector",
+        "model": "det_cfg",
+        "input": "image",
+        "produces": "objects"
+      },
+      {
+        "name": "recognizer",
+        "model": "rec_cfg",
+        "input": "objects_from:detector",
+        "crop": {
+          "expand_ratio": 1.0,
+          "square": false
+        },
+        "produces": "classify_into:detector"
+      }
+    ]
+  },
+  "models": {
+    "det_cfg": {
+      "model_path": "../resources/model/svp_acl/license_detection_10m.om",
+      "preprocess": {
+        "input_size": [640, 448],
+        "color": "RGB",
+        "resize": "letterbox_tl_fit",
+        "layout": "NCHW",
+        "pad_value": 114
+      },
+      "postprocess": {
+        "type": "rtmdet_det",
+        "num_classes": 1,
+        "bbox_channels": 4,
+        "strides": [8, 16, 32],
+        "input_size": [640, 448],
+        "conf_threshold": 0.25,
+        "nms_threshold": 0.45,
+        "min_bbox_size": 4.0,
+        "max_det": 5
+      }
+    },
+    "rec_cfg": {
+      "model_path": "../resources/model/svp_acl/license_recognizer.om",
+      "preprocess": {
+        "input_size": [256, 64],
+        "color": "RGB",
+        "resize": "letterbox_center",
+        "layout": "NCHW",
+        "pad_value": 0
+      },
+      "postprocess": {
+        "type": "lprnet_rec",
+        "category": "license_plate",
+        "characters": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "blank_index": 36,
+        "timesteps": 32,
+        "channels": 37
+      }
+    }
+  }
+}

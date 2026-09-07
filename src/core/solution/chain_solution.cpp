@@ -172,12 +172,21 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
     auto& out_bucket = stage_produces_[stage_idx].objects;
     /* 注意：本 stage 自己的 bucket 还要复用；只在产出 "objects" 类型时 reset。 */
 
+    /* 按源格式选裁剪路径：NV12/NV21 直接抠原图小区域（省全帧解码）；其余走已解码的
+     * BGR Mat（BGR 零拷贝 / RGB/GRAY 在解码时已转 BGR）。 */
+    const bool nv_source = (image.format == ALG_PIX_NV12 || image.format == ALG_PIX_NV21);
+    auto Crop = [&](const AlgBox& box, const CropConfig& cfg,
+                    cv::Mat* holder, AlgImage* out, CropTransform* xf) {
+        return nv_source ? CropFromNV12(image, box, cfg, holder, out, xf)
+                         : CropFromDecoded(decoded_bgr, box, cfg, holder, out, xf);
+    };
+
     if (rs.cfg.input_kind == StageInputKind::kImage) {
         ResetStageObjects(out_bucket);
 
         if (rs.cfg.roi.enabled) {
             /* 固定 ROI 裁剪：在原图上裁出指定区域再送模型。 */
-            if (decoded_bgr.empty()) {
+            if (!nv_source && decoded_bgr.empty()) {
                 ALG_LOGE("ChainSolution: stage '%s' needs roi but decoded_bgr is empty",
                          rs.cfg.name.c_str());
                 return ALG_E_PREPROCESS;
@@ -191,8 +200,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
             roi_box.xmax = rs.cfg.roi.x + rs.cfg.roi.width;
             roi_box.ymax = rs.cfg.roi.y + rs.cfg.roi.height;
             CropConfig crop_cfg;  /* expand_ratio=1, square=false：不做扩展 */
-            if (!CropFromDecoded(decoded_bgr, roi_box, crop_cfg,
-                                 &roi_holder, &cropped, &xf)) {
+            if (!Crop(roi_box, crop_cfg, &roi_holder, &cropped, &xf)) {
                 ALG_LOGE("ChainSolution: stage '%s' roi crop failed", rs.cfg.name.c_str());
                 return ALG_E_PREPROCESS;
             }
@@ -236,7 +244,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
             }
         }
 
-        if (!CropFromDecoded(decoded_bgr, src.box, rs.cfg.crop, &roi_holder, &cropped, &xf)) {
+        if (!Crop(src.box, rs.cfg.crop, &roi_holder, &cropped, &xf)) {
             /* 框完全在画外或裁出空 ROI；classify_into 视为分类失败 → drop。 */
             if (rs.cfg.output_kind == StageOutputKind::kClassifyInto) src.drop = true;
             continue;
@@ -279,8 +287,13 @@ Status ChainSolution::Run(const AlgImage& image, std::vector<Object>* out_object
     if (!out_objects) return ALG_E_INVALID_ARG;
 
     /* 整帧只解码一次。把 decoded_bgr_ 作为成员，OpenCV 会自动复用底层 buffer：
-     * 同分辨率同格式输入时，cv::cvtColor / 头部构造都不会再分配新内存。 */
-    if (needs_decoded_bgr_) {
+     * 同分辨率同格式输入时，cv::cvtColor / 头部构造都不会再分配新内存。
+     *
+     * 性能关键：NV12/NV21 输入**不**做全帧 YUV→BGR（1080p 一次 ~25ms）——两个主
+     * 检测器走 preprocessor 的 NV12 快速路径，子模型的 ROI 裁剪直接走 CropFromNV12
+     * 从原图抠小区域转色，都不需要整帧 BGR。其余格式保持原样（BGR 为零拷贝包装）。 */
+    const bool nv_source = (image.format == ALG_PIX_NV12 || image.format == ALG_PIX_NV21);
+    if (needs_decoded_bgr_ && !nv_source) {
         DecodeSourceToBgrInto(image, &decoded_bgr_);
         if (decoded_bgr_.empty()) {
             ALG_LOGE("ChainSolution: decode source failed");
