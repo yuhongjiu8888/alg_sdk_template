@@ -17,6 +17,7 @@ option(LINUX_X86_64  "Build for x86_64 Linux (host, local MNN test)" OFF)
 #   cmake .. -DALG_LOG_INFO=ON    # 每帧耗时等 info
 option(ALG_LOG_INFO  "Enable ALG_LOGI per-frame info logs"        OFF)
 option(ALG_LOG_DEBUG "Enable ALG_LOGD board debug diagnostics"    OFF)
+option(ALG_SVP_DYNAMIC_AIPP "Enable HiSilicon dynamic AIPP integration" ON)
 if(ALG_LOG_INFO)
     add_compile_definitions(ALG_ENABLE_LOG_INFO)
     message(STATUS "ALG_LOGI (info) enabled")
@@ -25,7 +26,6 @@ if(ALG_LOG_DEBUG)
     add_compile_definitions(ALG_ENABLE_LOG_DEBUG)
     message(STATUS "ALG_LOGD (debug diag) enabled")
 endif()
-
 # 异步落盘日志模块（借鉴 spdlog：异步 + 多 sink + 滚动文件）。默认关闭，
 # 不影响现有逐字节行为。打开后 ALG_LOGE/W/I/D 改走 core/log/alg_log。
 #   cmake .. -DALG_LOG_FILE=ON \
@@ -57,6 +57,9 @@ if(NOT DEFINED ALG_BACKEND)
         "Inference backend: xmm | svp_acl | rk | mnn")
 endif()
 message(STATUS "ALG_BACKEND = ${ALG_BACKEND}")
+if(ALG_BACKEND STREQUAL "svp_acl" AND ALG_SVP_DYNAMIC_AIPP)
+    add_compile_definitions(ALG_SVP_DYNAMIC_AIPP=1)
+endif()
 
 if(LINUX_AARCH64)
     message(STATUS "Loading Linux aarch64 configuration")

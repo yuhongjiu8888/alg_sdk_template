@@ -64,12 +64,19 @@ Status LetterboxPreprocessor::DecodeAndResize(const AlgImage& image, int new_w, 
             if (res_h < 2) res_h = 2;
             if (res_w < 2) res_w = 2;
 
-            cv::Mat y(src_h, src_w, CV_8UC1, const_cast<uint8_t*>(src));
-            cv::resize(y, y_resized_, cv::Size(res_w, res_h), 0, 0, cv::INTER_LINEAR);
-
+            const int src_stride = PixelStride(image, 1);
+            cv::Mat y(src_h, src_w, CV_8UC1, const_cast<uint8_t*>(src), src_stride);
             cv::Mat uv(src_h / 2, src_w / 2, CV_8UC2,
-                       const_cast<uint8_t*>(src + src_h * src_w));
-            cv::resize(uv, uv_resized_, cv::Size(res_w / 2, res_h / 2), 0, 0, cv::INTER_LINEAR);
+                       const_cast<uint8_t*>(src + static_cast<size_t>(src_h) * src_stride),
+                       src_stride);
+            if (res_w == src_w && res_h == src_h) {
+                y_resized_ = y;
+                uv_resized_ = uv;
+            } else {
+                cv::resize(y, y_resized_, cv::Size(res_w, res_h), 0, 0, cv::INTER_LINEAR);
+                cv::resize(uv, uv_resized_, cv::Size(res_w / 2, res_h / 2),
+                           0, 0, cv::INTER_LINEAR);
+            }
 
             int code;
             if (image.format == ALG_PIX_NV21) {

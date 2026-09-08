@@ -3,9 +3,8 @@
  * @brief 通用裁剪工具。
  *
  * 性能契约（重要）：
- * - 原图只解码一次：调用方先用 DecodeSourceToBgrInto() 把整帧 AlgImage 解到一份
- *   cv::Mat（共享或拷贝由解码路径决定），然后**多次**调用 CropFromDecoded()，
- *   每次只做 ROI 视图（零拷贝）。
+ * - BGR/RGB/GRAY 可先解码一次，再通过 CropFromDecoded() 建立 ROI 视图。
+ * - NV12/NV21 通过 CropFromNV12() 只转换小块 ROI，避免整帧 YUV 转色。
  * - 输出 AlgImage 携带正确 stride，下游 preprocessor 必须按 stride 读取。
  */
 

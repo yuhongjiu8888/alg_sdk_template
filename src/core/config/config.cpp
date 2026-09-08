@@ -33,6 +33,22 @@ Layout ParseLayout(const std::string& s) {
     return Layout::kNCHW;
 }
 
+PreprocessEngine ParseEngine(const std::string& s) {
+    if (s == "opencv") return PreprocessEngine::kOpenCV;
+    if (s == "aipp") return PreprocessEngine::kAipp;
+    return PreprocessEngine::kAuto;
+}
+
+InputFormatPolicy ParseInputFormat(const std::string& s) {
+    if (s == "NV12" || s == "nv12") return InputFormatPolicy::kNV12;
+    if (s == "NV21" || s == "nv21") return InputFormatPolicy::kNV21;
+    return InputFormatPolicy::kAuto;
+}
+
+AlgPixelFormat ParseDefaultInputFormat(const std::string& s) {
+    return (s == "NV12" || s == "nv12") ? ALG_PIX_NV12 : ALG_PIX_NV21;
+}
+
 bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* err) {
     if (!v.isObject()) { SetErr(err, "preprocess must be an object"); return false; }
 
@@ -65,8 +81,100 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
         for (Json::ArrayIndex i = 0; i < v["std"].size() && i < 3; ++i)
             cfg->std[i] = v["std"][i].asFloat();
     }
-    cfg->scale     = v.get("scale", 1.0f).asFloat();
-    cfg->pad_value = static_cast<uint8_t>(v.get("pad_value", 0).asInt());
+    cfg->scale = v.get("scale", 1.0f).asFloat();
+    const int pad_value = v.get("pad_value", 0).asInt();
+    if (pad_value < 0 || pad_value > 255) {
+        SetErr(err, "preprocess.pad_value must be in [0, 255]");
+        return false;
+    }
+    cfg->pad_value = static_cast<uint8_t>(pad_value);
+    if (cfg->std[0] == 0.0f || cfg->std[1] == 0.0f || cfg->std[2] == 0.0f) {
+        SetErr(err, "preprocess.std values must be non-zero");
+        return false;
+    }
+    const std::string engine = v.get("engine", "auto").asString();
+    if (engine != "auto" && engine != "opencv" && engine != "aipp") {
+        SetErr(err, "preprocess.engine must be auto, opencv or aipp");
+        return false;
+    }
+    cfg->engine = ParseEngine(engine);
+    const std::string input_format = v.get("input_format", "auto").asString();
+    if (input_format != "auto" && input_format != "NV12" && input_format != "nv12" &&
+        input_format != "NV21" && input_format != "nv21") {
+        SetErr(err, "preprocess.input_format must be auto, NV12 or NV21");
+        return false;
+    }
+    cfg->input_format = ParseInputFormat(input_format);
+    const std::string default_format =
+        v.get("default_input_format", "NV21").asString();
+    if (default_format != "NV12" && default_format != "nv12" &&
+        default_format != "NV21" && default_format != "nv21") {
+        SetErr(err, "preprocess.default_input_format must be NV12 or NV21");
+        return false;
+    }
+    cfg->default_input_format = ParseDefaultInputFormat(
+        default_format);
+    cfg->source_id = v.get("source_id", 0).asInt();
+    if (cfg->source_id < 0) {
+        SetErr(err, "preprocess.source_id must be non-negative");
+        return false;
+    }
+    if (v.isMember("max_input_size")) {
+        const Json::Value& max_sz = v["max_input_size"];
+        if (!max_sz.isArray() || max_sz.size() != 2 ||
+            max_sz[0].asInt() <= 0 || max_sz[1].asInt() <= 0) {
+            SetErr(err, "preprocess.max_input_size must be [w, h]");
+            return false;
+        }
+        cfg->max_input_width = max_sz[0].asInt();
+        cfg->max_input_height = max_sz[1].asInt();
+        if (cfg->max_input_width > 4096 || cfg->max_input_height > 4096) {
+            SetErr(err, "preprocess.max_input_size exceeds CV610 AIPP limit 4096");
+            return false;
+        }
+    }
+    if (v.isMember("aipp_output_size")) {
+        const Json::Value& aipp_sz = v["aipp_output_size"];
+        if (!aipp_sz.isArray() || aipp_sz.size() != 2 ||
+            aipp_sz[0].asInt() <= 0 || aipp_sz[1].asInt() <= 0) {
+            SetErr(err, "preprocess.aipp_output_size must be [w, h]");
+            return false;
+        }
+        cfg->aipp_output_width = aipp_sz[0].asInt();
+        cfg->aipp_output_height = aipp_sz[1].asInt();
+    }
+    if (v.isMember("aipp_graph_padding")) {
+        const Json::Value& pad = v["aipp_graph_padding"];
+        if (!pad.isArray() || pad.size() != 4) {
+            SetErr(err, "preprocess.aipp_graph_padding must be [left, top, right, bottom]");
+            return false;
+        }
+        cfg->graph_pad_left = pad[0].asInt();
+        cfg->graph_pad_top = pad[1].asInt();
+        cfg->graph_pad_right = pad[2].asInt();
+        cfg->graph_pad_bottom = pad[3].asInt();
+        if (cfg->graph_pad_left < 0 || cfg->graph_pad_top < 0 ||
+            cfg->graph_pad_right < 0 || cfg->graph_pad_bottom < 0) {
+            SetErr(err, "preprocess.aipp_graph_padding values must be non-negative");
+            return false;
+        }
+    }
+    const bool custom_aipp_output = cfg->aipp_output_width > 0;
+    const bool graph_padding = cfg->graph_pad_left || cfg->graph_pad_top ||
+                               cfg->graph_pad_right || cfg->graph_pad_bottom;
+    if (custom_aipp_output != graph_padding ||
+        (custom_aipp_output &&
+         (cfg->aipp_output_width + cfg->graph_pad_left + cfg->graph_pad_right !=
+              cfg->net_width ||
+          cfg->aipp_output_height + cfg->graph_pad_top + cfg->graph_pad_bottom !=
+              cfg->net_height))) {
+        SetErr(err, "aipp_output_size plus aipp_graph_padding must equal model input_size");
+        return false;
+    }
+    if (custom_aipp_output && cfg->resize == ResizeMode::kStretch) {
+        SetErr(err, "aipp_graph_padding cannot be used with stretch resize");
+        return false;
+    }
     return true;
 }
 

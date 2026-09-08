@@ -102,7 +102,7 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 |------|----------|
 | BGR / RGB | 8 位交错三通道数据，`stride` 为每行字节数，0 表示 `width*3` |
 | GRAY | 8 位单通道数据，`stride=0` 表示 `width` |
-| NV12 / NV21 | 宽高为偶数，Y 平面后紧接色度平面，无额外行或平面对齐 |
+| NV12 / NV21 | 宽高为偶数，Y/UV 两平面共用 stride；色度平面从 `data + stride*height` 开始 |
 | `data_len` | 填写实际可用字节数；应用负责缓冲大小和边界校验 |
 | 检测坐标 | 对应传入原图，SDK 负责恢复配置 ROI 和裁剪产生的偏移 |
 | 限速值 | `SLV_10`～`SLV_120` 的枚举值乘 10 得到 km/h |
@@ -110,9 +110,11 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 | 禁停分数 | 检测分乘门控概率 |
 | 限速分数 | 检测分乘 OCR 分类分 |
 | 车牌分数 | 检测分乘 `rec_score`；有效车牌还需检查文本和业务格式 |
-| `frame_id` | 动态库内共享的成功调用计数，不是采集帧号或跟踪标识 |
+| `frame_id` | `AlgRun` 为动态库内共享计数；`AlgRunNative` 为输入 PTS |
 
 图片文件应先解码为像素再传入。JSON 的 `preprocess.color` 定义模型输入颜色顺序，`AlgImage.format` 定义源图像格式，两者不要求相同。
+
+海思 VPSS 实时流建议使用 `AlgRunNative`：应用只需传入 `source_id=0` 的原分辨率帧，检测模型的缩放由动态 AIPP 完成，不需要额外创建模型尺寸的 VPSS 通道。默认使用 NV21，也可传 NV12；两种格式均允许常见的 VPSS 行对齐 stride。
 
 ## 5. 配置与执行关系
 

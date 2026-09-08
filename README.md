@@ -60,6 +60,8 @@ backup/                   历史接口归档
 |------|------|
 | `AlgCreate` | 读取配置、加载模型并创建实例 |
 | `AlgRun` | 同步处理一帧图像并返回业务结果数组 |
+| `AlgRunNative` | 同步处理 VPSS 原分辨率 NV12/NV21 帧 |
+| `AlgGetInputRequirements` | 查询输入格式和是否使用原始尺寸 |
 | `AlgFreeResult` | 释放结果数组，清空指针和数量 |
 | `AlgDestroy` | 销毁实例及其内部资源 |
 | `AlgVersion` | 返回 SDK 版本和后端标识 |
@@ -103,6 +105,7 @@ backup/                   历史接口归档
 海思构建沿用脚本中的 `aarch64` 入口名称，实际采用 ARM 32 位 `arm-linux-musleabi` 工具链。平台依赖见 [板端构建配置](cmake/CMakeLists_linux_aarch64.cmake)、[本地构建配置](cmake/CMakeLists_linux_x86_64.cmake) 和 [海思工具链](toolchain/hisi_v610_linux.toolchain.cmake)。JSONCPP 源码随工程编入。
 
 海思环境的工具链及依赖路径可通过 CMake 参数 `HISI_TOOLCHAIN_ROOT`、`SVP_ACL_ROOT`、`SVP_ACL_LIB_DIR`、`HISI_SECUREC_LIB_DIR` 和 `SVP_OPENCV_ROOT` 配置。
+动态 AIPP 默认通过 `ALG_SVP_DYNAMIC_AIPP=ON` 编译；需要兼容不含动态 AIPP API 的旧版 ACL 头文件时可显式关闭。
 
 在匹配的目标设备或本地运行环境中，从仓库一级构建目录启动验证程序：
 
@@ -118,7 +121,9 @@ cd build_linux_aarch64_svp_acl
 
 ## 接入与交付约束
 
-- 图像格式支持 BGR、RGB、GRAY、NV12 和 NV21。NV12 / NV21 要求紧凑连续布局和偶数宽高，不支持额外的行或平面对齐。
+- 图像格式支持 BGR、RGB、GRAY、NV12 和 NV21。NV12 / NV21 要求偶数宽高；两平面共用 `stride`，色度平面从 `data + stride * height` 开始。默认 VPSS 格式为 NV21，同时兼容 NV12。
+- 海思通过 `AlgRunNative` 传入 `source_id=0` 的原分辨率 VPSS 帧，不要求为各模型增加 VPSS 缩放通道。
+- 带动态 AIPP 的检测 OM 在 `engine=auto` 时完成 NV12/NV21 转色和缩放；值为 114 的 letterbox 补边固化在模型图中。普通 OM 和旧 `AlgRun` 保持 OpenCV 路径。
 - 网络前处理输出 NCHW，支持 UINT8 和 FLOAT32 输入类型，输入尺寸须与模型一致。
 - SDK 调用由应用串行调度；共享结果和图像缓冲的访问需要同步。
 - 车牌空文本仍可能返回结果，应用需结合非空文本和业务格式判断有效性。

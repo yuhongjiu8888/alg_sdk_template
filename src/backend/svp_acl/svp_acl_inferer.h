@@ -26,6 +26,11 @@ class SvpAclInferer : public IInferer {
 
     Status Load(const std::string& model_path) override;
     Status Forward() override;
+    bool SupportsDynamicAipp() const override;
+    Status PrepareDynamicAipp(const AlgImage& image,
+                              const PreprocessConfig& cfg,
+                              bool geometry_prepared,
+                              PreprocessState& state) override;
 
   private:
     Status BuildViews();
@@ -42,6 +47,11 @@ class SvpAclInferer : public IInferer {
     svp_acl_mdl_dataset*  output_dataset_ = nullptr;
     size_t                image_input_index_ = static_cast<size_t>(-1);
     std::vector<size_t>   output_raw_indices_;
+#ifdef ALG_SVP_DYNAMIC_AIPP
+    svp_acl_mdl_aipp*     dynamic_aipp_ = nullptr;
+    size_t                dynamic_aipp_input_index_ = static_cast<size_t>(-1);
+    size_t                image_input_capacity_ = 0;
+#endif
 };
 
 }  // namespace alg

@@ -23,6 +23,7 @@
 
 #include "core/status.h"
 #include "core/tensor.h"
+#include "core/preprocess/preprocessor.h"
 
 namespace alg {
 
@@ -35,6 +36,15 @@ class IInferer {
 
     /** Run one forward pass against the currently-populated input views. */
     virtual Status Forward() = 0;
+
+    /** 可选的芯片动态图像前处理；默认后端不支持。 */
+    virtual bool SupportsDynamicAipp() const { return false; }
+    virtual Status PrepareDynamicAipp(const AlgImage&,
+                                      const PreprocessConfig&,
+                                      bool,
+                                      PreprocessState&) {
+        return ALG_E_BACKEND;
+    }
 
     int NumInputs() const { return static_cast<int>(input_views_.size()); }
     int NumOutputs() const { return static_cast<int>(output_views_.size()); }

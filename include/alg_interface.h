@@ -30,7 +30,22 @@ ALG_API AlgStatus AlgDestroy(AlgHandle handle);
 ALG_API AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 
 /**
- * 释放 SDK 在 result 内部分配的内存：speed_limits[] / signs[] 两个数组。
+ * 使用上层 VPSS 原始分辨率帧执行完整流水线。当前配置只需 source_id=0；
+ * 接口保留帧集合形式以兼容扩展。支持 NV12/NV21，默认部署格式为 NV21。
+ */
+ALG_API AlgStatus AlgRunNative(AlgHandle handle, const AlgNativeFrameSet* frames,
+                               AlgResult* result);
+
+/**
+ * 查询 AlgRunNative 所需的 VPSS 输入。*count 传入数组容量并返回实际数量；
+ * requirements 为 NULL 时只查询数量。当前配置返回一路原始尺寸输入。
+ */
+ALG_API AlgStatus AlgGetInputRequirements(AlgHandle handle,
+                                          AlgInputRequirement* requirements,
+                                          int* count);
+
+/**
+ * 释放 SDK 在 result 内部分配的 speed_limits[]、signs[] 和 license_plates[]。
  * 对零值 result 调用安全。
  */
 ALG_API void AlgFreeResult(AlgResult* result);

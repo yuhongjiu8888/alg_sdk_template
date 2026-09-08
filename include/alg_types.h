@@ -70,6 +70,41 @@ typedef struct AlgImage_ {
     const void*    data;       /* 像素数据缓冲区 */
 } AlgImage;
 
+/* 一条由上层 VPSS 管理的图像输入。image.data 必须是 CPU 可访问的映射地址；
+ * NV12/NV21 的 UV/VU 平面从 data + stride * height 开始，两平面使用同一 stride。
+ * source_id 与 models.<name>.preprocess.source_id 对应；当前部署使用 0。 */
+typedef struct AlgNativeFrameBinding_ {
+    int       source_id;
+    long long pts;
+    AlgImage  image;
+    const void* video_frame_info; /* 可选的海思原生帧句柄；当前复制路径可填 NULL */
+} AlgNativeFrameBinding;
+
+/* 同一逻辑帧的 VPSS 输入集合。当前只需一条原始分辨率输入。调用期间帧内存由调用方持有。 */
+typedef struct AlgNativeFrameSet_ {
+    int                          frame_count;
+    const AlgNativeFrameBinding* frames;
+} AlgNativeFrameSet;
+
+typedef enum AlgResizeMode_ {
+    ALG_RESIZE_STRETCH = 0,
+    ALG_RESIZE_LETTERBOX_TL = 1,
+    ALG_RESIZE_LETTERBOX_TL_FIT = 2,
+    ALG_RESIZE_LETTERBOX_CENTER = 3,
+} AlgResizeMode;
+
+/* 上层提供 VPSS 帧时使用的输入要求。width/height 为 0 表示原始尺寸。 */
+typedef struct AlgInputRequirement_ {
+    int            source_id;
+    int            width;
+    int            height;
+    AlgPixelFormat default_format;
+    int            accepts_nv12;
+    int            accepts_nv21;
+    AlgResizeMode  resize;
+    int            pad_value;
+} AlgInputRequirement;
+
 /* 原图坐标系下的 2D 检测框。
  * score 含义：
  *   - 限速牌：联合置信度 = 检测置信度 × OCR 分类置信度

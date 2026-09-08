@@ -85,8 +85,19 @@ PARE 等由检测阶段确定的类别采用透传方式，跳过第二阶段 OC
 | `std` | `[f, f, f]` | 否 | `[1, 1, 1]` | 归一化标准差（逐通道） |
 | `scale` | float | 否 | `1.0` | 全局缩放系数 |
 | `pad_value` | int | 否 | `0` | letterbox 填充值 (0-255) |
+| `engine` | string | 否 | `"auto"` | `"auto"` / `"aipp"` / `"opencv"`；动态 AIPP OM 在海思原生帧路径使用 AIPP |
+| `source_id` | int | 否 | `0` | `AlgRunNative` 的 VPSS 输入编号；当前部署统一使用原始帧 0 |
+| `input_format` | string | 否 | `"auto"` | `"auto"` / `"NV12"` / `"NV21"`；auto 接受两种格式 |
+| `default_input_format` | string | 否 | `"NV21"` | 上层未提供格式元数据时的约定；默认 NV21，NV12 兼容能力始终保留 |
+| `max_input_size` | `[w, h]` | 否 | `[1920, 1080]` | 动态 AIPP OM 允许的最大源图尺寸 |
+| `aipp_output_size` | `[w, h]` | 否 | 未设置 | 动态 AIPP 缩放后的有效图尺寸；使用图内补边时必填 |
+| `aipp_graph_padding` | `[l,t,r,b]` | 否 | 未设置 | OM 图首常量 Pad 的四边宽度，与 AIPP 输出相加后必须等于 `input_size` |
 
 FLOAT32 输入的有效图像区域采用 `y = (x - mean) * (scale / std)`，`std` 不得为 0；填充区域直接写入 `pad_value`。UINT8 输入要求 `mean=0`、`std=1`、`scale=1`，归一化由模型按其约定完成。输入宽高须与模型实际尺寸一致。
+
+海思配置使用 `source_id=0` 的原分辨率帧。动态 AIPP 完成 NV12/NV21 转色、缩放和归一化；CV610 AIPP 无法生成值为 114 的大范围 padding，因此 `aipp_graph_padding` 对应的常量 Pad 必须在转换前加入模型图。运行时会按实际原图尺寸复算有效区和四边补边，不匹配时返回前处理错误。
+
+ATC 动态 AIPP 模板位于 [`config/svp_acl/aipp/`](config/svp_acl/aipp/)。动态 OM 应使用独立文件名；`engine=auto` 会根据模型是否带动态 AIPP 自动选择硬件或 OpenCV 路径。
 
 ### 缩放策略
 

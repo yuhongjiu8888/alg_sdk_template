@@ -1,5 +1,7 @@
 #include "core/instance/model_instance.h"
 
+#include <algorithm>
+
 #include "backend/backend_factory.h"
 #include "core/logger.h"
 #include "core/preprocess/letterbox_preprocessor.h"
@@ -34,9 +36,23 @@ Status ModelInstance::Init(const ModelInstanceConfig& cfg) {
         return ALG_E_BACKEND;
     }
 
-    pre_.reset(new LetterboxPreprocessor());
-    s = pre_->Configure(cfg.pre, inferer_->InputView(0));
-    if (s != ALG_OK) return s;
+    if (inferer_->SupportsDynamicAipp()) {
+        if (cfg.pre.engine == PreprocessEngine::kOpenCV) {
+            ALG_LOGE("[%s] dynamic-AIPP OM cannot use preprocess.engine=opencv",
+                     cfg.name.c_str());
+            return ALG_E_CONFIG;
+        }
+    } else {
+        pre_.reset(new LetterboxPreprocessor());
+        s = pre_->Configure(cfg.pre, inferer_->InputView(0));
+        if (s != ALG_OK) return s;
+
+        PreprocessConfig prepared_cfg = cfg.pre;
+        prepared_cfg.resize = ResizeMode::kStretch;
+        prepared_pre_.reset(new LetterboxPreprocessor());
+        s = prepared_pre_->Configure(prepared_cfg, inferer_->InputView(0));
+        if (s != ALG_OK) return s;
+    }
 
     post_ = PostprocessorRegistry::Instance().Create(cfg.post_type);
     if (!post_) {
@@ -55,6 +71,52 @@ Status ModelInstance::Init(const ModelInstanceConfig& cfg) {
 }
 
 Status ModelInstance::Run(const AlgImage& image, std::vector<Object>* out) {
+    return RunImpl(image, false, image.width, image.height, out);
+}
+
+Status ModelInstance::RunPrepared(const AlgImage& image,
+                                  int original_width, int original_height,
+                                  std::vector<Object>* out) {
+    return RunImpl(image, true, original_width, original_height, out);
+}
+
+namespace {
+
+void ComputeConfiguredState(const PreprocessConfig& cfg, int original_width,
+                            int original_height, PreprocessState* state) {
+    state->original_width = original_width;
+    state->original_height = original_height;
+    state->pad_left = 0;
+    state->pad_top = 0;
+    switch (cfg.resize) {
+        case ResizeMode::kStretch:
+            state->scale_ratio = 1.0f;
+            break;
+        case ResizeMode::kLetterboxTL:
+            state->scale_ratio = static_cast<float>(cfg.net_width) /
+                                 std::max(original_width, original_height);
+            break;
+        case ResizeMode::kLetterboxTLFit:
+            state->scale_ratio = std::min(static_cast<float>(cfg.net_width) / original_width,
+                                          static_cast<float>(cfg.net_height) / original_height);
+            break;
+        case ResizeMode::kLetterboxCenter: {
+            state->scale_ratio = std::min(static_cast<float>(cfg.net_width) / original_width,
+                                          static_cast<float>(cfg.net_height) / original_height);
+            const int resized_w = static_cast<int>(original_width * state->scale_ratio);
+            const int resized_h = static_cast<int>(original_height * state->scale_ratio);
+            state->pad_left = (cfg.net_width - resized_w) / 2;
+            state->pad_top = (cfg.net_height - resized_h) / 2;
+            break;
+        }
+    }
+}
+
+}  // namespace
+
+Status ModelInstance::RunImpl(const AlgImage& image, bool geometry_prepared,
+                              int original_width, int original_height,
+                              std::vector<Object>* out) {
     if (!initialized_) return ALG_E_NOT_INITIALIZED;
     if (!out) return ALG_E_INVALID_ARG;
     out->clear();
@@ -65,8 +127,23 @@ Status ModelInstance::Run(const AlgImage& image, std::vector<Object>* out) {
 #endif
 
     PreprocessState state;
-    Status s = pre_->Apply(image, inferer_->InputView(0), state);
+    Status s;
+    const bool try_aipp = cfg_.pre.engine != PreprocessEngine::kOpenCV &&
+                          inferer_->SupportsDynamicAipp();
+    if (try_aipp) {
+        s = inferer_->PrepareDynamicAipp(image, cfg_.pre, geometry_prepared, state);
+    } else if (cfg_.pre.engine == PreprocessEngine::kAipp) {
+        ALG_LOGE("[%s] preprocess.engine=aipp but dynamic AIPP is unavailable",
+                 cfg_.name.c_str());
+        return ALG_E_PREPROCESS;
+    } else {
+        if (!pre_ || !prepared_pre_) return ALG_E_PREPROCESS;
+        s = (geometry_prepared ? prepared_pre_ : pre_)
+                ->Apply(image, inferer_->InputView(0), state);
+    }
     if (s != ALG_OK) return s;
+    if (geometry_prepared)
+        ComputeConfiguredState(cfg_.pre, original_width, original_height, &state);
 #ifdef ALG_PROFILE
     gettimeofday(&t1, nullptr);
 #endif

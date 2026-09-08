@@ -13,6 +13,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <opencv2/core/mat.hpp>
@@ -29,6 +30,8 @@ class ChainSolution {
   public:
     Status Init(const SolutionConfig& cfg);
     Status Run(const AlgImage& image, std::vector<Object>* out_objects);
+    Status RunNative(const AlgNativeFrameSet& frames, std::vector<Object>* out_objects);
+    void GetInputRequirements(std::vector<AlgInputRequirement>* requirements) const;
 
   private:
     struct StageProduce {
@@ -49,8 +52,13 @@ class ChainSolution {
     cv::Mat                                      decoded_bgr_;    /* 复用：避免每帧重新分配 */
     bool                                         needs_decoded_bgr_ = false;
     bool                                         initialized_ = false;
+    std::vector<AlgInputRequirement>             input_requirements_;
 
-    Status RunStage(int stage_idx, const AlgImage& image, const cv::Mat& decoded_bgr);
+    Status RunStage(int stage_idx, const AlgImage& image, const cv::Mat& decoded_bgr,
+                    const std::unordered_map<int, const AlgImage*>* sources);
+    Status RunInternal(const AlgImage& image,
+                       const std::unordered_map<int, const AlgImage*>* sources,
+                       std::vector<Object>* out_objects);
 };
 
 }  // namespace alg

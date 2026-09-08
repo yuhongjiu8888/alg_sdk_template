@@ -100,7 +100,37 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 
 调用方负责像素指针、图像布局和缓冲长度的有效性；非法图像数据不保证以错误码返回。
 
-### 1.4 AlgFreeResult
+### 1.4 AlgRunNative
+
+```c
+AlgStatus AlgRunNative(AlgHandle handle,
+                       const AlgNativeFrameSet* frames,
+                       AlgResult* result);
+```
+
+同步处理上层应用管理的 VPSS 原分辨率帧。当前随附配置只使用 `source_id=0`；接口保留集合形式供后续扩展。输入可为 NV12 或 NV21，默认部署格式为 NV21，同时支持 NV12。
+
+```c
+AlgNativeFrameBinding inputs[] = {
+    {0, pts, original_image, original_vpss_frame},
+};
+AlgNativeFrameSet frames = {1, inputs};
+AlgStatus status = AlgRunNative(handle, &frames, &result);
+```
+
+上层负责获取、映射和释放 VPSS 帧。`image.data` 必须是调用期间 CPU 可访问的地址；`video_frame_info` 可携带原生帧指针，当前安全复制路径允许填 `NULL`，后续经媒体 SDK 验证后用于零拷贝。成功时 `result.frame_id` 使用输入 PTS。
+
+### 1.5 AlgGetInputRequirements
+
+```c
+AlgStatus AlgGetInputRequirements(AlgHandle handle,
+                                  AlgInputRequirement* requirements,
+                                  int* count);
+```
+
+查询当前配置要求上层提供的 VPSS 输入。第一次将 `requirements` 设为 `NULL` 获取数量，再按该数量分配数组并再次调用。当前配置返回 `source_id=0` 且宽高为 0，表示使用相机原始尺寸，不要求创建额外缩放通道。
+
+### 1.6 AlgFreeResult
 
 ```c
 void AlgFreeResult(AlgResult* result);
@@ -116,7 +146,7 @@ void AlgFreeResult(AlgResult* result);
 
 无返回值。传入 `NULL`、零初始化的结果或已释放的结果均安全。不得对同一结果的多个浅拷贝分别调用此函数，也不得将调用方自行管理的数组交给该函数释放。
 
-### 1.5 AlgVersion
+### 1.7 AlgVersion
 
 ```c
 const char* AlgVersion(void);
@@ -126,7 +156,7 @@ const char* AlgVersion(void);
 
 无需创建实例即可调用。字符串由 SDK 持有，调用方不可修改或释放；动态库卸载后不可继续访问该指针。
 
-### 1.6 AlgBackendName
+### 1.8 AlgBackendName
 
 ```c
 const char* AlgBackendName(void);
@@ -228,13 +258,33 @@ typedef struct AlgImage_ {
 |------|---------------|----------------|
 | BGR / RGB | `0` 表示 `S=W*3`；正数时须 `S>=W*3` | 至少 `S*H` 字节 |
 | GRAY | `0` 表示 `S=W`；正数时须 `S>=W` | 至少 `S*H` 字节 |
-| NV12 / NV21 | 仅支持紧凑布局，填 `0` 或 `W`，不用于调整行跨度 | 至少 `W*H*3/2` 字节 |
+| NV12 / NV21 | `0` 表示 `S=W`；正数为实际 Y/UV 共用行跨度 | 至少 `S*H*3/2` 字节 |
 
-`stride` 不应为负。NV12 / NV21 的宽高须为偶数，色度平面从 `data + W*H` 开始，不支持分离平面指针、行尾额外填充或平面间隔。存在对齐填充的图像须先整理为紧凑连续帧。
+`stride` 不应为负。NV12 / NV21 的宽高须为偶数，色度平面从 `data + S*H` 开始；支持 VPSS 常见的行尾对齐，不支持分离平面指针或额外平面间隔。
 
 SDK 不通过 `data_len` 完成缓冲边界检查，调用方须保证实际可用内存满足上述布局，并在 `AlgRun` 返回前保持缓冲有效。
 
-### 2.5 AlgBox：检测框
+### 2.5 AlgNativeFrameSet：VPSS 原始输入
+
+```c
+typedef struct AlgNativeFrameBinding_ {
+    int       source_id;
+    long long pts;
+    AlgImage  image;
+    const void* video_frame_info;
+} AlgNativeFrameBinding;
+
+typedef struct AlgNativeFrameSet_ {
+    int                          frame_count;
+    const AlgNativeFrameBinding* frames;
+} AlgNativeFrameSet;
+```
+
+`source_id` 不得重复或为负。所有图像必须是偶数宽高的 NV12/NV21；当前传入一条 `source_id=0` 的原始帧。调用方在 `AlgRunNative` 返回前持有数组及每个图像缓冲。
+
+`AlgInputRequirement` 描述 VPSS 输入要求：`width`、`height`、默认格式、`accepts_nv12` 和 `accepts_nv21` 等。原始输入的宽高为 0；两个格式兼容标志都为 1，推荐格式为 NV21。应用应通过 `AlgGetInputRequirements` 查询。
+
+### 2.6 AlgBox：检测框
 
 ```c
 typedef struct AlgBox_ {
@@ -258,7 +308,7 @@ typedef struct AlgBox_ {
 | PARE 停车让行牌 | 检测置信度 |
 | 车牌 | 检测置信度 × `rec_score` |
 
-### 2.6 AlgSpeedLimitValue / AlgSpeedLimit：限速牌
+### 2.7 AlgSpeedLimitValue / AlgSpeedLimit：限速牌
 
 ```c
 typedef enum AlgSpeedLimitValue_ {
@@ -290,7 +340,7 @@ typedef struct AlgSpeedLimit_ {
 
 `SLV_INVALID` 表示无效限速值，不应作为有效限速结果使用。
 
-### 2.7 AlgSignType / AlgSign：禁令及停车牌
+### 2.8 AlgSignType / AlgSign：禁令及停车牌
 
 ```c
 typedef enum AlgSignType_ {
@@ -311,9 +361,9 @@ typedef struct AlgSign_ {
 | `SIGN_NO_PARKING` | 禁止停车牌 |
 | `SIGN_PARE` | PARE 停车让行牌，红色八边形 |
 
-`box` 为原图检测框及置信度，`type` 表示牌种。不同牌种的分数含义见 2.5。
+`box` 为原图检测框及置信度，`type` 表示牌种。不同牌种的分数含义见 2.6。
 
-### 2.8 AlgLicensePlate：车牌
+### 2.9 AlgLicensePlate：车牌
 
 ```c
 typedef struct AlgLicensePlate_ {
@@ -331,7 +381,7 @@ typedef struct AlgLicensePlate_ {
 
 车牌文本使用数字和大写英文字母，不含分隔符，例如 `ABC1D23`。未识别到字符时，`text` 可为空字符串，`rec_score` 保持初始值 `1.0`；调用方应同时检查 `text[0] != '\0'` 和业务要求的文本格式。
 
-### 2.9 AlgResult：单帧结果
+### 2.10 AlgResult：单帧结果
 
 ```c
 typedef struct AlgResult_ {
@@ -350,7 +400,7 @@ typedef struct AlgResult_ {
 
 | 字段 | 说明 |
 |------|------|
-| `frame_id` | 成功处理的帧序号，从 0 开始 |
+| `frame_id` | `AlgRun` 使用成功调用序号；`AlgRunNative` 使用输入 PTS |
 | `speed_limit_count` | 限速牌结果数量 |
 | `speed_limits` | 限速牌数组，元素类型为 `AlgSpeedLimit` |
 | `sign_count` | 禁令 / 停车牌结果数量 |
@@ -360,6 +410,6 @@ typedef struct AlgResult_ {
 
 每个数组按对应数量遍历；未返回该类结果时，数量为 0、指针为 `NULL`。数组索引不表示跨帧跟踪 ID。
 
-`frame_id` 由同一 SDK 动态库的所有句柄共享，每次 `AlgRun` 成功后递增，包括成功但没有检出目标的帧。该字段不随句柄销毁重建而重置，也不在失败调用或 `AlgFreeResult` 时更新。需要关联采集帧号或时间戳时，由调用方自行记录。
+`AlgRun` 的 `frame_id` 由同一 SDK 动态库的所有句柄共享，每次成功后递增，包括成功但没有检出目标的帧；该计数不随句柄销毁重建而重置。`AlgRunNative` 成功时直接写入输入 PTS，便于关联采集帧。失败调用和 `AlgFreeResult` 不更新该字段。
 
 结果数组由 SDK 分配，通过 `AlgFreeResult` 统一释放。数组有效期截止于显式释放，或同一结果结构下一次通过顶层指针检查的 `AlgRun` 调用。跨帧保存时应复制数组内容；仅复制 `AlgResult` 结构体不会获得独立的数组所有权。

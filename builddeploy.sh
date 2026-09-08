@@ -105,6 +105,10 @@ function package_artifacts() {
         echo "ERROR: no config json under resources/config/${backend}/"
         exit 1
     }
+    if [[ -d "resources/config/${backend}/aipp" ]]; then
+        cp -R "resources/config/${backend}/aipp" \
+              "${pkg_dir}/resources/config/${backend}/"
+    fi
 
     # ---- 模型文件（排除红绿灯模型）----
     mkdir -p "${pkg_dir}/resources/model/${backend}"

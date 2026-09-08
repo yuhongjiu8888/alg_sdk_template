@@ -69,6 +69,43 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result) {
     return ALG_OK;
 }
 
+AlgStatus AlgRunNative(AlgHandle handle, const AlgNativeFrameSet* frames,
+                       AlgResult* result) {
+    if (!handle || !frames || !result) return ALG_E_INVALID_ARG;
+
+    auto* ctx = reinterpret_cast<Context*>(handle);
+    AlgFreeResult(result);
+
+    std::vector<alg::Object> objs;
+    AlgStatus s = ctx->solution.RunNative(*frames, &objs);
+    if (s != ALG_OK) return s;
+    if (alg::FillAlgResult(objs, result) != 0) return ALG_E_OOM;
+
+    result->frame_id = frames->frame_count > 0 ? frames->frames[0].pts : 0;
+    return ALG_OK;
+}
+
+AlgStatus AlgGetInputRequirements(AlgHandle handle,
+                                  AlgInputRequirement* requirements,
+                                  int* count) {
+    if (!handle || !count || *count < 0) return ALG_E_INVALID_ARG;
+    auto* ctx = reinterpret_cast<Context*>(handle);
+    std::vector<AlgInputRequirement> values;
+    ctx->solution.GetInputRequirements(&values);
+    const int required = static_cast<int>(values.size());
+    if (!requirements) {
+        *count = required;
+        return ALG_OK;
+    }
+    if (*count < required) {
+        *count = required;
+        return ALG_E_INVALID_ARG;
+    }
+    for (int i = 0; i < required; ++i) requirements[i] = values[i];
+    *count = required;
+    return ALG_OK;
+}
+
 void AlgFreeResult(AlgResult* result) {
     if (!result) return;
     if (result->speed_limits) {

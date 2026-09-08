@@ -82,9 +82,11 @@ XMM 后端封装 xmedia_cl 与 MMZ 管理，SVP ACL 后端管理模型及辅助�
 
 [LetterboxPreprocessor](src/core/preprocess/letterbox_preprocessor.cpp) 实现通用前处理。`Configure` 检查网络尺寸、布局和数据类型，`Apply` 将图像写入模型输入并返回 `PreprocessState`，记录缩放比例、填充偏移和模型本次输入图像的尺寸。
 
+海思动态 AIPP 模型通过 `AlgRunNative` 接收 `source_id=0` 的原分辨率 VPSS NV12/NV21 帧。`ModelInstance` 根据 OM 的动态 AIPP 标记选择硬件 CSC、缩放和归一化，普通 OM 使用通用 OpenCV 前处理。CV610 AIPP 无法生成值为 114 的大范围 padding，因此检测 OM 在图首用常量 `Pad` 补齐 AIPP 输出；配置和运行时共同校验有效区及补边布局。默认格式是 NV21，运行时同时支持 NV12。
+
 支持 `stretch`、`letterbox_tl`、`letterbox_tl_fit` 和 `letterbox_center`。UINT8 输入直接写入像素，FLOAT32 的有效图像区域可按 `(x-mean)*scale/std` 归一化；FLOAT32 填充区域直接使用 `pad_value`。
 
-BGR、RGB 和 GRAY 使用图像行跨度。NV12 / NV21 使用紧凑连续平面，先缩放 Y 和色度平面再转换颜色；需要二阶段裁剪时，对原始 YUV 的局部区域进行转换。固定 ROI 和裁剪后的结果通过偏移恢复原图坐标。
+BGR、RGB 和 GRAY 使用图像行跨度。NV12 / NV21 的 Y 与色度平面使用同一行跨度，色度平面从 `data + stride*height` 开始；通用路径先缩放 Y 和色度平面再转换颜色，需要二阶段裁剪时只转换原始 YUV 的局部区域。固定 ROI 和裁剪后的结果通过偏移恢复原图坐标。
 
 统一配置覆盖现有模型的前处理组合。涉及多图拼接、复合输入等不同处理需求时，可通过 `IPreprocessor` 扩展，避免在既有实现中混入无关模型逻辑。
 

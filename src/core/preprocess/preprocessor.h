@@ -18,6 +18,10 @@ namespace alg {
 
 enum class ColorOrder : int { kBGR, kRGB, kGray };
 
+enum class PreprocessEngine : int { kAuto, kOpenCV, kAipp };
+
+enum class InputFormatPolicy : int { kAuto, kNV12, kNV21 };
+
 enum class ResizeMode : int {
     kStretch,       /* resize directly to (W, H), aspect-ratio distortion */
     kLetterboxTL,   /* keep aspect ratio, pad to top-left (matches sgk-sdk FCOS) */
@@ -44,6 +48,18 @@ struct PreprocessConfig {
     float      std[3]  = {1, 1, 1};
     float      scale = 1.0f;
     uint8_t    pad_value = 0;
+    PreprocessEngine engine = PreprocessEngine::kAuto;
+    InputFormatPolicy input_format = InputFormatPolicy::kAuto;
+    AlgPixelFormat default_input_format = ALG_PIX_NV21;
+    int source_id = 0;
+    int max_input_width = 1920;
+    int max_input_height = 1080;
+    int aipp_output_width = 0;   /* 0 表示 net_width；非 0 时 OM 图首负责补到 net_width */
+    int aipp_output_height = 0;  /* 0 表示 net_height */
+    int graph_pad_left = 0;
+    int graph_pad_top = 0;
+    int graph_pad_right = 0;
+    int graph_pad_bottom = 0;
 };
 
 /**

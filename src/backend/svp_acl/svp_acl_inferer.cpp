@@ -1,5 +1,6 @@
 #include "backend/svp_acl/svp_acl_inferer.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -168,6 +169,14 @@ Status MakeTensorView(const svp_acl_mdl_io_dims& dims,
 SvpAclInferer::~SvpAclInferer() { FreeAll(); }
 
 void SvpAclInferer::FreeAll() {
+#ifdef ALG_SVP_DYNAMIC_AIPP
+    if (dynamic_aipp_) {
+        (void)svp_acl_mdl_destroy_aipp(dynamic_aipp_);
+        dynamic_aipp_ = nullptr;
+    }
+    dynamic_aipp_input_index_ = static_cast<size_t>(-1);
+    image_input_capacity_ = 0;
+#endif
     input_views_.clear();
     output_views_.clear();
     output_raw_indices_.clear();
@@ -250,6 +259,23 @@ Status SvpAclInferer::Load(const std::string& model_path) {
                  model_path.c_str(), input_count, output_count);
         if (input_count == 0 || output_count == 0) break;
 
+#ifdef ALG_SVP_DYNAMIC_AIPP
+        /* 动态 AIPP 模型会增加一个由运行时自动填写的辅助输入。先找出其
+         * 关联关系，避免把 AIPP 参数 tensor 误判为第二个业务输入。 */
+        for (size_t i = 0; i < input_count; ++i) {
+            svp_acl_mdl_aipp_type aipp_type{};
+            size_t attached_index = static_cast<size_t>(-1);
+            ret = svp_acl_mdl_get_input_aipp_type(
+                model_id_, i, &aipp_type, &attached_index);
+            if (ret == SVP_ACL_SUCCESS &&
+                aipp_type == SVP_ACL_DATA_WITH_DYNAMIC_AIPP) {
+                image_input_index_ = i;
+                dynamic_aipp_input_index_ = attached_index;
+                break;
+            }
+        }
+#endif
+
         bool io_ok = true;
         for (size_t i = 0; i < input_count; ++i) {
             svp_acl_mdl_io_dims dims{};
@@ -263,8 +289,13 @@ Status SvpAclInferer::Load(const std::string& model_path) {
             ret = svp_acl_rt_malloc_cached(
                 &memory, size, SVP_ACL_MEM_MALLOC_NORMAL_ONLY);
             if (ret != SVP_ACL_SUCCESS) { io_ok = false; break; }
-            std::memset(memory, 0, size);
-            if (svp_acl_rt_mem_flush(memory, size) != SVP_ACL_SUCCESS) {
+            bool runtime_filled_aipp = false;
+#ifdef ALG_SVP_DYNAMIC_AIPP
+            runtime_filled_aipp = i == dynamic_aipp_input_index_;
+#endif
+            if (!runtime_filled_aipp) std::memset(memory, 0, size);
+            if (!runtime_filled_aipp &&
+                svp_acl_rt_mem_flush(memory, size) != SVP_ACL_SUCCESS) {
                 (void)svp_acl_rt_free(memory);
                 io_ok = false;
                 break;
@@ -279,14 +310,18 @@ Status SvpAclInferer::Load(const std::string& model_path) {
                 io_ok = false;
                 break;
             }
-            const bool auxiliary = IsAuxiliaryInput(dims.name);
+            bool auxiliary = IsAuxiliaryInput(dims.name);
+#ifdef ALG_SVP_DYNAMIC_AIPP
+            auxiliary = auxiliary || i == dynamic_aipp_input_index_;
+            if (i == image_input_index_) image_input_capacity_ = size;
+#endif
             ALG_LOGI("svp_acl: input[%zu] name='%s' shape=%s dtype=%d "
                      "size=%zu stride=%zu%s",
                      i, dims.name, DimsString(dims).c_str(),
                      static_cast<int>(
                          svp_acl_mdl_get_input_data_type(model_desc_, i)),
                      size, stride, auxiliary ? " auxiliary" : "");
-            if (!auxiliary) {
+            if (!auxiliary && i != image_input_index_) {
                 if (image_input_index_ != static_cast<size_t>(-1)) {
                     ALG_LOGE("svp_acl: multiple business inputs are not supported");
                     io_ok = false;
@@ -296,6 +331,16 @@ Status SvpAclInferer::Load(const std::string& model_path) {
             }
         }
         if (!io_ok || image_input_index_ == static_cast<size_t>(-1)) break;
+
+#ifdef ALG_SVP_DYNAMIC_AIPP
+        if (dynamic_aipp_input_index_ != static_cast<size_t>(-1)) {
+            dynamic_aipp_ = svp_acl_mdl_create_aipp(1);
+            if (!dynamic_aipp_) {
+                ALG_LOGE("svp_acl: create dynamic AIPP object failed");
+                break;
+            }
+        }
+#endif
 
         for (size_t i = 0; i < output_count; ++i) {
             svp_acl_mdl_io_dims dims{};
@@ -413,6 +458,211 @@ Status SvpAclInferer::Forward() {
         }
     }
     return ALG_OK;
+}
+
+bool SvpAclInferer::SupportsDynamicAipp() const {
+#ifdef ALG_SVP_DYNAMIC_AIPP
+    return dynamic_aipp_ != nullptr;
+#else
+    return false;
+#endif
+}
+
+Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
+                                         const PreprocessConfig& cfg,
+                                         bool geometry_prepared,
+                                         PreprocessState& state) {
+#ifndef ALG_SVP_DYNAMIC_AIPP
+    (void)image; (void)cfg; (void)geometry_prepared; (void)state;
+    return ALG_E_BACKEND;
+#else
+    if (!initialized_ || !dynamic_aipp_) return ALG_E_NOT_INITIALIZED;
+    if (!image.data || image.width <= 0 || image.height <= 0 ||
+        (image.width & 1) || (image.height & 1) ||
+        (image.format != ALG_PIX_NV12 && image.format != ALG_PIX_NV21)) {
+        return ALG_E_INVALID_ARG;
+    }
+    if ((cfg.input_format == InputFormatPolicy::kNV12 && image.format != ALG_PIX_NV12) ||
+        (cfg.input_format == InputFormatPolicy::kNV21 && image.format != ALG_PIX_NV21)) {
+        return ALG_E_INVALID_ARG;
+    }
+    if (image.width > cfg.max_input_width || image.height > cfg.max_input_height) {
+        ALG_LOGE("svp_acl: AIPP source %dx%d exceeds configured maximum %dx%d",
+                 image.width, image.height, cfg.max_input_width, cfg.max_input_height);
+        return ALG_E_PREPROCESS;
+    }
+    if (cfg.color == ColorOrder::kGray) {
+        ALG_LOGE("svp_acl: dynamic AIPP YUV path does not emit gray model input");
+        return ALG_E_PREPROCESS;
+    }
+    const bool graph_padding = cfg.aipp_output_width > 0;
+    if (geometry_prepared && graph_padding) {
+        ALG_LOGE("svp_acl: graph-padded AIPP model requires the original source frame");
+        return ALG_E_PREPROCESS;
+    }
+    if (geometry_prepared &&
+        (image.width != cfg.net_width || image.height != cfg.net_height)) {
+        return ALG_E_INVALID_ARG;
+    }
+    if (!geometry_prepared && cfg.resize != ResizeMode::kStretch && !graph_padding) {
+        /* CV610 AIPP 的常量 padding 固定为 0，无法复现模型要求的 114。
+         * 非 stretch 模式需要在 OM 图首插入常量 Pad，并在配置中声明其布局。 */
+        ALG_LOGE("svp_acl: letterbox AIPP requires aipp_output_size and "
+                 "aipp_graph_padding");
+        return ALG_E_PREPROCESS;
+    }
+    if (cfg.std[0] == 0.0f || cfg.std[1] == 0.0f || cfg.std[2] == 0.0f)
+        return ALG_E_INVALID_ARG;
+
+    int output_width = cfg.net_width;
+    int output_height = cfg.net_height;
+    float scale_ratio = 1.0f;
+    int pad_left = 0;
+    int pad_top = 0;
+    if (!geometry_prepared && cfg.resize != ResizeMode::kStretch) {
+        switch (cfg.resize) {
+            case ResizeMode::kLetterboxTL:
+                scale_ratio = static_cast<float>(cfg.net_width) /
+                              std::max(image.width, image.height);
+                break;
+            case ResizeMode::kLetterboxTLFit:
+            case ResizeMode::kLetterboxCenter:
+                scale_ratio = std::min(
+                    static_cast<float>(cfg.net_width) / image.width,
+                    static_cast<float>(cfg.net_height) / image.height);
+                break;
+            case ResizeMode::kStretch:
+                break;
+        }
+        output_width = static_cast<int>(image.width * scale_ratio);
+        output_height = static_cast<int>(image.height * scale_ratio);
+        if (cfg.resize == ResizeMode::kLetterboxCenter) {
+            pad_left = (cfg.net_width - output_width) / 2;
+            pad_top = (cfg.net_height - output_height) / 2;
+        }
+        const int pad_right = cfg.net_width - output_width - pad_left;
+        const int pad_bottom = cfg.net_height - output_height - pad_top;
+        if (output_width != cfg.aipp_output_width ||
+            output_height != cfg.aipp_output_height ||
+            pad_left != cfg.graph_pad_left || pad_top != cfg.graph_pad_top ||
+            pad_right != cfg.graph_pad_right || pad_bottom != cfg.graph_pad_bottom) {
+            ALG_LOGE("svp_acl: source %dx%d produces AIPP %dx%d + pad [%d,%d,%d,%d], "
+                     "but OM expects %dx%d + pad [%d,%d,%d,%d]",
+                     image.width, image.height, output_width, output_height,
+                     pad_left, pad_top, pad_right, pad_bottom,
+                     cfg.aipp_output_width, cfg.aipp_output_height,
+                     cfg.graph_pad_left, cfg.graph_pad_top,
+                     cfg.graph_pad_right, cfg.graph_pad_bottom);
+            return ALG_E_PREPROCESS;
+        }
+    } else if (!geometry_prepared && graph_padding) {
+        /* stretch 本身不需要补边。禁止将 graph padding 配到 stretch，避免
+         * AIPP 输出尺寸与模型图声明不一致。 */
+        ALG_LOGE("svp_acl: aipp_graph_padding is incompatible with stretch resize");
+        return ALG_E_PREPROCESS;
+    }
+
+    svp_acl_error ret = svp_acl_mdl_set_aipp_src_image_size(
+        dynamic_aipp_, image.width, image.height);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+
+    int8_t uv_swap = 0;
+    const svp_acl_aipp_input_format format = image.format == ALG_PIX_NV21
+        ? SVP_ACL_YVU420SP_U8 : SVP_ACL_YUV420SP_U8;
+    ret = svp_acl_mdl_set_aipp_input_format(dynamic_aipp_, format);
+    if (ret != SVP_ACL_SUCCESS && image.format == ALG_PIX_NV21) {
+        /* 部分 CV610 工具链只接受 OM 声明的 YUV420SP 枚举。保持同一套 OM，
+         * 把 NV21 当作 YUV420SP 读取，再由 rbuv_swap 交换 V/U。 */
+        ret = svp_acl_mdl_set_aipp_input_format(dynamic_aipp_, SVP_ACL_YUV420SP_U8);
+        uv_swap = 1;
+    }
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+
+    /* OpenCV NV12/NV21 默认的 BT.601 limited-range YUV -> full-range RGB。 */
+    ret = svp_acl_mdl_set_aipp_csc_params(
+        dynamic_aipp_, 1,
+        1192, 0, 1634,
+        1192, -400, -833,
+        1192, 2066, 0,
+        0, 0, 0, 16, 128, 128);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    ret = svp_acl_mdl_set_aipp_rbuv_swap_switch(dynamic_aipp_, uv_swap);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    ret = svp_acl_mdl_set_aipp_ax_swap_switch(dynamic_aipp_, 0);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+
+    ret = svp_acl_mdl_set_aipp_crop_params(dynamic_aipp_, 0, 0, 0, 0, 0, 0);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    ret = svp_acl_mdl_set_aipp_padding_params(dynamic_aipp_, 0, 0, 0, 0, 0, 0);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+
+    const bool resize = image.width != output_width || image.height != output_height;
+    ret = svp_acl_mdl_set_aipp_scf_params(
+        dynamic_aipp_, resize ? 2 : 0,
+        image.width, image.height, output_width, output_height, 0);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+
+    ret = svp_acl_mdl_set_aipp_dtc_pixel_mean(
+        dynamic_aipp_, cfg.mean[0], cfg.mean[1], cfg.mean[2], 0.0f, 0);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    ret = svp_acl_mdl_set_aipp_dtc_pixel_min(
+        dynamic_aipp_, 0.0f, 0.0f, 0.0f, 0.0f, 0);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    ret = svp_acl_mdl_set_aipp_pixel_var_reci(
+        dynamic_aipp_, cfg.scale / cfg.std[0], cfg.scale / cfg.std[1],
+        cfg.scale / cfg.std[2], 1.0f, 0);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+
+    ret = svp_acl_mdl_set_aipp_by_input_index(
+        model_id_, input_dataset_, image_input_index_, dynamic_aipp_);
+    if (ret != SVP_ACL_SUCCESS) {
+        ALG_LOGE("svp_acl: attach dynamic AIPP failed, ret=%d", ret);
+        return ALG_E_PREPROCESS;
+    }
+
+    const size_t dst_size = svp_acl_mdl_get_input_size_by_index(
+        model_desc_, image_input_index_);
+    const size_t dst_stride = svp_acl_mdl_get_input_default_stride(
+        model_desc_, image_input_index_);
+    if (dst_size == 0 || dst_size > image_input_capacity_ ||
+        dst_stride < static_cast<size_t>(image.width)) {
+        ALG_LOGE("svp_acl: invalid AIPP input buffer size=%zu stride=%zu capacity=%zu",
+                 dst_size, dst_stride, image_input_capacity_);
+        return ALG_E_PREPROCESS;
+    }
+
+    svp_acl_data_buffer* image_buffer =
+        svp_acl_mdl_get_dataset_buffer(input_dataset_, image_input_index_);
+    uint8_t* dst = static_cast<uint8_t*>(svp_acl_get_data_buffer_addr(image_buffer));
+    const uint8_t* src = static_cast<const uint8_t*>(image.data);
+    const size_t src_stride = image.stride > 0 ? static_cast<size_t>(image.stride)
+                                               : static_cast<size_t>(image.width);
+    const size_t needed_src = src_stride * image.height * 3 / 2;
+    if (src_stride < static_cast<size_t>(image.width) || image.data_len < 0 ||
+        (image.data_len > 0 && static_cast<size_t>(image.data_len) < needed_src)) {
+        return ALG_E_INVALID_ARG;
+    }
+    const size_t needed_dst = dst_stride * image.height * 3 / 2;
+    if (needed_dst > dst_size) return ALG_E_PREPROCESS;
+
+    ret = svp_acl_update_data_buffer(image_buffer, dst, dst_size, dst_stride);
+    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    for (int y = 0; y < image.height; ++y)
+        std::memcpy(dst + static_cast<size_t>(y) * dst_stride,
+                    src + static_cast<size_t>(y) * src_stride, image.width);
+    const uint8_t* src_uv = src + src_stride * image.height;
+    uint8_t* dst_uv = dst + dst_stride * image.height;
+    for (int y = 0; y < image.height / 2; ++y)
+        std::memcpy(dst_uv + static_cast<size_t>(y) * dst_stride,
+                    src_uv + static_cast<size_t>(y) * src_stride, image.width);
+
+    state.scale_ratio = scale_ratio;
+    state.pad_left = pad_left;
+    state.pad_top = pad_top;
+    state.original_width = image.width;
+    state.original_height = image.height;
+    return ALG_OK;
+#endif
 }
 
 }  // namespace alg
