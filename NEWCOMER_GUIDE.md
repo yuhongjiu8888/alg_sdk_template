@@ -110,11 +110,11 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 | 禁停分数 | 检测分乘门控概率 |
 | 限速分数 | 检测分乘 OCR 分类分 |
 | 车牌分数 | 检测分乘 `rec_score`；有效车牌还需检查文本和业务格式 |
-| `frame_id` | `AlgRun` 为动态库内共享计数；`AlgRunNative` 为输入 PTS |
+| `frame_id` | `AlgRun` 为动态库内共享计数 |
 
 图片文件应先解码为像素再传入。JSON 的 `preprocess.color` 定义模型输入颜色顺序，`AlgImage.format` 定义源图像格式，两者不要求相同。
 
-海思 VPSS 实时流建议使用 `AlgRunNative`：应用只需传入 `source_id=0` 的原分辨率帧，检测模型的缩放由动态 AIPP 完成，不需要额外创建模型尺寸的 VPSS 通道。默认使用 NV21，也可传 NV12；两种格式均允许常见的 VPSS 行对齐 stride。
+海思 VPSS 实时流使用 `AlgRun`：应用只需传入原分辨率 NV12/NV21 帧，检测模型的缩放由动态 AIPP 完成，不需要额外创建模型尺寸的 VPSS 通道。通常使用 NV21，也可传 NV12；两种格式均允许常见的 VPSS 行对齐 stride。
 
 ## 5. 配置与执行关系
 

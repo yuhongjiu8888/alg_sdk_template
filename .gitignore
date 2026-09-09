@@ -6,3 +6,7 @@ build_*
 lib/
 deploy/
 code_sub_rules.md
+nv21_out/
+*.jpg
+*.yuv
+.claude

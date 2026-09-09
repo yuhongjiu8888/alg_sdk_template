@@ -22,13 +22,11 @@
   },
   "models": {
     "det_cfg": {
-      "model_path": "../resources/model/svp_acl/license_detection_10m.om",
+      "model_path": "../resources/model/svp_acl/license_detection_aipp.om",
       "preprocess": {
         "input_size": [640, 448],
-        "engine": "auto",
-        "source_id": 0,
+        "engine": "aipp",
         "input_format": "auto",
-        "default_input_format": "NV21",
         "max_input_size": [1920, 1080],
         "aipp_output_size": [640, 360],
         "aipp_graph_padding": [0, 0, 0, 88],
@@ -54,7 +52,6 @@
       "preprocess": {
         "input_size": [256, 64],
         "engine": "auto",
-        "default_input_format": "NV21",
         "color": "RGB",
         "resize": "letterbox_center",
         "layout": "NCHW",

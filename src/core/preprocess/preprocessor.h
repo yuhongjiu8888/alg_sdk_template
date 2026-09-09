@@ -50,8 +50,6 @@ struct PreprocessConfig {
     uint8_t    pad_value = 0;
     PreprocessEngine engine = PreprocessEngine::kAuto;
     InputFormatPolicy input_format = InputFormatPolicy::kAuto;
-    AlgPixelFormat default_input_format = ALG_PIX_NV21;
-    int source_id = 0;
     int max_input_width = 1920;
     int max_input_height = 1080;
     int aipp_output_width = 0;   /* 0 表示 net_width；非 0 时 OM 图首负责补到 net_width */

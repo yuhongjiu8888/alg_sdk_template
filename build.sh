@@ -48,7 +48,7 @@ case "${platform}-${arch}" in
             -DCMAKE_BUILD_TYPE=Release \
             -DLINUX_AARCH64=ON \
             -DALG_BACKEND="${backend}" \
-            -DALG_LOG_INFO=ON \
+            -DALG_LOG_INFO=OFF \
             ..
         make -j${BUILD_JOBS}
         cd ..

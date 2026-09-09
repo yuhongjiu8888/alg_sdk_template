@@ -35,25 +35,17 @@ class ModelInstance {
     /** 对单张 AlgImage 跑一次完整三件套。 */
     Status Run(const AlgImage& image, std::vector<Object>* out);
 
-    /** 图像已由 VPSS 按本模型的几何配置处理到网络输入尺寸。 */
-    Status RunPrepared(const AlgImage& image, int original_width, int original_height,
-                       std::vector<Object>* out);
-
     const std::string& name() const { return cfg_.name; }
     const PreprocessConfig& pre_cfg() const { return cfg_.pre; }
-    int source_id() const { return cfg_.pre.source_id; }
 
   private:
     ModelInstanceConfig             cfg_;
     std::unique_ptr<IInferer>       inferer_;
     std::unique_ptr<IPreprocessor>  pre_;
-    std::unique_ptr<IPreprocessor>  prepared_pre_;
     std::unique_ptr<IPostprocessor> post_;
     bool                            initialized_ = false;
 
-    Status RunImpl(const AlgImage& image, bool geometry_prepared,
-                   int original_width, int original_height,
-                   std::vector<Object>* out);
+    Status RunImpl(const AlgImage& image, std::vector<Object>* out);
 };
 
 }  // namespace alg

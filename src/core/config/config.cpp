@@ -45,10 +45,6 @@ InputFormatPolicy ParseInputFormat(const std::string& s) {
     return InputFormatPolicy::kAuto;
 }
 
-AlgPixelFormat ParseDefaultInputFormat(const std::string& s) {
-    return (s == "NV12" || s == "nv12") ? ALG_PIX_NV12 : ALG_PIX_NV21;
-}
-
 bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* err) {
     if (!v.isObject()) { SetErr(err, "preprocess must be an object"); return false; }
 
@@ -105,20 +101,6 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
         return false;
     }
     cfg->input_format = ParseInputFormat(input_format);
-    const std::string default_format =
-        v.get("default_input_format", "NV21").asString();
-    if (default_format != "NV12" && default_format != "nv12" &&
-        default_format != "NV21" && default_format != "nv21") {
-        SetErr(err, "preprocess.default_input_format must be NV12 or NV21");
-        return false;
-    }
-    cfg->default_input_format = ParseDefaultInputFormat(
-        default_format);
-    cfg->source_id = v.get("source_id", 0).asInt();
-    if (cfg->source_id < 0) {
-        SetErr(err, "preprocess.source_id must be non-negative");
-        return false;
-    }
     if (v.isMember("max_input_size")) {
         const Json::Value& max_sz = v["max_input_size"];
         if (!max_sz.isArray() || max_sz.size() != 2 ||

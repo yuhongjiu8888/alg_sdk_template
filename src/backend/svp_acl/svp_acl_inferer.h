@@ -29,7 +29,6 @@ class SvpAclInferer : public IInferer {
     bool SupportsDynamicAipp() const override;
     Status PrepareDynamicAipp(const AlgImage& image,
                               const PreprocessConfig& cfg,
-                              bool geometry_prepared,
                               PreprocessState& state) override;
 
   private:

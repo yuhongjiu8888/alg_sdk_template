@@ -65,57 +65,6 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
     }
     stage_produces_.assign(stages_.size(), {});
 
-    input_requirements_.clear();
-    AlgInputRequirement original{};
-    original.source_id = 0;
-    original.default_format = ALG_PIX_NV21;
-    original.accepts_nv12 = 1;
-    original.accepts_nv21 = 1;
-    original.resize = ALG_RESIZE_STRETCH;
-    input_requirements_.push_back(original);
-    for (const auto& m : cfg.models) {
-        if (m.pre.source_id == 0) {
-            AlgInputRequirement& req = input_requirements_.front();
-            req.accepts_nv12 = req.accepts_nv12 &&
-                               m.pre.input_format != InputFormatPolicy::kNV21;
-            req.accepts_nv21 = req.accepts_nv21 &&
-                               m.pre.input_format != InputFormatPolicy::kNV12;
-            if (!req.accepts_nv12 && !req.accepts_nv21) {
-                ALG_LOGE("source_id=0 has conflicting input format requirements");
-                return ALG_E_CONFIG;
-            }
-            if (!req.accepts_nv21) req.default_format = ALG_PIX_NV12;
-            continue;
-        }
-        AlgInputRequirement req{};
-        req.source_id = m.pre.source_id;
-        req.width = m.pre.net_width;
-        req.height = m.pre.net_height;
-        req.default_format = m.pre.default_input_format;
-        req.accepts_nv12 = m.pre.input_format != InputFormatPolicy::kNV21;
-        req.accepts_nv21 = m.pre.input_format != InputFormatPolicy::kNV12;
-        req.resize = static_cast<AlgResizeMode>(static_cast<int>(m.pre.resize));
-        req.pad_value = m.pre.pad_value;
-        auto existing = std::find_if(input_requirements_.begin(), input_requirements_.end(),
-            [&](const AlgInputRequirement& value) { return value.source_id == req.source_id; });
-        if (existing != input_requirements_.end()) {
-            if (existing->width != req.width || existing->height != req.height ||
-                existing->resize != req.resize || existing->pad_value != req.pad_value ||
-                existing->default_format != req.default_format) {
-                ALG_LOGE("source_id=%d has conflicting VPSS requirements", req.source_id);
-                return ALG_E_CONFIG;
-            }
-            existing->accepts_nv12 = existing->accepts_nv12 && req.accepts_nv12;
-            existing->accepts_nv21 = existing->accepts_nv21 && req.accepts_nv21;
-            if (!existing->accepts_nv12 && !existing->accepts_nv21) {
-                ALG_LOGE("source_id=%d has conflicting input format requirements", req.source_id);
-                return ALG_E_CONFIG;
-            }
-        } else {
-            input_requirements_.push_back(req);
-        }
-    }
-
     /* 3) 提前判定是否需要解码原图（有 ROI 子模型或固定 ROI 裁剪）。 */
     needs_decoded_bgr_ = false;
     for (const auto& rs : stages_) {
@@ -129,11 +78,6 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
     ALG_LOGI("ChainSolution: ready, %zu models, %zu stages (decode_bgr=%d)",
              model_storage_.size(), stages_.size(), needs_decoded_bgr_ ? 1 : 0);
     return ALG_OK;
-}
-
-void ChainSolution::GetInputRequirements(
-    std::vector<AlgInputRequirement>* requirements) const {
-    if (requirements) *requirements = input_requirements_;
 }
 
 namespace {
@@ -222,8 +166,7 @@ void ResetStageObjects(std::vector<Object>& v) {
 }  // namespace
 
 Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
-                               const cv::Mat& decoded_bgr,
-                               const std::unordered_map<int, const AlgImage*>* sources) {
+                               const cv::Mat& decoded_bgr) {
     const RuntimeStage& rs = stages_[stage_idx];
     ModelInstance* mi = rs.model;
 
@@ -269,34 +212,6 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
             return ALG_OK;
         }
 
-        if (sources) {
-            auto source_it = sources->find(mi->source_id());
-            if (source_it == sources->end()) {
-                ALG_LOGE("ChainSolution: model '%s' requires missing source_id=%d",
-                         mi->name().c_str(), mi->source_id());
-                return ALG_E_INVALID_ARG;
-            }
-            const AlgImage& selected = *source_it->second;
-            const InputFormatPolicy policy = mi->pre_cfg().input_format;
-            if ((policy == InputFormatPolicy::kNV12 && selected.format != ALG_PIX_NV12) ||
-                (policy == InputFormatPolicy::kNV21 && selected.format != ALG_PIX_NV21)) {
-                ALG_LOGE("ChainSolution: model '%s' source format violates input_format",
-                         mi->name().c_str());
-                return ALG_E_INVALID_ARG;
-            }
-            if (mi->source_id() != 0) {
-                if (selected.width != mi->pre_cfg().net_width ||
-                    selected.height != mi->pre_cfg().net_height) {
-                    ALG_LOGE("ChainSolution: model '%s' source_id=%d is %dx%d, expected %dx%d",
-                             mi->name().c_str(), mi->source_id(),
-                             selected.width, selected.height,
-                             mi->pre_cfg().net_width, mi->pre_cfg().net_height);
-                    return ALG_E_INVALID_ARG;
-                }
-                return mi->RunPrepared(selected, image.width, image.height, &out_bucket);
-            }
-            return mi->Run(selected, &out_bucket);
-        }
         return mi->Run(image, &out_bucket);
     }
 
@@ -369,54 +284,11 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
 }
 
 Status ChainSolution::Run(const AlgImage& image, std::vector<Object>* out_objects) {
-    return RunInternal(image, nullptr, out_objects);
+    return RunInternal(image, out_objects);
 }
 
-Status ChainSolution::RunNative(const AlgNativeFrameSet& frames,
-                                std::vector<Object>* out_objects) {
-    if (frames.frame_count <= 0 || !frames.frames) return ALG_E_INVALID_ARG;
-
-    std::unordered_map<int, const AlgImage*> sources;
-    long long pts = frames.frames[0].pts;
-    for (int i = 0; i < frames.frame_count; ++i) {
-        const AlgNativeFrameBinding& binding = frames.frames[i];
-        const AlgImage& img = binding.image;
-        if (binding.source_id < 0 || !img.data || img.width <= 0 || img.height <= 0 ||
-            (img.format != ALG_PIX_NV12 && img.format != ALG_PIX_NV21) ||
-            (img.width & 1) || (img.height & 1)) {
-            return ALG_E_INVALID_ARG;
-        }
-        const int stride = img.stride > 0 ? img.stride : img.width;
-        const size_t required = static_cast<size_t>(stride) * img.height * 3 / 2;
-        if (stride < img.width || img.data_len < 0 ||
-            (img.data_len > 0 && static_cast<size_t>(img.data_len) < required) ||
-            !sources.emplace(binding.source_id, &img).second) {
-            return ALG_E_INVALID_ARG;
-        }
-        if (binding.pts != pts) {
-            ALG_LOGE("ChainSolution: VPSS sources have different PTS values");
-            return ALG_E_INVALID_ARG;
-        }
-    }
-    auto original = sources.find(0);
-    if (original == sources.end()) {
-        ALG_LOGE("ChainSolution: source_id=0 original frame is required");
-        return ALG_E_INVALID_ARG;
-    }
-    const AlgPixelFormat original_format = original->second->format;
-    for (const auto& source : sources) {
-        if (source.second->format != original_format) {
-            ALG_LOGE("ChainSolution: mixed NV12/NV21 sources are not supported in one frame");
-            return ALG_E_INVALID_ARG;
-        }
-    }
-    return RunInternal(*original->second, &sources, out_objects);
-}
-
-Status ChainSolution::RunInternal(
-    const AlgImage& image,
-    const std::unordered_map<int, const AlgImage*>* sources,
-    std::vector<Object>* out_objects) {
+Status ChainSolution::RunInternal(const AlgImage& image,
+                                  std::vector<Object>* out_objects) {
     if (!initialized_) return ALG_E_NOT_INITIALIZED;
     if (!out_objects) return ALG_E_INVALID_ARG;
 
@@ -436,7 +308,7 @@ Status ChainSolution::RunInternal(
     }
 
     for (size_t i = 0; i < stages_.size(); ++i) {
-        Status r = RunStage(static_cast<int>(i), image, decoded_bgr_, sources);
+        Status r = RunStage(static_cast<int>(i), image, decoded_bgr_);
         if (r != ALG_OK) return r;
     }
 

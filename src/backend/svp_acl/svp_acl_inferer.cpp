@@ -470,10 +470,9 @@ bool SvpAclInferer::SupportsDynamicAipp() const {
 
 Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
                                          const PreprocessConfig& cfg,
-                                         bool geometry_prepared,
                                          PreprocessState& state) {
 #ifndef ALG_SVP_DYNAMIC_AIPP
-    (void)image; (void)cfg; (void)geometry_prepared; (void)state;
+    (void)image; (void)cfg; (void)state;
     return ALG_E_BACKEND;
 #else
     if (!initialized_ || !dynamic_aipp_) return ALG_E_NOT_INITIALIZED;
@@ -496,15 +495,7 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         return ALG_E_PREPROCESS;
     }
     const bool graph_padding = cfg.aipp_output_width > 0;
-    if (geometry_prepared && graph_padding) {
-        ALG_LOGE("svp_acl: graph-padded AIPP model requires the original source frame");
-        return ALG_E_PREPROCESS;
-    }
-    if (geometry_prepared &&
-        (image.width != cfg.net_width || image.height != cfg.net_height)) {
-        return ALG_E_INVALID_ARG;
-    }
-    if (!geometry_prepared && cfg.resize != ResizeMode::kStretch && !graph_padding) {
+    if (cfg.resize != ResizeMode::kStretch && !graph_padding) {
         /* CV610 AIPP 的常量 padding 固定为 0，无法复现模型要求的 114。
          * 非 stretch 模式需要在 OM 图首插入常量 Pad，并在配置中声明其布局。 */
         ALG_LOGE("svp_acl: letterbox AIPP requires aipp_output_size and "
@@ -519,7 +510,7 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     float scale_ratio = 1.0f;
     int pad_left = 0;
     int pad_top = 0;
-    if (!geometry_prepared && cfg.resize != ResizeMode::kStretch) {
+    if (cfg.resize != ResizeMode::kStretch) {
         switch (cfg.resize) {
             case ResizeMode::kLetterboxTL:
                 scale_ratio = static_cast<float>(cfg.net_width) /
@@ -555,7 +546,7 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
                      cfg.graph_pad_right, cfg.graph_pad_bottom);
             return ALG_E_PREPROCESS;
         }
-    } else if (!geometry_prepared && graph_padding) {
+    } else if (graph_padding) {
         /* stretch 本身不需要补边。禁止将 graph padding 配到 stretch，避免
          * AIPP 输出尺寸与模型图声明不一致。 */
         ALG_LOGE("svp_acl: aipp_graph_padding is incompatible with stretch resize");

@@ -41,7 +41,6 @@ class IInferer {
     virtual bool SupportsDynamicAipp() const { return false; }
     virtual Status PrepareDynamicAipp(const AlgImage&,
                                       const PreprocessConfig&,
-                                      bool,
                                       PreprocessState&) {
         return ALG_E_BACKEND;
     }

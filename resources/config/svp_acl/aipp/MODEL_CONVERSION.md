@@ -132,9 +132,7 @@ license_detection_aipp.om
 
 ```json
 "engine": "auto",
-"source_id": 0,
 "input_format": "auto",
-"default_input_format": "NV21",
 "max_input_size": [1920, 1080]
 ```
 

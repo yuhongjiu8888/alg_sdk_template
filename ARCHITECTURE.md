@@ -82,7 +82,7 @@ XMM 后端封装 xmedia_cl 与 MMZ 管理，SVP ACL 后端管理模型及辅助�
 
 [LetterboxPreprocessor](src/core/preprocess/letterbox_preprocessor.cpp) 实现通用前处理。`Configure` 检查网络尺寸、布局和数据类型，`Apply` 将图像写入模型输入并返回 `PreprocessState`，记录缩放比例、填充偏移和模型本次输入图像的尺寸。
 
-海思动态 AIPP 模型通过 `AlgRunNative` 接收 `source_id=0` 的原分辨率 VPSS NV12/NV21 帧。`ModelInstance` 根据 OM 的动态 AIPP 标记选择硬件 CSC、缩放和归一化，普通 OM 使用通用 OpenCV 前处理。CV610 AIPP 无法生成值为 114 的大范围 padding，因此检测 OM 在图首用常量 `Pad` 补齐 AIPP 输出；配置和运行时共同校验有效区及补边布局。默认格式是 NV21，运行时同时支持 NV12。
+海思动态 AIPP 模型通过 `AlgRun` 接收原分辨率 VPSS NV12/NV21 帧。`ModelInstance` 根据 OM 的动态 AIPP 标记选择硬件 CSC、缩放和归一化，普通 OM 使用通用 OpenCV 前处理。CV610 AIPP 无法生成值为 114 的大范围 padding，因此检测 OM 在图首用常量 `Pad` 补齐 AIPP 输出；配置和运行时共同校验有效区及补边布局。默认格式是 NV21，运行时同时支持 NV12。
 
 支持 `stretch`、`letterbox_tl`、`letterbox_tl_fit` 和 `letterbox_center`。UINT8 输入直接写入像素，FLOAT32 的有效图像区域可按 `(x-mean)*scale/std` 归一化；FLOAT32 填充区域直接使用 `pad_value`。
 

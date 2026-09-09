@@ -50,6 +50,14 @@ def parse_args():
         metavar=("LEFT", "TOP", "RIGHT", "BOTTOM"),
     )
     parser.add_argument("--value", type=float, default=114.0)
+    parser.add_argument(
+        "--scale-after-pad",
+        type=float,
+        default=1.0,
+        help="在 Pad 之后插入乘 scale 的归一化节点（默认 1.0 = 不插入）。"
+        "当 Pad 常量处于原始 0..255 值域、而模型期望除以 255 时，"
+        "传 0.003921568627（1/255）使图首值域与训练一致。",
+    )
     return parser.parse_args()
 
 
@@ -145,7 +153,32 @@ def main():
         mode="constant",
         name=node_name,
     )
-    graph.node.insert(0, pad_node)
+
+    front = [pad_node]
+    if args.scale_after_pad != 1.0:
+        # Pad 常量处于原始值域；在图首补一个 ×scale 归一化节点，
+        # 使模型实际输入值域与训练一致（Pad 区域也会一起缩放）。
+        norm_out = unique_name(graph, f"{original_name}_norm")
+        for n in graph.node:
+            for i in range(len(n.input)):
+                if n.input[i] == original_name:
+                    n.input[i] = norm_out
+        scale_name = unique_name(graph, "__aipp_graph_norm_scale")
+        graph.initializer.extend(
+            [helper.make_tensor(scale_name, tensor_type.elem_type, [1],
+                                [args.scale_after_pad])]
+        )
+        front.append(helper.make_node(
+            "Mul",
+            [original_name, scale_name],
+            [norm_out],
+            name=unique_name(graph, "AippGraphNorm"),
+        ))
+
+    rest = [n for n in graph.node]
+    del graph.node[:]
+    graph.node.extend(front)
+    graph.node.extend(rest)
 
     checker.check_model(model)
     onnx.save(model, args.output_model)
