@@ -5,44 +5,48 @@
 
 #include <opencv2/opencv.hpp>
 
+#include "core/image_view.h"
 #include "core/logger.h"
 
 namespace alg {
 
 void DecodeSourceToBgrInto(const AlgImage& src, cv::Mat* out) {
     if (!out) return;
-    const uint8_t* p = static_cast<const uint8_t*>(src.data);
-    const int stride = src.stride > 0 ? src.stride : 0;
+    ImageView source;
+    if (ResolveImageView(src, &source) != ALG_OK) {
+        out->release();
+        return;
+    }
+    const uint8_t* p = source.plane[0];
+    const int stride = source.stride[0];
 
     switch (src.format) {
         case ALG_PIX_BGR:
             /* 零拷贝包装：直接把 out 重定向到用户 buffer，共享内存。 */
             *out = cv::Mat(src.height, src.width, CV_8UC3,
                            const_cast<uint8_t*>(p),
-                           stride ? stride : src.width * 3);
+                           stride);
             return;
         case ALG_PIX_RGB: {
             cv::Mat m(src.height, src.width, CV_8UC3,
                       const_cast<uint8_t*>(p),
-                      stride ? stride : src.width * 3);
+                      stride);
             cv::cvtColor(m, *out, cv::COLOR_RGB2BGR);  /* 复用 *out 的 buffer */
             return;
         }
         case ALG_PIX_GRAY: {
             cv::Mat m(src.height, src.width, CV_8UC1,
                       const_cast<uint8_t*>(p),
-                      stride ? stride : src.width);
+                      stride);
             cv::cvtColor(m, *out, cv::COLOR_GRAY2BGR);
             return;
         }
         case ALG_PIX_NV12:
         case ALG_PIX_NV21: {
-            const int yuv_stride = stride ? stride : src.width;
             cv::Mat y(src.height, src.width, CV_8UC1,
-                      const_cast<uint8_t*>(p), yuv_stride);
+                      const_cast<uint8_t*>(p), source.stride[0]);
             cv::Mat uv(src.height / 2, src.width / 2, CV_8UC2,
-                       const_cast<uint8_t*>(p + static_cast<size_t>(yuv_stride) * src.height),
-                       yuv_stride);
+                       const_cast<uint8_t*>(source.plane[1]), source.stride[1]);
             cv::cvtColorTwoPlane(y, uv, *out,
                                  src.format == ALG_PIX_NV12 ? cv::COLOR_YUV2BGR_NV12
                                                             : cv::COLOR_YUV2BGR_NV21);
@@ -78,13 +82,15 @@ inline int EvenCeil(int v) { return (v + 1) & ~1; }
 
 /* 从 NV12/NV21 原图抠 ROI 子图：Y/UV 平面各出一个带源 stride 的 Mat 视图，
  * 只对小区域 cvtColorTwoPlane → BGR，避免整帧 NV12→BGR。 */
-void ConvertNvSubRegions(const uint8_t* y_plane, const uint8_t* uv_plane, int src_stride,
+void ConvertNvSubRegions(const uint8_t* y_plane, const uint8_t* uv_plane,
+                         int src_stride_y, int src_stride_uv,
                          int x1, int y1, int x2, int y2, bool nv21, cv::Mat* bgr) {
     cv::Mat y_sub(y2 - y1, x2 - x1, CV_8UC1,
-                  const_cast<uint8_t*>(y_plane + static_cast<size_t>(y1) * src_stride + x1), src_stride);
+                  const_cast<uint8_t*>(y_plane + static_cast<size_t>(y1) * src_stride_y + x1),
+                  src_stride_y);
     cv::Mat uv_sub((y2 - y1) / 2, (x2 - x1) / 2, CV_8UC2,
-                   const_cast<uint8_t*>(uv_plane + static_cast<size_t>(y1 / 2) * src_stride +
-                                        static_cast<size_t>(x1 / 2) * 2), src_stride);
+                   const_cast<uint8_t*>(uv_plane + static_cast<size_t>(y1 / 2) * src_stride_uv +
+                                        static_cast<size_t>(x1 / 2) * 2), src_stride_uv);
     cv::cvtColorTwoPlane(y_sub, uv_sub, *bgr,
                          nv21 ? cv::COLOR_YUV2BGR_NV21 : cv::COLOR_YUV2BGR_NV12);
 }
@@ -150,13 +156,15 @@ bool CropFromNV12(const AlgImage& src, const AlgBox& box,
                   cv::Mat* holder, AlgImage* out, CropTransform* xf) {
     if (!holder || !out || !xf) return false;
     if (src.format != ALG_PIX_NV12 && src.format != ALG_PIX_NV21) return false;
-    if (!src.data || src.width <= 0 || src.height <= 0) return false;
+    ImageView source;
+    if (ResolveImageView(src, &source) != ALG_OK) return false;
 
     const int src_w = src.width;
     const int src_h = src.height;
-    const int src_stride = src.stride > 0 ? src.stride : src_w;
-    const uint8_t* y_plane  = static_cast<const uint8_t*>(src.data);
-    const uint8_t* uv_plane = y_plane + static_cast<size_t>(src_stride) * src_h;
+    const int src_stride_y = source.stride[0];
+    const int src_stride_uv = source.stride[1];
+    const uint8_t* y_plane = source.plane[0];
+    const uint8_t* uv_plane = source.plane[1];
     const bool nv21 = (src.format == ALG_PIX_NV21);
 
     int bx1, by1, bx2, by2;
@@ -173,7 +181,8 @@ bool CropFromNV12(const AlgImage& src, const AlgBox& box,
         if (y2 - y1 < 2) y2 = std::min(y1 + 2, src_h);
         if (x2 - x1 < 2 || y2 - y1 < 2) return false;
 
-        ConvertNvSubRegions(y_plane, uv_plane, src_stride, x1, y1, x2, y2, nv21, holder);
+        ConvertNvSubRegions(y_plane, uv_plane, src_stride_y, src_stride_uv,
+                            x1, y1, x2, y2, nv21, holder);
 
         out->format   = ALG_PIX_BGR;
         out->width    = holder->cols;
@@ -201,7 +210,8 @@ bool CropFromNV12(const AlgImage& src, const AlgBox& box,
     int iy2 = EvenFloor(std::min(src_h, by2));
     if (ix2 > ix1 && iy2 > iy1) {
         cv::Mat tmp_bgr;
-        ConvertNvSubRegions(y_plane, uv_plane, src_stride, ix1, iy1, ix2, iy2, nv21, &tmp_bgr);
+        ConvertNvSubRegions(y_plane, uv_plane, src_stride_y, src_stride_uv,
+                            ix1, iy1, ix2, iy2, nv21, &tmp_bgr);
         tmp_bgr.copyTo((*holder)(cv::Rect(ix1 - bx1, iy1 - by1, tmp_bgr.cols, tmp_bgr.rows)));
     }
 

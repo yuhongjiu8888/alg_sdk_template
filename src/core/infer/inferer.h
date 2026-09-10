@@ -29,18 +29,23 @@
 namespace alg {
 
 /**
- * 同一条 ChainSolution 内多个动态 AIPP 模型共享的原始帧 staging 描述。
+ * 同一条 ChainSolution 内多个动态 AIPP 模型共享的 YUV staging 描述。
  *
- * 第一个模型把调用方图像复制到自己的 ACL 输入缓冲并 flush；后续模型仅临时
- * 绑定这块已同步的缓冲。描述本身不拥有内存，实际缓冲仍由第一个 inferer 持有。
+ * 连续输入由第一个模型复制原图；分平面输入由 libyuv 缩放并合并。后续模型
+ * 只有在源平面和 staging 尺寸都相同时才临时绑定复用。描述本身不拥有内存，
+ * 实际缓冲仍由第一个 inferer 持有。
  */
 struct SharedInputStaging {
-    const void*    source_data = nullptr;
+    const void*    source_plane[2] = {};
     int            source_width = 0;
     int            source_height = 0;
-    int            source_stride = 0;
+    int            source_stride[2] = {};
     AlgPixelFormat source_format = ALG_PIX_BGR;
-    int            source_data_len = 0;
+    int            source_data_len[2] = {};
+    bool           source_uses_separate_planes = false;
+
+    int staged_width = 0;
+    int staged_height = 0;
 
     void*  data = nullptr;
     size_t capacity = 0;

@@ -6,11 +6,12 @@
 
 #include "backend/backend_factory.h"
 #include "core/config/config.h"
+#include "core/image_view.h"
 #include "core/logger.h"
 #include "core/object.h"
 #include "core/solution/chain_solution.h"
 
-#define ALG_VERSION_STRING "alg_sdk.v2.1.0"
+#define ALG_VERSION_STRING "alg_sdk.v3.0.0"
 
 namespace {
 
@@ -54,6 +55,10 @@ AlgStatus AlgDestroy(AlgHandle handle) {
 
 AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result) {
     if (!handle || !image || !result) return ALG_E_INVALID_ARG;
+
+    alg::ImageView source_view;
+    AlgStatus image_status = alg::ResolveImageView(*image, &source_view);
+    if (image_status != ALG_OK) return image_status;
 
     auto* ctx = reinterpret_cast<Context*>(handle);
     result->speed_limit_count = 0;

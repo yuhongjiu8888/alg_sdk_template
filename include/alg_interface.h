@@ -34,7 +34,7 @@ ALG_API AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* res
  */
 ALG_API AlgStatus AlgSetLogLevel(AlgLogLevel level);
 
-/** "alg_sdk.v2.1.0+<backend>"，方便日志/崩溃定位。 */
+/** "alg_sdk.v3.0.0+<backend>"，方便日志/崩溃定位。 */
 ALG_API const char* AlgVersion(void);
 
 /** 编译进来的后端名（"xmm" / "rk" / ...）。 */

@@ -5,6 +5,7 @@
 
 #include <opencv2/opencv.hpp>
 
+#include "core/image_view.h"
 #include "core/logger.h"
 
 #ifdef __aarch64__
@@ -12,12 +13,6 @@
 #endif
 
 namespace alg {
-
-namespace {
-inline int PixelStride(const AlgImage& img, int bytes_per_pixel) {
-    return img.stride > 0 ? img.stride : img.width * bytes_per_pixel;
-}
-}  // namespace
 
 Status LetterboxPreprocessor::Configure(const PreprocessConfig& cfg, const TensorView& input) {
     if (cfg.net_width <= 0 || cfg.net_height <= 0) return ALG_E_INVALID_ARG;
@@ -48,7 +43,10 @@ Status LetterboxPreprocessor::Configure(const PreprocessConfig& cfg, const Tenso
 Status LetterboxPreprocessor::DecodeAndResize(const AlgImage& image, int new_w, int new_h) {
     const int src_h = image.height;
     const int src_w = image.width;
-    const uint8_t* src = static_cast<const uint8_t*>(image.data);
+    ImageView source;
+    Status resolve_status = ResolveImageView(image, &source);
+    if (resolve_status != ALG_OK) return resolve_status;
+    const uint8_t* src = source.plane[0];
 
     switch (image.format) {
         case ALG_PIX_NV21:
@@ -64,11 +62,11 @@ Status LetterboxPreprocessor::DecodeAndResize(const AlgImage& image, int new_w, 
             if (res_h < 2) res_h = 2;
             if (res_w < 2) res_w = 2;
 
-            const int src_stride = PixelStride(image, 1);
-            cv::Mat y(src_h, src_w, CV_8UC1, const_cast<uint8_t*>(src), src_stride);
+            const int src_stride_y = source.stride[0];
+            const int src_stride_uv = source.stride[1];
+            cv::Mat y(src_h, src_w, CV_8UC1, const_cast<uint8_t*>(src), src_stride_y);
             cv::Mat uv(src_h / 2, src_w / 2, CV_8UC2,
-                       const_cast<uint8_t*>(src + static_cast<size_t>(src_h) * src_stride),
-                       src_stride);
+                       const_cast<uint8_t*>(source.plane[1]), src_stride_uv);
             if (res_w == src_w && res_h == src_h) {
                 y_resized_ = y;
                 uv_resized_ = uv;
@@ -92,7 +90,7 @@ Status LetterboxPreprocessor::DecodeAndResize(const AlgImage& image, int new_w, 
             return ALG_OK;
         }
         case ALG_PIX_BGR: {
-            const int s = PixelStride(image, 3);
+            const int s = source.stride[0];
             cv::Mat img(src_h, src_w, CV_8UC3, const_cast<uint8_t*>(src), s);
             cv::resize(img, resized_, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
             if (cfg_.color == ColorOrder::kRGB) cv::cvtColor(resized_, resized_, cv::COLOR_BGR2RGB);
@@ -100,7 +98,7 @@ Status LetterboxPreprocessor::DecodeAndResize(const AlgImage& image, int new_w, 
             return ALG_OK;
         }
         case ALG_PIX_RGB: {
-            const int s = PixelStride(image, 3);
+            const int s = source.stride[0];
             cv::Mat img(src_h, src_w, CV_8UC3, const_cast<uint8_t*>(src), s);
             cv::resize(img, resized_, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
             if (cfg_.color == ColorOrder::kBGR) cv::cvtColor(resized_, resized_, cv::COLOR_RGB2BGR);
@@ -108,7 +106,7 @@ Status LetterboxPreprocessor::DecodeAndResize(const AlgImage& image, int new_w, 
             return ALG_OK;
         }
         case ALG_PIX_GRAY: {
-            const int s = PixelStride(image, 1);
+            const int s = source.stride[0];
             cv::Mat g(src_h, src_w, CV_8UC1, const_cast<uint8_t*>(src), s);
             if (cfg_.color == ColorOrder::kGray) {
                 cv::resize(g, resized_, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
@@ -252,8 +250,8 @@ Status LetterboxPreprocessor::Apply(const AlgImage& image, TensorView& input,
     if (!configured_) return ALG_E_NOT_INITIALIZED;
     if (image.width <= 0 || image.height <= 0) return ALG_E_INVALID_ARG;
 
-    float scale;
-    int new_w, new_h, pad_left = 0, pad_top = 0;
+    float scale = 1.0f;
+    int new_w = 0, new_h = 0, pad_left = 0, pad_top = 0;
     switch (cfg_.resize) {
         case ResizeMode::kStretch:
             scale = 1.0f;

@@ -69,7 +69,18 @@ typedef enum AlgPixelFormat_ {
     ALG_PIX_NV21 = 4,
 } AlgPixelFormat;
 
-/* 输入图像描述，data 由调用方持有。 */
+/* 最多支持 4 个图像平面；当前 NV12/NV21 使用 plane 0/1。 */
+#define ALG_MAX_IMAGE_PLANES 4
+
+/*
+ * 输入图像描述，所有像素地址均由调用方持有。
+ *
+ * 兼容连续内存：data 非 NULL 时沿用 data/stride/data_len，NV12/NV21 的色度
+ * 平面紧跟 Y 平面。
+ *
+ * 支持分平面：data 设为 NULL，plane_data[0] 传 Y、plane_data[1] 传 UV/VU；
+ * 各平面可有独立 stride 和长度。结构体必须零初始化后再填写。
+ */
 typedef struct AlgImage_ {
     AlgPixelFormat format;
     int            width;
@@ -77,6 +88,10 @@ typedef struct AlgImage_ {
     int            stride;     /* 每行像素跨度（字节）；0 表示按 width * bpp 推算 */
     int            data_len;   /* 像素数据字节数 */
     const void*    data;       /* 像素数据缓冲区 */
+
+    const void*    plane_data[ALG_MAX_IMAGE_PLANES];
+    int            plane_stride[ALG_MAX_IMAGE_PLANES];
+    int            plane_data_len[ALG_MAX_IMAGE_PLANES];
 } AlgImage;
 
 

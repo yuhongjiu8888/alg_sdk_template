@@ -131,7 +131,7 @@ int RunOne(AlgHandle h, const std::string& image_path, const std::string& out_pa
     if (bgr.empty()) { std::fprintf(stderr, "imread failed: %s\n", image_path.c_str()); return 1; }
     std::printf("[image ] %s (%dx%d)\n", image_path.c_str(), bgr.cols, bgr.rows);
 
-    AlgImage img;
+    AlgImage img{};
     img.format   = ALG_PIX_BGR;
     img.width    = bgr.cols;
     img.height   = bgr.rows;

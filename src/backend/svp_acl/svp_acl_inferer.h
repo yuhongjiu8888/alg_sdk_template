@@ -55,6 +55,7 @@ class SvpAclInferer : public IInferer {
     size_t                image_input_capacity_ = 0;
     void*                 own_image_input_ = nullptr;
     bool                  image_input_preflushed_ = false;
+    bool                  libyuv_path_reported_ = false;
 
     Status EnsureOwnImageInput();
 #endif

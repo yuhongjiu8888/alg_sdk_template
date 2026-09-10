@@ -4,9 +4,15 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <vector>
 
+#include "core/image_view.h"
 #include "core/logger.h"
+
+#ifdef ALG_SVP_DYNAMIC_AIPP
+#include "libyuv/scale.h"
+#endif
 
 namespace alg {
 namespace {
@@ -176,6 +182,7 @@ void SvpAclInferer::FreeAll() {
     image_input_capacity_ = 0;
     own_image_input_ = nullptr;
     image_input_preflushed_ = false;
+    libyuv_path_reported_ = false;
 #endif
     input_views_.clear();
     output_views_.clear();
@@ -527,11 +534,14 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     return ALG_E_BACKEND;
 #else
     if (!initialized_ || !dynamic_aipp_) return ALG_E_NOT_INITIALIZED;
-    if (!image.data || image.width <= 0 || image.height <= 0 ||
+    if (image.width <= 0 || image.height <= 0 ||
         (image.width & 1) || (image.height & 1) ||
         (image.format != ALG_PIX_NV12 && image.format != ALG_PIX_NV21)) {
         return ALG_E_INVALID_ARG;
     }
+    ImageView source;
+    Status resolve_status = ResolveImageView(image, &source);
+    if (resolve_status != ALG_OK) return resolve_status;
     if ((cfg.input_format == InputFormatPolicy::kNV12 && image.format != ALG_PIX_NV12) ||
         (cfg.input_format == InputFormatPolicy::kNV21 && image.format != ALG_PIX_NV21)) {
         return ALG_E_INVALID_ARG;
@@ -604,8 +614,27 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         return ALG_E_PREPROCESS;
     }
 
+    /* 分平面输入由 libyuv 从原图直接缩放并合并到 ACL staging；连续输入仍由
+     * AIPP 缩放，以保留一帧一次搬运、多个检测模型共享 staging 的快路径。 */
+    const bool scale_with_libyuv = source.uses_separate_planes;
+    const int aipp_src_width = scale_with_libyuv ? output_width : image.width;
+    const int aipp_src_height = scale_with_libyuv ? output_height : image.height;
+    if (aipp_src_width <= 0 || aipp_src_height <= 0 ||
+        (aipp_src_width & 1) || (aipp_src_height & 1)) {
+        ALG_LOGE("svp_acl: libyuv/AIPP YUV size must be positive and even, got %dx%d",
+                 aipp_src_width, aipp_src_height);
+        return ALG_E_PREPROCESS;
+    }
+    if (scale_with_libyuv && !libyuv_path_reported_ &&
+        ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
+        ALG_LOGI("svp_acl: split-plane %s %dx%d -> libyuv %dx%d -> AIPP",
+                 image.format == ALG_PIX_NV21 ? "NV21" : "NV12",
+                 image.width, image.height, aipp_src_width, aipp_src_height);
+        libyuv_path_reported_ = true;
+    }
+
     svp_acl_error ret = svp_acl_mdl_set_aipp_src_image_size(
-        dynamic_aipp_, image.width, image.height);
+        dynamic_aipp_, aipp_src_width, aipp_src_height);
     if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
 
     int8_t uv_swap = 0;
@@ -638,10 +667,11 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     ret = svp_acl_mdl_set_aipp_padding_params(dynamic_aipp_, 0, 0, 0, 0, 0, 0);
     if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
 
-    const bool resize = image.width != output_width || image.height != output_height;
+    const bool resize = !scale_with_libyuv &&
+                        (image.width != output_width || image.height != output_height);
     ret = svp_acl_mdl_set_aipp_scf_params(
         dynamic_aipp_, resize ? 2 : 0,
-        image.width, image.height, output_width, output_height, 0);
+        aipp_src_width, aipp_src_height, output_width, output_height, 0);
     if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
 
     ret = svp_acl_mdl_set_aipp_dtc_pixel_mean(
@@ -667,7 +697,8 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     const size_t dst_stride = svp_acl_mdl_get_input_default_stride(
         model_desc_, image_input_index_);
     if (dst_size == 0 || dst_size > image_input_capacity_ ||
-        dst_stride < static_cast<size_t>(image.width)) {
+        dst_stride < static_cast<size_t>(aipp_src_width) ||
+        dst_stride > static_cast<size_t>(std::numeric_limits<int>::max())) {
         ALG_LOGE("svp_acl: invalid AIPP input buffer size=%zu stride=%zu capacity=%zu",
                  dst_size, dst_stride, image_input_capacity_);
         return ALG_E_PREPROCESS;
@@ -676,24 +707,31 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     svp_acl_data_buffer* image_buffer =
         svp_acl_mdl_get_dataset_buffer(input_dataset_, image_input_index_);
     uint8_t* dst = static_cast<uint8_t*>(svp_acl_get_data_buffer_addr(image_buffer));
-    const uint8_t* src = static_cast<const uint8_t*>(image.data);
-    const size_t src_stride = image.stride > 0 ? static_cast<size_t>(image.stride)
-                                               : static_cast<size_t>(image.width);
-    const size_t needed_src = src_stride * image.height * 3 / 2;
-    if (src_stride < static_cast<size_t>(image.width) || image.data_len < 0 ||
-        (image.data_len > 0 && static_cast<size_t>(image.data_len) < needed_src)) {
-        return ALG_E_INVALID_ARG;
+    size_t dst_y_bytes = 0;
+    size_t dst_uv_bytes = 0;
+    if (!CheckedPlaneByteSize(static_cast<int>(dst_stride), aipp_src_height,
+                              &dst_y_bytes) ||
+        !CheckedPlaneByteSize(static_cast<int>(dst_stride), aipp_src_height / 2,
+                              &dst_uv_bytes) ||
+        dst_y_bytes > std::numeric_limits<size_t>::max() - dst_uv_bytes) {
+        return ALG_E_PREPROCESS;
     }
-    const size_t needed_dst = dst_stride * image.height * 3 / 2;
+    const size_t needed_dst = dst_y_bytes + dst_uv_bytes;
     if (needed_dst > dst_size) return ALG_E_PREPROCESS;
 
     const bool can_share = shared_staging && shared_staging->flushed &&
-        shared_staging->source_data == image.data &&
+        shared_staging->source_plane[0] == source.plane[0] &&
+        shared_staging->source_plane[1] == source.plane[1] &&
         shared_staging->source_width == image.width &&
         shared_staging->source_height == image.height &&
-        shared_staging->source_stride == static_cast<int>(src_stride) &&
+        shared_staging->source_stride[0] == source.stride[0] &&
+        shared_staging->source_stride[1] == source.stride[1] &&
         shared_staging->source_format == image.format &&
-        shared_staging->source_data_len == image.data_len &&
+        shared_staging->source_data_len[0] == source.data_len[0] &&
+        shared_staging->source_data_len[1] == source.data_len[1] &&
+        shared_staging->source_uses_separate_planes == source.uses_separate_planes &&
+        shared_staging->staged_width == aipp_src_width &&
+        shared_staging->staged_height == aipp_src_height &&
         shared_staging->data && shared_staging->capacity >= dst_size &&
         shared_staging->data_size == needed_dst &&
         shared_staging->row_stride == dst_stride;
@@ -723,19 +761,37 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         input_views_[0].data = dst;
         input_views_[0].size_bytes = dst_size;
 
-        if (src_stride == dst_stride) {
-            std::memcpy(dst, src, needed_dst);
+        if (scale_with_libyuv) {
+            uint8_t* dst_uv = dst + dst_y_bytes;
+            const int libyuv_status = libyuv::NV12Scale(
+                source.plane[0], source.stride[0],
+                source.plane[1], source.stride[1],
+                image.width, image.height,
+                dst, static_cast<int>(dst_stride),
+                dst_uv, static_cast<int>(dst_stride),
+                aipp_src_width, aipp_src_height,
+                libyuv::kFilterBilinear);
+            if (libyuv_status != 0) {
+                ALG_LOGE("svp_acl: libyuv scale/merge failed, ret=%d", libyuv_status);
+                return ALG_E_PREPROCESS;
+            }
+        } else if (static_cast<size_t>(source.stride[0]) == dst_stride &&
+                   static_cast<size_t>(source.stride[1]) == dst_stride) {
+            std::memcpy(dst, source.plane[0], needed_dst);
         } else {
             for (int y = 0; y < image.height; ++y)
                 std::memcpy(dst + static_cast<size_t>(y) * dst_stride,
-                            src + static_cast<size_t>(y) * src_stride, image.width);
-            const uint8_t* src_uv = src + src_stride * image.height;
-            uint8_t* dst_uv = dst + dst_stride * image.height;
+                            source.plane[0] + static_cast<size_t>(y) * source.stride[0],
+                            image.width);
+            uint8_t* dst_uv = dst + dst_y_bytes;
             for (int y = 0; y < image.height / 2; ++y)
                 std::memcpy(dst_uv + static_cast<size_t>(y) * dst_stride,
-                            src_uv + static_cast<size_t>(y) * src_stride, image.width);
+                            source.plane[1] + static_cast<size_t>(y) * source.stride[1],
+                            image.width);
         }
-        ret = svp_acl_rt_mem_flush(dst, dst_size);
+        /* 只同步本帧实际 YUV 区域。分平面路径已缩到模型有效区，不必 flush
+         * 按最大 1920x1080 预留的整个动态输入缓冲。 */
+        ret = svp_acl_rt_mem_flush(dst, needed_dst);
         if (ret != SVP_ACL_SUCCESS) {
             ALG_LOGE("svp_acl: staged AIPP input flush failed, ret=%d", ret);
             return ALG_E_BACKEND;
@@ -743,12 +799,18 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         image_input_preflushed_ = true;
 
         if (shared_staging) {
-            shared_staging->source_data = image.data;
+            shared_staging->source_plane[0] = source.plane[0];
+            shared_staging->source_plane[1] = source.plane[1];
             shared_staging->source_width = image.width;
             shared_staging->source_height = image.height;
-            shared_staging->source_stride = static_cast<int>(src_stride);
+            shared_staging->source_stride[0] = source.stride[0];
+            shared_staging->source_stride[1] = source.stride[1];
             shared_staging->source_format = image.format;
-            shared_staging->source_data_len = image.data_len;
+            shared_staging->source_data_len[0] = source.data_len[0];
+            shared_staging->source_data_len[1] = source.data_len[1];
+            shared_staging->source_uses_separate_planes = source.uses_separate_planes;
+            shared_staging->staged_width = aipp_src_width;
+            shared_staging->staged_height = aipp_src_height;
             shared_staging->data = dst;
             shared_staging->capacity = image_input_capacity_;
             shared_staging->data_size = needed_dst;

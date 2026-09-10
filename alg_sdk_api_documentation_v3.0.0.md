@@ -2,7 +2,7 @@
 
 | 项目 | 版本 | 更新日期 |
 |------|------|----------|
-| 限速牌 / 禁令停车牌 / 车牌识别（alg_sdk） | Version-2.1.0 | 2026 年 09 月 10 日 |
+| 限速牌 / 禁令停车牌 / 车牌识别（alg_sdk） | Version-3.0.0 | 2026 年 09 月 10 日 |
 
 ## 文档控制
 
@@ -20,8 +20,9 @@
 | 1.0.0（文档修订） | 喻伟 | 2026.09.07 | 完善公共接口参数、返回值及数据结构说明 |
 | 2.0.0 | — | 2026.09.09 | 结果改为固定容量内联数组，移除 `AlgFreeResult` |
 | 2.1.0 | — | 2026.09.10 | 新增运行期日志等级控制接口 `AlgSetLogLevel` |
+| 3.0.0 | — | 2026.09.10 | `AlgImage` 新增独立图像平面，支持分地址 NV12/NV21 输入 |
 
-本文档说明 alg_sdk 2.1.0 的公共函数、枚举和结构体。接口声明见交付头文件 `alg_interface.h`，数据类型见 `alg_types.h`。应用应使用与动态库配套的头文件。
+本文档说明 alg_sdk 3.0.0 的公共函数、枚举和结构体。接口声明见交付头文件 `alg_interface.h`，数据类型见 `alg_types.h`。应用应使用与动态库配套的头文件。
 
 ## 目录
 
@@ -129,7 +130,7 @@ AlgSetLogLevel(ALG_LOG_OFF);   /* 关闭全部 SDK 日志 */
 const char* AlgVersion(void);
 ```
 
-返回版本字符串，格式为 `"alg_sdk.v2.1.0+<backend>"`，例如 `"alg_sdk.v2.1.0+svp_acl"`。2.0 版本将结果数组改为内联固定容量；2.1 新增日志等级接口。应用必须使用配套头文件重新编译。
+返回版本字符串，格式为 `"alg_sdk.v3.0.0+<backend>"`，例如 `"alg_sdk.v3.0.0+svp_acl"`。3.0 扩展了 `AlgImage`，应用必须使用配套头文件重新编译。
 
 无需创建实例即可调用。字符串由 SDK 持有，调用方不可修改或释放；动态库卸载后不可继续访问该指针。
 
@@ -237,19 +238,28 @@ typedef struct AlgImage_ {
     int            stride;
     int            data_len;
     const void*    data;
+
+    const void*    plane_data[4];
+    int            plane_stride[4];
+    int            plane_data_len[4];
 } AlgImage;
 ```
 
 | 字段 | 说明 |
 |------|------|
-| `format` | 像素格式，取值见 2.3 |
+| `format` | 像素格式，取值见 2.4 |
 | `width` | 图像宽度，单位为像素，须大于 0 |
 | `height` | 图像高度，单位为像素，须大于 0 |
-| `stride` | 每行字节跨度，取值要求见下表 |
-| `data_len` | 实际可用像素缓冲字节数，计算时须避免整数溢出并确保可由 `int` 表示 |
-| `data` | 调用方持有的可读像素缓冲地址，不得为 `NULL` |
+| `stride` | 连续模式的行跨度；分平面模式下可作为未单独填写平面 stride 时的公共回退值 |
+| `data_len` | 连续模式的完整缓冲长度；0 表示调用方不提供长度检查信息 |
+| `data` | 连续模式的起始地址；设为 `NULL` 时启用分平面模式 |
+| `plane_data[4]` | 分平面地址；NV12/NV21 中 `[0]=Y`、`[1]=UV/VU`，其余保留为 `NULL` |
+| `plane_stride[4]` | 各平面独立行跨度；0 表示回退到 `stride`，两者均为 0 时按紧凑宽度 |
+| `plane_data_len[4]` | 各平面可用长度；0 表示调用方不提供该平面的长度检查信息 |
 
-设 `W=width`、`H=height`、`S` 为实际行字节跨度，完整帧的内存要求为：
+调用方必须先用 `{0}` 或 `memset` 将整个结构体清零，再填写字段。`data != NULL` 时 SDK 只读取兼容字段，不读取新增平面字段；`data == NULL` 时必须填写 `plane_data[0]`，NV12/NV21 还必须填写 `plane_data[1]`。
+
+连续模式下，设 `W=width`、`H=height`、`S` 为实际行字节跨度，内存要求为：
 
 | 格式 | `stride` 要求 | 完整帧缓冲要求 |
 |------|---------------|----------------|
@@ -257,9 +267,29 @@ typedef struct AlgImage_ {
 | GRAY | `0` 表示 `S=W`；正数时须 `S>=W` | 至少 `S*H` 字节 |
 | NV12 / NV21 | `0` 表示 `S=W`；正数为实际 Y/UV 共用行跨度 | 至少 `S*H*3/2` 字节 |
 
-`stride` 不应为负。NV12 / NV21 的宽高须为偶数，色度平面从 `data + S*H` 开始；支持 VPSS 常见的行尾对齐，不支持分离平面指针或额外平面间隔。
+分平面 NV12/NV21 模式下，宽高须为偶数。Y 平面至少包含 `plane_stride[0]*H` 字节，UV/VU 平面至少包含 `plane_stride[1]*(H/2)` 字节；两个 stride 都须不小于 `W`，可各自不同。NV12 的 `[1]` 为 UV 交错，NV21 的 `[1]` 为 VU 交错。
 
-SDK 不通过 `data_len` 完成缓冲边界检查，调用方须保证实际可用内存满足上述布局，并在 `AlgRun` 返回前保持缓冲有效。
+长度字段大于 0 时 SDK 会检查其是否满足最小布局，等于 0 时跳过长度检查。无论是否填写长度，调用方均须保证实际内存有效，并在 `AlgRun` 返回前保持所有平面不被释放或改写。
+
+海思动态 AIPP 对分平面输入先调用 libyuv，以双线性插值把 Y 与 UV/VU 缩放到模型有效区，并直接写入连续 ACL staging；随后由 AIPP 完成 CSC，由包装模型图完成 padding/归一化。连续输入仍保留由 AIPP 缩放及多检测模型共享整帧 staging 的原路径。两条路径插值实现不同，首次集成应在板端比较框坐标、置信度和耗时。
+
+分平面 NV21 接入示例（Y 与 VU 地址不要求连续）：
+
+```c
+AlgImage image = {0};
+image.format = ALG_PIX_NV21;
+image.width = frame_width;
+image.height = frame_height;
+image.data = NULL;
+image.plane_data[0] = y_virtual_address;
+image.plane_data[1] = vu_virtual_address;
+image.plane_stride[0] = y_stride;
+image.plane_stride[1] = vu_stride;
+image.plane_data_len[0] = y_stride * frame_height;
+image.plane_data_len[1] = vu_stride * (frame_height / 2);
+
+AlgStatus status = AlgRun(handle, &image, &result);
+```
 
 ### 2.6 AlgBox：检测框
 

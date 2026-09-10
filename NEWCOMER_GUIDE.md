@@ -1,6 +1,6 @@
 # alg_sdk 开发接入指南
 
-本指南说明 alg_sdk 的工程接入流程、主要模块和问题定位方法，适用于应用集成和后续维护。完整接口定义见 [接口文档](alg_sdk_api_documentation_v2.1.0.md)，设计说明见 [架构文档](ARCHITECTURE.md)。
+本指南说明 alg_sdk 的工程接入流程、主要模块和问题定位方法，适用于应用集成和后续维护。完整接口定义见 [接口文档](alg_sdk_api_documentation_v3.0.0.md)，设计说明见 [架构文档](ARCHITECTURE.md)。
 
 ## 1. 接入范围
 
@@ -103,8 +103,9 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 |------|----------|
 | BGR / RGB | 8 位交错三通道数据，`stride` 为每行字节数，0 表示 `width*3` |
 | GRAY | 8 位单通道数据，`stride=0` 表示 `width` |
-| NV12 / NV21 | 宽高为偶数，Y/UV 两平面共用 stride；色度平面从 `data + stride*height` 开始 |
-| `data_len` | 填写实际可用字节数；应用负责缓冲大小和边界校验 |
+| NV12 / NV21 连续模式 | `data` 指向 Y，UV/VU 紧跟在 `data + stride*height`；宽高为偶数 |
+| NV12 / NV21 分平面模式 | `data=NULL`，`plane_data[0]` 指向 Y，`plane_data[1]` 指向 UV/VU，可用独立 stride |
+| 长度字段 | `data_len` 或 `plane_data_len[]` 大于 0 时 SDK 校验最小长度；0 表示未知 |
 | 检测坐标 | 对应传入原图，SDK 负责恢复配置 ROI 和裁剪产生的偏移 |
 | 限速值 | `SLV_10`～`SLV_120` 的枚举值乘 10 得到 km/h |
 | PARE 分数 | 第一阶段检测分 |
@@ -115,7 +116,7 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 
 图片文件应先解码为像素再传入。JSON 的 `preprocess.color` 定义模型输入颜色顺序，`AlgImage.format` 定义源图像格式，两者不要求相同。
 
-海思 VPSS 实时流使用 `AlgRun`：应用只需传入原分辨率 NV12/NV21 帧，检测模型的缩放由动态 AIPP 完成，不需要额外创建模型尺寸的 VPSS 通道。通常使用 NV21，也可传 NV12；两种格式均允许常见的 VPSS 行对齐 stride。
+海思 VPSS 实时流使用 `AlgRun`：连续 NV12/NV21 由动态 AIPP 缩放；Y 与 UV/VU 地址分离时，由 libyuv 缩放并合并到 SDK staging，再由 AIPP 做 CSC、包装模型图做 padding/归一化。两种方式都不需要额外创建模型尺寸的 VPSS 通道。
 
 ## 5. 配置与执行关系
 

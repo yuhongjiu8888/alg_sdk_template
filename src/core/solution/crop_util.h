@@ -29,11 +29,11 @@ struct CropTransform {
 /**
  * 把 AlgImage 解码为 BGR cv::Mat，写入调用方持有的 `out`。
  *
- * - BGR：零拷贝包装 src.data，共享内存。out 仅作为头返回。
+ * - BGR：零拷贝包装 src.data/plane_data[0]，共享内存。out 仅作为头返回。
  * - RGB/GRAY/NV12/NV21：必然一次 cvtColor；OpenCV 会复用 out 的底层 buffer
  *   （同 shape/type 多次调用时不再分配）。
  *
- * 调用方需保证 src.data 的存活期覆盖所有 ROI 视图的使用期。
+ * 调用方需保证所有输入平面的存活期覆盖所有 ROI 视图的使用期。
  */
 void DecodeSourceToBgrInto(const AlgImage& src, cv::Mat* out);
 

@@ -16,6 +16,7 @@
  *   -n <count>          循环次数；0 或缺省 = 无限循环（Ctrl-C 停止）
  *   -size <WxH>         yuv 输入必需（除非文件名含 "WxH" 模式，如 raw_1920x1080_nv12.yuv）
  *   -fmt <nv12|nv21>    yuv 像素格式，默认 nv12
+ *   -split-plane        把 Y 和 UV/VU 拆成两个独立地址传入，验证分平面接口
  *   -save-every <N>     每 N 帧保存一次画框结果（默认 0 = 从不保存；目录 loop_out/）
  *   -stats-every <N>    每 N 帧打印一次窗口统计（默认 100）
  *   -fps <N>            帧率上限：每帧耗时不足 1000/N ms 时 usleep 补齐（默认 0 = 不限速）
@@ -164,6 +165,7 @@ int main(int argc, char** argv) {
                      "  -n <count>        循环次数；0=无限循环直到 Ctrl-C（默认）\n"
                      "  -size <WxH>       yuv 输入必需（除非文件名含 WxH，如 raw_1920x1080_nv12.yuv）\n"
                      "  -fmt <nv12|nv21>  yuv 像素格式（默认 nv12）\n"
+                     "  -split-plane      将 Y 与 UV/VU 作为两个独立地址传入\n"
                      "  -save-every <N>   每 N 帧保存画框结果，0=从不保存（默认 0）\n"
                      "  -stats-every <N>  每 N 帧打印窗口统计（默认 100）\n"
                      "  -fps <N>          帧率上限：usleep 补齐到 1000/N ms/帧（0=不限速，默认 0）\n"
@@ -194,6 +196,7 @@ int main(int argc, char** argv) {
 
     /* 准备 AlgImage：图片读一次成 BGR；YUV 整文件读进内存，循环里复用同一 buffer。 */
     std::vector<uint8_t> yuv_bytes; /* yuv 输入持有原始字节（保持存活） */
+    std::vector<uint8_t> y_plane_bytes, uv_plane_bytes;
     cv::Mat image_bgr;              /* 图片输入持有解码结果 */
     AlgImage img{};
     if (is_yuv) {
@@ -232,16 +235,31 @@ int main(int argc, char** argv) {
         img.format = PixelFormatOf(Opt(args, "-fmt", "nv12").c_str());
         img.width = w;
         img.height = h;
-        img.stride = 0; /* NV12/NV21 按 width 紧凑布局 */
-        img.data = yuv_bytes.data();
-        img.data_len = static_cast<int>(yuv_bytes.size());
         const long expect = static_cast<long>(w) * h * 3 / 2; /* I420：Y + UV 交错 */
         if (static_cast<long>(yuv_bytes.size()) != expect) {
             std::fprintf(stderr, "yuv 文件大小 %zu 与 %d x %d NV12/NV21 期望 %ld 不符（可能含多帧或非 420）\n",
                          yuv_bytes.size(), w, h, expect);
             return 1;
         }
-        std::printf("[input ] yuv %s (%dx%d, %s)\n", input_path.c_str(), w, h, Opt(args, "-fmt", "nv12").c_str());
+        img.stride = 0; /* NV12/NV21 按 width 紧凑布局 */
+        if (HasOpt(args, "-split-plane")) {
+            const size_t y_size = static_cast<size_t>(w) * h;
+            y_plane_bytes.assign(yuv_bytes.begin(), yuv_bytes.begin() + y_size);
+            uv_plane_bytes.assign(yuv_bytes.begin() + y_size, yuv_bytes.end());
+            img.data = nullptr;
+            img.plane_data[0] = y_plane_bytes.data();
+            img.plane_data[1] = uv_plane_bytes.data();
+            img.plane_stride[0] = w;
+            img.plane_stride[1] = w;
+            img.plane_data_len[0] = static_cast<int>(y_plane_bytes.size());
+            img.plane_data_len[1] = static_cast<int>(uv_plane_bytes.size());
+        } else {
+            img.data = yuv_bytes.data();
+            img.data_len = static_cast<int>(yuv_bytes.size());
+        }
+        std::printf("[input ] yuv %s (%dx%d, %s, %s)\n", input_path.c_str(), w, h,
+                    Opt(args, "-fmt", "nv12").c_str(),
+                    HasOpt(args, "-split-plane") ? "split-plane" : "contiguous");
     } else {
         image_bgr = cv::imread(input_path, cv::IMREAD_COLOR);
         if (image_bgr.empty()) {
@@ -320,7 +338,7 @@ int main(int argc, char** argv) {
             cv::Mat draw;
             if (is_yuv) {
                 cv::Mat yuv_raw(img.height * 3 / 2, img.width, CV_8UC1,
-                                const_cast<uint8_t*>(static_cast<const uint8_t*>(img.data)));
+                                yuv_bytes.data());
                 cv::cvtColor(yuv_raw, draw,
                              img.format == ALG_PIX_NV21 ? cv::COLOR_YUV2BGR_NV21 : cv::COLOR_YUV2BGR_NV12);
                 DrawResult(draw, r);

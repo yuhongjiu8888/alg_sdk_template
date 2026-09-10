@@ -69,7 +69,7 @@ backup/                   历史接口归档
 
 日志默认等级为 Warn。`AlgSetLogLevel` 无需句柄，建议在 `AlgCreate` 前调用，也可在运行期间调整；设置作用于动态库中的全部实例。
 
-完整函数声明、数据类型和调用示例见 [接口文档](alg_sdk_api_documentation_v2.1.0.md)。公共 API 不包含红绿灯、关键点和分割结果字段。
+完整函数声明、数据类型和调用示例见 [接口文档](alg_sdk_api_documentation_v3.0.0.md)。公共 API 不包含红绿灯、关键点和分割结果字段。
 
 ## 模型与配置
 
@@ -106,6 +106,7 @@ backup/                   历史接口归档
 
 海思环境的工具链及依赖路径可通过 CMake 参数 `HISI_TOOLCHAIN_ROOT`、`SVP_ACL_ROOT`、`SVP_ACL_LIB_DIR`、`HISI_SECUREC_LIB_DIR` 和 `SVP_OPENCV_ROOT` 配置。
 动态 AIPP 默认通过 `ALG_SVP_DYNAMIC_AIPP=ON` 编译；需要兼容不含动态 AIPP API 的旧版 ACL 头文件时可显式关闭。
+分平面 NV12/NV21 的缩放与合并使用 `third_party/libyuv/hi3516`，可通过 `LIBYUV_ROOT` 覆盖头文件和静态库目录。
 
 在匹配的目标设备或本地运行环境中，从仓库一级构建目录启动验证程序：
 
@@ -115,15 +116,17 @@ cd build_linux_aarch64_svp_acl
 ./loop_runner ../resources/config/svp_acl/all.json /data/test.jpg -n 1000
 ./loop_runner ../resources/config/svp_acl/license_plate.json /data/frame.yuv \
   -size 1920x1080 -fmt nv12 -n 1000
+./loop_runner ../resources/config/svp_acl/all.json /data/frame.yuv \
+  -size 1920x1080 -fmt nv21 -split-plane -n 1000
 ```
 
 `test_runner` 支持图片或图片目录，`loop_runner` 支持图片和原始 YUV 帧循环输入。上述相对路径要求部署目录保留构建目录与 `resources` 的同级关系。
 
 ## 接入与交付约束
 
-- 图像格式支持 BGR、RGB、GRAY、NV12 和 NV21。NV12 / NV21 要求偶数宽高；两平面共用 `stride`，色度平面从 `data + stride * height` 开始。默认 VPSS 格式为 NV21，同时兼容 NV12。
+- 图像格式支持 BGR、RGB、GRAY、NV12 和 NV21。NV12/NV21 既可通过 `data` 传连续内存，也可通过 `plane_data[0]` 和 `[1]` 分别传 Y 与 UV/VU，分平面支持独立 stride。默认 VPSS 格式为 NV21，同时兼容 NV12。
 - 海思通过 `AlgRun` 传入原分辨率 VPSS 帧，不要求为各模型增加 VPSS 缩放通道。
-- 带动态 AIPP 的检测 OM 在 `engine=auto` 时完成 NV12/NV21 转色和缩放；值为 114 的 letterbox 补边固化在模型图中。普通 OM 保持 OpenCV 路径。
+- 带动态 AIPP 的检测 OM 在 `engine=auto` 时完成 NV12/NV21 转色；连续输入由 AIPP 缩放，分平面输入由 libyuv 缩放并合并。值为 114 的 letterbox 补边固化在模型图中，普通 OM 保持 OpenCV 路径。
 - 网络前处理输出 NCHW，支持 UINT8 和 FLOAT32 输入类型，输入尺寸须与模型一致。
 - SDK 调用由应用串行调度；共享结果和图像缓冲的访问需要同步。
 - 车牌空文本仍可能返回结果，应用需结合非空文本和业务格式判断有效性。
@@ -133,7 +136,7 @@ cd build_linux_aarch64_svp_acl
 
 | 文档 | 用途 |
 |------|------|
-| [接口文档](alg_sdk_api_documentation_v2.1.0.md) | 公共接口、数据类型、资源管理和部署约束 |
+| [接口文档](alg_sdk_api_documentation_v3.0.0.md) | 公共接口、数据类型、资源管理和部署约束 |
 | [架构设计](ARCHITECTURE.md) | 模块职责、数据流和扩展方式 |
 | [开发接入指南](NEWCOMER_GUIDE.md) | 工程接入、配置选择和问题定位 |
 | [配置说明](resources/CONFIG.md) | 业务编排和模型参数 |

@@ -155,6 +155,16 @@ elseif(ALG_BACKEND STREQUAL "svp_acl")
         "/root/project/haisi-v610/gcc-20250305-arm-v01c02-linux-musleabi/arm-v01c02-linux-musleabi-gcc/target/usr/lib/a7_softfp_neon-vfpv4"
         CACHE PATH "HiSilicon securec library directory")
     include_directories(${SVP_ACL_ROOT}/include)
+    set(LIBYUV_ROOT
+        "${CMAKE_SOURCE_DIR}/third_party/libyuv/hi3516"
+        CACHE PATH "libyuv root for split-plane NV12/NV21 preprocessing")
+    if(ALG_SVP_DYNAMIC_AIPP)
+        if(NOT EXISTS "${LIBYUV_ROOT}/include/libyuv/scale.h" OR
+           NOT EXISTS "${LIBYUV_ROOT}/lib/libyuv.a")
+            message(FATAL_ERROR "libyuv headers/library not found under ${LIBYUV_ROOT}")
+        endif()
+        include_directories(${LIBYUV_ROOT}/include)
+    endif()
     link_directories(${SVP_ACL_LIB_DIR} ${HISI_SECUREC_LIB_DIR})
     set(ALG_BACKEND_LIBS
         libprotobuf-c.a
@@ -162,6 +172,9 @@ elseif(ALG_BACKEND STREQUAL "svp_acl")
         libsvp_acl.a
         libsecurec.a
     )
+    if(ALG_SVP_DYNAMIC_AIPP)
+        list(APPEND ALG_BACKEND_LIBS "${LIBYUV_ROOT}/lib/libyuv.a")
+    endif()
 else()
     message(FATAL_ERROR
         "Unknown ALG_BACKEND: ${ALG_BACKEND} (expected xmm, svp_acl or rk)")
