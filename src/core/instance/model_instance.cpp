@@ -101,8 +101,22 @@ Status ModelInstance::RunImpl(const AlgImage& image,
     if (s != ALG_OK) return s;
     if (profile) {
         gettimeofday(&t3, nullptr);
+        const double pre_ms = Ms(t0, t1);
         ALG_LOGI("[%s] pre=%.2fms infer=%.2fms post=%.2fms objects=%zu",
-                 cfg_.name.c_str(), Ms(t0, t1), Ms(t1, t2), Ms(t2, t3), out->size());
+                 cfg_.name.c_str(), pre_ms, Ms(t1, t2), Ms(t2, t3), out->size());
+        if (state.aipp_profile_valid) {
+            const double measured_ms = state.aipp_setup_ms + state.aipp_bind_ms +
+                                       state.aipp_copy_ms + state.aipp_flush_ms;
+            const double other_ms = std::max(0.0, pre_ms - measured_ms);
+            ALG_LOGI("[%s] aipp_pre setup=%.2fms bind=%.2fms copy=%.2fms "
+                     "flush=%.2fms other=%.2fms reused=%d split=%d "
+                     "bytes=%zu stride=%zu",
+                     cfg_.name.c_str(), state.aipp_setup_ms, state.aipp_bind_ms,
+                     state.aipp_copy_ms, state.aipp_flush_ms, other_ms,
+                     state.aipp_staging_reused ? 1 : 0,
+                     state.aipp_split_planes ? 1 : 0,
+                     state.aipp_staging_bytes, state.aipp_staging_stride);
+        }
     }
     return ALG_OK;
 }

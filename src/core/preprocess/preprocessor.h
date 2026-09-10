@@ -10,6 +10,8 @@
 #ifndef ALG_CORE_PREPROCESS_PREPROCESSOR_H
 #define ALG_CORE_PREPROCESS_PREPROCESSOR_H
 
+#include <cstddef>
+
 #include "alg_types.h"
 #include "core/status.h"
 #include "core/tensor.h"
@@ -72,6 +74,17 @@ struct PreprocessState {
     int   pad_top  = 0;
     int   original_width = 0;
     int   original_height = 0;
+
+    /* 仅在 Info 日志开启且使用动态 AIPP 时填写，用于板端拆分前处理耗时。 */
+    bool   aipp_profile_valid = false;
+    bool   aipp_staging_reused = false;
+    bool   aipp_split_planes = false;
+    double aipp_setup_ms = 0.0;
+    double aipp_bind_ms = 0.0;
+    double aipp_copy_ms = 0.0;
+    double aipp_flush_ms = 0.0;
+    size_t aipp_staging_bytes = 0;
+    size_t aipp_staging_stride = 0;
 };
 
 class IPreprocessor {

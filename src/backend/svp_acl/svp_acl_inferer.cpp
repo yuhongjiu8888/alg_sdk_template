@@ -7,6 +7,8 @@
 #include <limits>
 #include <vector>
 
+#include <sys/time.h>
+
 #include "core/image_view.h"
 #include "core/logger.h"
 
@@ -16,6 +18,11 @@
 
 namespace alg {
 namespace {
+
+inline double ElapsedMs(const timeval& begin, const timeval& end) {
+    return (end.tv_sec - begin.tv_sec) * 1000.0 +
+           (end.tv_usec - begin.tv_usec) / 1000.0;
+}
 
 struct SvpAclRuntime {
     int                refcount = 0;
@@ -617,6 +624,7 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     /* 两种输入都以原图尺寸写入 ACL staging，再由 AIPP 缩放。分平面输入仅用
      * libyuv 合并平面，不在 CPU 上缩放，因此不同目标尺寸的检测模型也能共享。 */
     const bool copy_split_planes = source.uses_separate_planes;
+    const bool profile = ALG_LOG_IS_ENABLED(alg::log::Level::Info);
     const int aipp_src_width = image.width;
     const int aipp_src_height = image.height;
     if (aipp_src_width <= 0 || aipp_src_height <= 0 ||
@@ -633,6 +641,8 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         split_copy_path_reported_ = true;
     }
 
+    timeval setup_begin{}, setup_end{};
+    if (profile) gettimeofday(&setup_begin, nullptr);
     svp_acl_error ret = svp_acl_mdl_set_aipp_src_image_size(
         dynamic_aipp_, aipp_src_width, aipp_src_height);
     if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
@@ -690,6 +700,10 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         ALG_LOGE("svp_acl: attach dynamic AIPP failed, ret=%d", ret);
         return ALG_E_PREPROCESS;
     }
+    if (profile) {
+        gettimeofday(&setup_end, nullptr);
+        state.aipp_setup_ms = ElapsedMs(setup_begin, setup_end);
+    }
 
     const size_t dst_size = svp_acl_mdl_get_input_size_by_index(
         model_desc_, image_input_index_);
@@ -735,6 +749,15 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         shared_staging->data_size == needed_dst &&
         shared_staging->row_stride == dst_stride;
 
+    state.aipp_profile_valid = profile;
+    state.aipp_staging_reused = can_share;
+    state.aipp_split_planes = copy_split_planes;
+    state.aipp_staging_bytes = needed_dst;
+    state.aipp_staging_stride = dst_stride;
+
+    timeval bind_begin{}, bind_end{};
+    if (profile) gettimeofday(&bind_begin, nullptr);
+
     if (can_share) {
         ret = svp_acl_update_data_buffer(image_buffer, shared_staging->data,
                                          dst_size, dst_stride);
@@ -745,10 +768,18 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
 
         /* 本 inferer 后续始终由同一静态 chain 顺序取得共享帧，可释放不再使用的
          * 私有整帧缓存。dataset buffer 不拥有地址，FreeAll 只释放 allocations_。 */
+        bool released_private = false;
         if (own_image_input_ && own_image_input_ != shared_staging->data) {
             (void)svp_acl_rt_free(own_image_input_);
             input_allocations_[image_input_index_] = nullptr;
             own_image_input_ = nullptr;
+            released_private = true;
+        }
+        if (profile) {
+            gettimeofday(&bind_end, nullptr);
+            state.aipp_bind_ms = ElapsedMs(bind_begin, bind_end);
+        }
+        if (released_private) {
             ALG_LOGI("svp_acl: switched to shared AIPP staging, released private input");
         }
     } else {
@@ -759,7 +790,13 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
         input_views_[0].data = dst;
         input_views_[0].size_bytes = dst_size;
+        if (profile) {
+            gettimeofday(&bind_end, nullptr);
+            state.aipp_bind_ms = ElapsedMs(bind_begin, bind_end);
+        }
 
+        timeval copy_begin{}, copy_end{};
+        if (profile) gettimeofday(&copy_begin, nullptr);
         if (copy_split_planes) {
             uint8_t* dst_uv = dst + dst_y_bytes;
             const int libyuv_status = image.format == ALG_PIX_NV21
@@ -793,11 +830,22 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
                             source.plane[1] + static_cast<size_t>(y) * source.stride[1],
                             image.width);
         }
+        if (profile) {
+            gettimeofday(&copy_end, nullptr);
+            state.aipp_copy_ms = ElapsedMs(copy_begin, copy_end);
+        }
+
         /* 只同步当前原图对应的 YUV 区域，不 flush 按最大输入预留的剩余空间。 */
+        timeval flush_begin{}, flush_end{};
+        if (profile) gettimeofday(&flush_begin, nullptr);
         ret = svp_acl_rt_mem_flush(dst, needed_dst);
         if (ret != SVP_ACL_SUCCESS) {
             ALG_LOGE("svp_acl: staged AIPP input flush failed, ret=%d", ret);
             return ALG_E_BACKEND;
+        }
+        if (profile) {
+            gettimeofday(&flush_end, nullptr);
+            state.aipp_flush_ms = ElapsedMs(flush_begin, flush_end);
         }
         image_input_preflushed_ = true;
 
