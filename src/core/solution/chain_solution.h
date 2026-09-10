@@ -48,7 +48,7 @@ class ChainSolution {
     std::vector<std::unique_ptr<ModelInstance>>  model_storage_;  /* 持有所有模型实例 */
     std::vector<RuntimeStage>                    stages_;
     std::vector<StageProduce>                    stage_produces_; /* 与 stages_ 索引对齐 */
-    SharedInputStaging                           shared_input_;   /* 每帧可复用的 AIPP YUV staging */
+    SharedInputStaging                           shared_input_;   /* 分平面输入每帧复用的 AIPP YUV staging */
     cv::Mat                                      decoded_bgr_;    /* 复用：避免每帧重新分配 */
     bool                                         needs_decoded_bgr_ = false;
     bool                                         initialized_ = false;

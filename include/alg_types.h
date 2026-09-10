@@ -76,7 +76,8 @@ typedef enum AlgPixelFormat_ {
  * 输入图像描述，所有像素地址均由调用方持有。
  *
  * 兼容连续内存：data 非 NULL 时沿用 data/stride/data_len，NV12/NV21 的色度
- * 平面紧跟 Y 平面。
+ * 平面紧跟 Y 平面。海思动态 AIPP 路径会直接借用该地址；此时 data 应为整帧
+ * 非 cached MMZ/VB 的连续虚拟映射，调用方须保证 AlgRun 返回前有效且不改写。
  *
  * 支持分平面：data 设为 NULL，plane_data[0] 传 Y、plane_data[1] 传 UV/VU；
  * 各平面可有独立 stride 和长度。结构体必须零初始化后再填写。

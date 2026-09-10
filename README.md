@@ -124,9 +124,9 @@ cd build_linux_aarch64_svp_acl
 
 ## 接入与交付约束
 
-- 图像格式支持 BGR、RGB、GRAY、NV12 和 NV21。NV12/NV21 既可通过 `data` 传连续内存，也可通过 `plane_data[0]` 和 `[1]` 分别传 Y 与 UV/VU，分平面支持独立 stride。默认 VPSS 格式为 NV21，同时兼容 NV12。
+- 图像格式支持 BGR、RGB、GRAY、NV12 和 NV21。NV12/NV21 可通过 `data` 传入整帧连续映射，也可通过 `plane_data[0]` 和 `[1]` 分别传入 Y 与 UV/VU，分平面支持独立 stride。默认 VPSS 格式为 NV21，同时兼容 NV12。
 - 海思通过 `AlgRun` 传入原分辨率 VPSS 帧，不要求为各模型增加 VPSS 缩放通道。
-- 带动态 AIPP 的检测 OM 在 `engine=auto` 时完成 NV12/NV21 转色和缩放；分平面输入先由 libyuv 按原尺寸合并。值为 114 的 letterbox 补边固化在模型图中，普通 OM 保持 OpenCV 路径。
+- 海思动态 AIPP 下，`data` 须指向整帧非 cached MMZ/VB 连续虚拟映射，SDK 直接绑定该地址，不复制、不 flush、不释放；分平面输入先由 libyuv 按原尺寸合并。AIPP 完成 NV12/NV21 转色和缩放，值为 114 的 letterbox 补边固化在模型图中；普通 OM 保持 OpenCV 路径。
 - 网络前处理输出 NCHW，支持 UINT8 和 FLOAT32 输入类型，输入尺寸须与模型一致。
 - SDK 调用由应用串行调度；共享结果和图像缓冲的访问需要同步。
 - 车牌空文本仍可能返回结果，应用需结合非空文本和业务格式判断有效性。

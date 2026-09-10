@@ -271,6 +271,39 @@ typedef struct AlgImage_ {
 
 长度字段大于 0 时 SDK 会检查其是否满足最小布局，等于 0 时跳过长度检查。无论是否填写长度，调用方均须保证实际内存有效，并在 `AlgRun` 返回前保持所有平面不被释放或改写。
 
+海思动态 AIPP 的连续 NV12/NV21 输入直接绑定 `data`，不复制、不执行 CPU cache flush，也不释放该地址。该模式要求：
+
+- Y 与 UV/VU 位于同一个 MMZ/VB 物理内存块，且 `phy_uv == phy_y + stride*height`；
+- Y 与 UV/VU 使用相同 stride；
+- `data` 是覆盖完整 Y+UV/VU 区域的非 cached 连续虚拟映射，例如 `ss_mpi_sys_mmap(phy_y, total_bytes)` 的返回地址；
+- `data_len` 填写映射长度，映射在 `AlgRun` 返回前保持有效。
+
+连续 NV21 接入示例：
+
+```c
+td_u32 y_bytes = stride * frame_height;
+td_u32 total_bytes = y_bytes + stride * (frame_height / 2);
+
+/* phy_vu 必须等于 phy_y + y_bytes，且整个范围属于同一个 MMZ/VB 块。 */
+void *frame_base = ss_mpi_sys_mmap(phy_y, total_bytes);
+if (frame_base == NULL) {
+    /* 映射失败处理 */
+}
+
+AlgImage image = {0};
+image.format = ALG_PIX_NV21;
+image.width = frame_width;
+image.height = frame_height;
+image.stride = stride;
+image.data = frame_base;
+image.data_len = (int)total_bytes;
+
+AlgStatus status = AlgRun(handle, &image, &result);
+ss_mpi_sys_munmap(frame_base, total_bytes);
+```
+
+同一 VB 缓冲重复使用时，可复用对应的连续映射，避免在帧循环内重复 mmap/munmap；释放或归还 VB 缓冲前再解除映射。普通堆内存中的 YUV 文件数据不满足海思动态 AIPP 连续输入约束，应使用下述分平面模式。
+
 分平面 NV21 接入示例（Y 与 VU 地址不要求连续）：
 
 ```c

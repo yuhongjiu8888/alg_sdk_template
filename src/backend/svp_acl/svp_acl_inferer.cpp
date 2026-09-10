@@ -621,8 +621,8 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         return ALG_E_PREPROCESS;
     }
 
-    /* 两种输入都以原图尺寸写入 ACL staging，再由 AIPP 缩放。分平面输入仅用
-     * libyuv 合并平面，不在 CPU 上缩放，因此不同目标尺寸的检测模型也能共享。 */
+    /* 连续 MMZ/VB 映射直接绑定；分平面输入以原图尺寸合并到 ACL staging。
+     * 两种路径都不在 CPU 上缩放，缩放和 CSC 统一由 AIPP 完成。 */
     const bool copy_split_planes = source.uses_separate_planes;
     const bool profile = ALG_LOG_IS_ENABLED(alg::log::Level::Info);
     const int aipp_src_width = image.width;
@@ -732,6 +732,69 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     const size_t needed_dst = dst_y_bytes + dst_uv_bytes;
     if (needed_dst > dst_size) return ALG_E_PREPROCESS;
 
+    /* 连续 NV12/NV21 由调用方通过 SYS mmap 提供非 cached MMZ/VB 映射。
+     * data buffer 只借用该地址；像素由 VPSS 写入，SDK 不复制、不 flush、也不释放。 */
+    if (!copy_split_planes) {
+        size_t external_y_bytes = 0;
+        size_t external_uv_bytes = 0;
+        if (source.stride[0] != source.stride[1] ||
+            !CheckedPlaneByteSize(source.stride[0], image.height,
+                                  &external_y_bytes) ||
+            !CheckedPlaneByteSize(source.stride[1], image.height / 2,
+                                  &external_uv_bytes) ||
+            external_y_bytes > std::numeric_limits<size_t>::max() -
+                                   external_uv_bytes) {
+            ALG_LOGE("svp_acl: external YUV mapping has incompatible plane strides");
+            return ALG_E_PREPROCESS;
+        }
+        const size_t external_bytes = external_y_bytes + external_uv_bytes;
+        if (external_bytes > dst_size) {
+            ALG_LOGE("svp_acl: external YUV mapping size=%zu exceeds model input=%zu",
+                     external_bytes, dst_size);
+            return ALG_E_PREPROCESS;
+        }
+
+        state.aipp_profile_valid = profile;
+        state.aipp_staging_reused = false;
+        state.aipp_split_planes = false;
+        state.aipp_external_zero_copy = true;
+        state.aipp_staging_bytes = external_bytes;
+        state.aipp_staging_stride = static_cast<size_t>(source.stride[0]);
+
+        timeval bind_begin{}, bind_end{};
+        if (profile) gettimeofday(&bind_begin, nullptr);
+        void* external_data = const_cast<uint8_t*>(source.plane[0]);
+        ret = svp_acl_update_data_buffer(
+            image_buffer, external_data, external_bytes,
+            static_cast<size_t>(source.stride[0]));
+        if (ret != SVP_ACL_SUCCESS) {
+            ALG_LOGE("svp_acl: bind external YUV mapping failed, ret=%d", ret);
+            return ALG_E_PREPROCESS;
+        }
+        input_views_[0].data = external_data;
+        input_views_[0].size_bytes = external_bytes;
+
+        /* dataset buffer 已切换到外部地址，释放不再使用的私有图像输入；释放表中
+         * 不记录 external_data，避免 FreeAll 误释放调用方的 SYS mmap。 */
+        if (own_image_input_ && own_image_input_ != external_data) {
+            (void)svp_acl_rt_free(own_image_input_);
+            input_allocations_[image_input_index_] = nullptr;
+            own_image_input_ = nullptr;
+        }
+        if (profile) {
+            gettimeofday(&bind_end, nullptr);
+            state.aipp_bind_ms = ElapsedMs(bind_begin, bind_end);
+        }
+        image_input_preflushed_ = true;
+
+        state.scale_ratio = scale_ratio;
+        state.pad_left = pad_left;
+        state.pad_top = pad_top;
+        state.original_width = image.width;
+        state.original_height = image.height;
+        return ALG_OK;
+    }
+
     const bool can_share = shared_staging && shared_staging->flushed &&
         shared_staging->source_plane[0] == source.plane[0] &&
         shared_staging->source_plane[1] == source.plane[1] &&
@@ -752,6 +815,7 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     state.aipp_profile_valid = profile;
     state.aipp_staging_reused = can_share;
     state.aipp_split_planes = copy_split_planes;
+    state.aipp_external_zero_copy = false;
     state.aipp_staging_bytes = needed_dst;
     state.aipp_staging_stride = dst_stride;
 
@@ -797,38 +861,23 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
 
         timeval copy_begin{}, copy_end{};
         if (profile) gettimeofday(&copy_begin, nullptr);
-        if (copy_split_planes) {
-            uint8_t* dst_uv = dst + dst_y_bytes;
-            const int libyuv_status = image.format == ALG_PIX_NV21
-                ? libyuv::NV21Copy(
-                      source.plane[0], source.stride[0],
-                      source.plane[1], source.stride[1],
-                      dst, static_cast<int>(dst_stride),
-                      dst_uv, static_cast<int>(dst_stride),
-                      image.width, image.height)
-                : libyuv::NV12Copy(
-                      source.plane[0], source.stride[0],
-                      source.plane[1], source.stride[1],
-                      dst, static_cast<int>(dst_stride),
-                      dst_uv, static_cast<int>(dst_stride),
-                      image.width, image.height);
-            if (libyuv_status != 0) {
-                ALG_LOGE("svp_acl: libyuv plane copy failed, ret=%d", libyuv_status);
-                return ALG_E_PREPROCESS;
-            }
-        } else if (static_cast<size_t>(source.stride[0]) == dst_stride &&
-                   static_cast<size_t>(source.stride[1]) == dst_stride) {
-            std::memcpy(dst, source.plane[0], needed_dst);
-        } else {
-            for (int y = 0; y < image.height; ++y)
-                std::memcpy(dst + static_cast<size_t>(y) * dst_stride,
-                            source.plane[0] + static_cast<size_t>(y) * source.stride[0],
-                            image.width);
-            uint8_t* dst_uv = dst + dst_y_bytes;
-            for (int y = 0; y < image.height / 2; ++y)
-                std::memcpy(dst_uv + static_cast<size_t>(y) * dst_stride,
-                            source.plane[1] + static_cast<size_t>(y) * source.stride[1],
-                            image.width);
+        uint8_t* dst_uv = dst + dst_y_bytes;
+        const int libyuv_status = image.format == ALG_PIX_NV21
+            ? libyuv::NV21Copy(
+                  source.plane[0], source.stride[0],
+                  source.plane[1], source.stride[1],
+                  dst, static_cast<int>(dst_stride),
+                  dst_uv, static_cast<int>(dst_stride),
+                  image.width, image.height)
+            : libyuv::NV12Copy(
+                  source.plane[0], source.stride[0],
+                  source.plane[1], source.stride[1],
+                  dst, static_cast<int>(dst_stride),
+                  dst_uv, static_cast<int>(dst_stride),
+                  image.width, image.height);
+        if (libyuv_status != 0) {
+            ALG_LOGE("svp_acl: libyuv plane copy failed, ret=%d", libyuv_status);
+            return ALG_E_PREPROCESS;
         }
         if (profile) {
             gettimeofday(&copy_end, nullptr);

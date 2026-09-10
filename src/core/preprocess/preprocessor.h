@@ -79,6 +79,7 @@ struct PreprocessState {
     bool   aipp_profile_valid = false;
     bool   aipp_staging_reused = false;
     bool   aipp_split_planes = false;
+    bool   aipp_external_zero_copy = false;
     double aipp_setup_ms = 0.0;
     double aipp_bind_ms = 0.0;
     double aipp_copy_ms = 0.0;

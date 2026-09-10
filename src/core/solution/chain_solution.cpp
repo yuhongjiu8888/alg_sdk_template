@@ -279,7 +279,8 @@ Status ChainSolution::RunInternal(const AlgImage& image,
     if (!initialized_) return ALG_E_NOT_INITIALIZED;
     if (!out_objects) return ALG_E_INVALID_ARG;
 
-    /* 本帧尚无 AIPP staging；第一个动态 AIPP stage 会填充，兼容的后续 stage 复用。 */
+    /* 本帧尚无分平面 AIPP staging；连续映射不使用该缓存，分平面输入由
+     * 第一个动态 AIPP stage 填充，兼容的后续 stage 复用。 */
     shared_input_.Reset();
 
     /* 整帧只解码一次。把 decoded_bgr_ 作为成员，OpenCV 会自动复用底层 buffer：

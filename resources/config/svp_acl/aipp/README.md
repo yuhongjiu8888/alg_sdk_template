@@ -8,9 +8,9 @@
 - NV21 设置 `SVP_ACL_YVU420SP_U8`。
 - 如果目标版本不允许同一个 OM 在两个枚举间切换，则使用 YUV420SP 并仅对 NV21 打开 U/V swap；必须用色条金样确认通道顺序。
 
-全帧检测器接收原始 VPSS 帧，当前最大源尺寸为 1920×1080。连续 NV12/NV21 复制到 ACL staging；Y 与 UV/VU 为独立虚拟地址时，SDK 使用 libyuv 按原尺寸合并到连续 ACL staging。两种输入随后均由 AIPP 做缩放和 CSC、包装模型图做 padding/归一化。CV610 AIPP 的常量 padding 值固定为 0，无法直接复现现有模型的 114，因此转换检测模型前需要在图首增加常量 `Pad`：
+全帧检测器接收原始 VPSS 帧，当前最大源尺寸为 1920×1080。连续 NV12/NV21 使用整帧非 cached MMZ/VB 映射并直接绑定到 ACL data buffer；Y 与 UV/VU 为独立虚拟地址时，SDK 使用 libyuv 按原尺寸合并到连续 ACL staging。两种输入随后均由 AIPP 做缩放和 CSC、包装模型图做 padding/归一化。CV610 AIPP 的常量 padding 值固定为 0，无法直接复现现有模型的 114，因此转换检测模型前需要在图首增加常量 `Pad`：
 
-同一 `ChainSolution` 中使用同一原始帧、stride 和格式的多个动态 AIPP 检测器共享 ACL staging 缓冲：首个检测器复制或合并原图并 flush，后续检测器只绑定并复用，避免重复搬运整帧。各检测模型通过 AIPP 独立缩放到对应的有效区尺寸。
+同一 `ChainSolution` 中的多个动态 AIPP 检测器直接绑定同一个连续输入地址。分平面模式下，各检测器共享 ACL staging 缓冲：首个检测器合并原图并 flush，后续检测器只绑定并复用。各检测模型通过 AIPP 独立缩放到对应的有效区尺寸。
 
 - `speedsignnet`：包装后的图输入为 NCHW `1×3×320×568`，左右各 Pad 4，常量值 114，送入原 576×320 网络。
 - `license_detection`：包装后的图输入为 NCHW `1×3×360×640`，下方 Pad 88，常量值 114，送入原 640×448 网络。

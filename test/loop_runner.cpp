@@ -16,7 +16,7 @@
  *   -n <count>          循环次数；0 或缺省 = 无限循环（Ctrl-C 停止）
  *   -size <WxH>         yuv 输入必需（除非文件名含 "WxH" 模式，如 raw_1920x1080_nv12.yuv）
  *   -fmt <nv12|nv21>    yuv 像素格式，默认 nv12
- *   -split-plane        把 Y 和 UV/VU 拆成两个独立地址传入，验证分平面接口
+ *   -split-plane        把 Y 和 UV/VU 复制到两个独立缓冲，验证分地址输入
  *   -save-every <N>     每 N 帧保存一次画框结果（默认 0 = 从不保存；目录 loop_out/）
  *   -stats-every <N>    每 N 帧打印一次窗口统计（默认 100）
  *   -fps <N>            帧率上限：每帧耗时不足 1000/N ms 时 usleep 补齐（默认 0 = 不限速）
@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
                      "  -n <count>        循环次数；0=无限循环直到 Ctrl-C（默认）\n"
                      "  -size <WxH>       yuv 输入必需（除非文件名含 WxH，如 raw_1920x1080_nv12.yuv）\n"
                      "  -fmt <nv12|nv21>  yuv 像素格式（默认 nv12）\n"
-                     "  -split-plane      将 Y 与 UV/VU 作为两个独立地址传入\n"
+                     "  -split-plane      将 Y 与 UV/VU 复制到两个独立缓冲传入\n"
                      "  -save-every <N>   每 N 帧保存画框结果，0=从不保存（默认 0）\n"
                      "  -stats-every <N>  每 N 帧打印窗口统计（默认 100）\n"
                      "  -fps <N>          帧率上限：usleep 补齐到 1000/N ms/帧（0=不限速，默认 0）\n"
@@ -242,24 +242,28 @@ int main(int argc, char** argv) {
             return 1;
         }
         img.stride = 0; /* NV12/NV21 按 width 紧凑布局 */
+        const size_t y_size = static_cast<size_t>(w) * h;
+        img.data = nullptr;
         if (HasOpt(args, "-split-plane")) {
-            const size_t y_size = static_cast<size_t>(w) * h;
             y_plane_bytes.assign(yuv_bytes.begin(), yuv_bytes.begin() + y_size);
             uv_plane_bytes.assign(yuv_bytes.begin() + y_size, yuv_bytes.end());
-            img.data = nullptr;
             img.plane_data[0] = y_plane_bytes.data();
             img.plane_data[1] = uv_plane_bytes.data();
-            img.plane_stride[0] = w;
-            img.plane_stride[1] = w;
             img.plane_data_len[0] = static_cast<int>(y_plane_bytes.size());
             img.plane_data_len[1] = static_cast<int>(uv_plane_bytes.size());
         } else {
-            img.data = yuv_bytes.data();
-            img.data_len = static_cast<int>(yuv_bytes.size());
+            /* 文件缓冲不是 MMZ/VB 映射，按分平面兼容路径传入，避免测试程序
+             * 把普通堆地址误用为动态 AIPP 的外部零拷贝输入。 */
+            img.plane_data[0] = yuv_bytes.data();
+            img.plane_data[1] = yuv_bytes.data() + y_size;
+            img.plane_data_len[0] = static_cast<int>(y_size);
+            img.plane_data_len[1] = static_cast<int>(yuv_bytes.size() - y_size);
         }
+        img.plane_stride[0] = w;
+        img.plane_stride[1] = w;
         std::printf("[input ] yuv %s (%dx%d, %s, %s)\n", input_path.c_str(), w, h,
                     Opt(args, "-fmt", "nv12").c_str(),
-                    HasOpt(args, "-split-plane") ? "split-plane" : "contiguous");
+                    HasOpt(args, "-split-plane") ? "split-plane" : "file-plane-view");
     } else {
         image_bgr = cv::imread(input_path, cv::IMREAD_COLOR);
         if (image_bgr.empty()) {
