@@ -3,7 +3,6 @@ build
 CMakeFiles
 build_*
 .vscode
-lib/
 deploy/
 code_sub_rules.md
 nv21_out/
