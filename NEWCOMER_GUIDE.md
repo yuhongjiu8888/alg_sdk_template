@@ -116,7 +116,7 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 
 图片文件应先解码为像素再传入。JSON 的 `preprocess.color` 定义模型输入颜色顺序，`AlgImage.format` 定义源图像格式，两者不要求相同。
 
-海思 VPSS 实时流使用 `AlgRun`：连续 NV12/NV21 由动态 AIPP 缩放；Y 与 UV/VU 地址分离时，由 libyuv 缩放并合并到 SDK staging，再由 AIPP 做 CSC、包装模型图做 padding/归一化。两种方式都不需要额外创建模型尺寸的 VPSS 通道。
+海思 VPSS 实时流使用 `AlgRun`：连续 NV12/NV21 复制到 SDK staging；Y 与 UV/VU 地址分离时，由 libyuv 按原尺寸合并到 SDK staging。两种输入均由 AIPP 做缩放和 CSC、包装模型图做 padding/归一化，不需要额外创建模型尺寸的 VPSS 通道。
 
 ## 5. 配置与执行关系
 

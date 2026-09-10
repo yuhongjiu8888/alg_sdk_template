@@ -31,9 +31,9 @@ namespace alg {
 /**
  * 同一条 ChainSolution 内多个动态 AIPP 模型共享的 YUV staging 描述。
  *
- * 连续输入由第一个模型复制原图；分平面输入由 libyuv 缩放并合并。后续模型
- * 只有在源平面和 staging 尺寸都相同时才临时绑定复用。描述本身不拥有内存，
- * 实际缓冲仍由第一个 inferer 持有。
+ * 连续输入由第一个模型复制原图；分平面输入由 libyuv 按原尺寸合并。后续模型
+ * 在源平面和原图 staging 布局相同时临时绑定复用。描述本身不拥有内存，实际
+ * 缓冲仍由第一个 inferer 持有。
  */
 struct SharedInputStaging {
     const void*    source_plane[2] = {};

@@ -11,7 +11,7 @@
 #include "core/logger.h"
 
 #ifdef ALG_SVP_DYNAMIC_AIPP
-#include "libyuv/scale.h"
+#include "libyuv/planar_functions.h"
 #endif
 
 namespace alg {
@@ -182,7 +182,7 @@ void SvpAclInferer::FreeAll() {
     image_input_capacity_ = 0;
     own_image_input_ = nullptr;
     image_input_preflushed_ = false;
-    libyuv_path_reported_ = false;
+    split_copy_path_reported_ = false;
 #endif
     input_views_.clear();
     output_views_.clear();
@@ -614,23 +614,23 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         return ALG_E_PREPROCESS;
     }
 
-    /* 分平面输入由 libyuv 从原图直接缩放并合并到 ACL staging；连续输入仍由
-     * AIPP 缩放，以保留一帧一次搬运、多个检测模型共享 staging 的快路径。 */
-    const bool scale_with_libyuv = source.uses_separate_planes;
-    const int aipp_src_width = scale_with_libyuv ? output_width : image.width;
-    const int aipp_src_height = scale_with_libyuv ? output_height : image.height;
+    /* 两种输入都以原图尺寸写入 ACL staging，再由 AIPP 缩放。分平面输入仅用
+     * libyuv 合并平面，不在 CPU 上缩放，因此不同目标尺寸的检测模型也能共享。 */
+    const bool copy_split_planes = source.uses_separate_planes;
+    const int aipp_src_width = image.width;
+    const int aipp_src_height = image.height;
     if (aipp_src_width <= 0 || aipp_src_height <= 0 ||
         (aipp_src_width & 1) || (aipp_src_height & 1)) {
-        ALG_LOGE("svp_acl: libyuv/AIPP YUV size must be positive and even, got %dx%d",
+        ALG_LOGE("svp_acl: AIPP YUV size must be positive and even, got %dx%d",
                  aipp_src_width, aipp_src_height);
         return ALG_E_PREPROCESS;
     }
-    if (scale_with_libyuv && !libyuv_path_reported_ &&
+    if (copy_split_planes && !split_copy_path_reported_ &&
         ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
-        ALG_LOGI("svp_acl: split-plane %s %dx%d -> libyuv %dx%d -> AIPP",
+        ALG_LOGI("svp_acl: split-plane %s %dx%d -> libyuv copy -> shared AIPP staging",
                  image.format == ALG_PIX_NV21 ? "NV21" : "NV12",
-                 image.width, image.height, aipp_src_width, aipp_src_height);
-        libyuv_path_reported_ = true;
+                 image.width, image.height);
+        split_copy_path_reported_ = true;
     }
 
     svp_acl_error ret = svp_acl_mdl_set_aipp_src_image_size(
@@ -667,8 +667,7 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     ret = svp_acl_mdl_set_aipp_padding_params(dynamic_aipp_, 0, 0, 0, 0, 0, 0);
     if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
 
-    const bool resize = !scale_with_libyuv &&
-                        (image.width != output_width || image.height != output_height);
+    const bool resize = image.width != output_width || image.height != output_height;
     ret = svp_acl_mdl_set_aipp_scf_params(
         dynamic_aipp_, resize ? 2 : 0,
         aipp_src_width, aipp_src_height, output_width, output_height, 0);
@@ -761,18 +760,23 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         input_views_[0].data = dst;
         input_views_[0].size_bytes = dst_size;
 
-        if (scale_with_libyuv) {
+        if (copy_split_planes) {
             uint8_t* dst_uv = dst + dst_y_bytes;
-            const int libyuv_status = libyuv::NV12Scale(
-                source.plane[0], source.stride[0],
-                source.plane[1], source.stride[1],
-                image.width, image.height,
-                dst, static_cast<int>(dst_stride),
-                dst_uv, static_cast<int>(dst_stride),
-                aipp_src_width, aipp_src_height,
-                libyuv::kFilterBilinear);
+            const int libyuv_status = image.format == ALG_PIX_NV21
+                ? libyuv::NV21Copy(
+                      source.plane[0], source.stride[0],
+                      source.plane[1], source.stride[1],
+                      dst, static_cast<int>(dst_stride),
+                      dst_uv, static_cast<int>(dst_stride),
+                      image.width, image.height)
+                : libyuv::NV12Copy(
+                      source.plane[0], source.stride[0],
+                      source.plane[1], source.stride[1],
+                      dst, static_cast<int>(dst_stride),
+                      dst_uv, static_cast<int>(dst_stride),
+                      image.width, image.height);
             if (libyuv_status != 0) {
-                ALG_LOGE("svp_acl: libyuv scale/merge failed, ret=%d", libyuv_status);
+                ALG_LOGE("svp_acl: libyuv plane copy failed, ret=%d", libyuv_status);
                 return ALG_E_PREPROCESS;
             }
         } else if (static_cast<size_t>(source.stride[0]) == dst_stride &&
@@ -789,8 +793,7 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
                             source.plane[1] + static_cast<size_t>(y) * source.stride[1],
                             image.width);
         }
-        /* 只同步本帧实际 YUV 区域。分平面路径已缩到模型有效区，不必 flush
-         * 按最大 1920x1080 预留的整个动态输入缓冲。 */
+        /* 只同步当前原图对应的 YUV 区域，不 flush 按最大输入预留的剩余空间。 */
         ret = svp_acl_rt_mem_flush(dst, needed_dst);
         if (ret != SVP_ACL_SUCCESS) {
             ALG_LOGE("svp_acl: staged AIPP input flush failed, ret=%d", ret);
