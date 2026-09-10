@@ -1,7 +1,5 @@
 #include "alg_interface.h"
 
-#include <cstdlib>
-#include <cstring>
 #include <new>
 #include <string>
 #include <vector>
@@ -12,12 +10,13 @@
 #include "core/object.h"
 #include "core/solution/chain_solution.h"
 
-#define ALG_VERSION_STRING "alg_sdk.v1.0.0"
+#define ALG_VERSION_STRING "alg_sdk.v2.0.0"
 
 namespace {
 
 struct Context {
     alg::ChainSolution solution;
+    std::vector<alg::Object> objects_scratch;
 };
 
 }  // namespace
@@ -57,35 +56,16 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result) {
     if (!handle || !image || !result) return ALG_E_INVALID_ARG;
 
     auto* ctx = reinterpret_cast<Context*>(handle);
-    AlgFreeResult(result);
-
-    std::vector<alg::Object> objs;
-    AlgStatus s = ctx->solution.Run(*image, &objs);
+    result->speed_limit_count = 0;
+    result->sign_count = 0;
+    result->license_plate_count = 0;
+    AlgStatus s = ctx->solution.Run(*image, &ctx->objects_scratch);
     if (s != ALG_OK) return s;
-    if (alg::FillAlgResult(objs, result) != 0) return ALG_E_OOM;
+    alg::FillAlgResult(ctx->objects_scratch, result);
 
     static long long frame_counter = 0;
     result->frame_id = frame_counter++;
     return ALG_OK;
-}
-
-void AlgFreeResult(AlgResult* result) {
-    if (!result) return;
-    if (result->speed_limits) {
-        std::free(result->speed_limits);
-        result->speed_limits = nullptr;
-    }
-    if (result->signs) {
-        std::free(result->signs);
-        result->signs = nullptr;
-    }
-    if (result->license_plates) {
-        std::free(result->license_plates);
-        result->license_plates = nullptr;
-    }
-    result->speed_limit_count   = 0;
-    result->sign_count          = 0;
-    result->license_plate_count = 0;
 }
 
 const char* AlgVersion(void) {

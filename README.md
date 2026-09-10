@@ -60,14 +60,13 @@ backup/                   历史接口归档
 |------|------|
 | `AlgCreate` | 读取配置、加载模型并创建实例 |
 | `AlgRun` | 同步处理一帧图像并返回业务结果数组 |
-| `AlgFreeResult` | 释放结果数组，清空指针和数量 |
 | `AlgDestroy` | 销毁实例及其内部资源 |
 | `AlgVersion` | 返回 SDK 版本和后端标识 |
 | `AlgBackendName` | 返回编译后端名称 |
 
-调用流程为创建实例、循环处理帧、释放结果、销毁实例。首次使用 `AlgResult` 必须零初始化；同一结果结构再次传入 `AlgRun` 时，SDK 会先释放旧数组。输入像素由应用持有，输出数组通过 `AlgFreeResult` 释放。
+调用流程为创建实例、循环处理帧、销毁实例。`AlgResult` 内联固定容量数组，建议使用 `AlgResult result = {0};` 在栈上创建；`AlgRun` 直接覆盖数量和有效元素，不需要额外释放。
 
-完整函数声明、数据类型和调用示例见 [接口文档](alg_sdk_api_documentation_v1.0.0.md)。公共 API 不包含红绿灯、关键点和分割结果字段。
+完整函数声明、数据类型和调用示例见 [接口文档](alg_sdk_api_documentation_v2.0.0.md)。公共 API 不包含红绿灯、关键点和分割结果字段。
 
 ## 模型与配置
 
@@ -131,7 +130,7 @@ cd build_linux_aarch64_svp_acl
 
 | 文档 | 用途 |
 |------|------|
-| [接口文档](alg_sdk_api_documentation_v1.0.0.md) | 公共接口、数据类型、资源管理和部署约束 |
+| [接口文档](alg_sdk_api_documentation_v2.0.0.md) | 公共接口、数据类型、资源管理和部署约束 |
 | [架构设计](ARCHITECTURE.md) | 模块职责、数据流和扩展方式 |
 | [开发接入指南](NEWCOMER_GUIDE.md) | 工程接入、配置选择和问题定位 |
 | [配置说明](resources/CONFIG.md) | 业务编排和模型参数 |

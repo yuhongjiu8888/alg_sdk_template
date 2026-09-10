@@ -146,7 +146,7 @@ channel 布局：`[bbox_channels..., obj_channels..., num_classes...]`
 | `anchor` | `[w, h]` | `[36, 36]` | 锚框尺寸（像素） |
 | `conf_threshold` | float | `0.25` | 置信度阈值（对 `sigmoid(obj)×softmax(cls)`） |
 | `nms_threshold` | float | `0.45` | NMS IoU 阈值 |
-| `max_det` | int | `64` | NMS 后最大保留数 |
+| `max_det` | int | `5` | NMS 后最大保留数；海思车牌检测配置使用 `2` |
 | `obj_prefilter` | float | `0.05` | objectness 早剪枝阈值 |
 
 ### type: "ocr_classifier"：逐位 OCR 与门控分类
@@ -218,7 +218,7 @@ XMM 使用单输出布局，以避免特定多输出模型被划分为 NPU / CPU
 
 `rtmdet_det` 与 `lprnet_rec` 分别用于车牌检测和 CTC 识别。配套参数见 [车牌配置](config/svp_acl/license_plate.json)，包括检测阈值、NMS、字符集、时间步和 blank 索引。
 
-车牌识别分为保留字符概率的乘积，`lprnet_rec.conf_threshold` 默认 `0.0`，不进行识别分过滤。文本为空时也可能保留结果，应用需检查文本及业务格式。公共字段定义见 [接口文档](../alg_sdk_api_documentation_v1.0.0.md)。
+车牌识别分为保留字符概率的乘积，`lprnet_rec.conf_threshold` 默认 `0.0`，不进行识别分过滤。文本为空时也可能保留结果，应用需检查文本及业务格式。公共字段定义见 [接口文档](../alg_sdk_api_documentation_v2.0.0.md)。
 
 ## 完整示例
 

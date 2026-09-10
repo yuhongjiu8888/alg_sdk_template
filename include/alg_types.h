@@ -150,6 +150,11 @@ typedef struct AlgLicensePlate_ {
     float   rec_score;
 } AlgLicensePlate;
 
+/* 固定容量与检测阶段 max_det 保持一致；结果直接内联在 AlgResult 中，不做堆分配。 */
+#define ALG_MAX_SPEED_LIMIT_RESULTS 5
+#define ALG_MAX_SIGN_RESULTS 5
+#define ALG_MAX_LICENSE_PLATE_RESULTS 2
+
 /* ============================================================== */
 /*                          完整结果                                */
 /* ============================================================== */
@@ -160,18 +165,19 @@ typedef struct AlgLicensePlate_ {
  *    （signs = PARE / 禁止停车等非限速牌种）。
  *  - 单 solution 跑车牌 (license_plate.json)：license_plates 可能非空。
  *
- * 数组由 SDK 持有；应用通过 AlgFreeResult 一次性释放。 */
+ * 数组内联在结构体中。调用方可把 AlgResult 放在栈上，无需额外释放；下一帧调用
+ * 直接覆盖数量和有效元素。 */
 typedef struct AlgResult_ {
     long long           frame_id;
 
     int                 speed_limit_count;
-    AlgSpeedLimit*      speed_limits;
+    AlgSpeedLimit       speed_limits[ALG_MAX_SPEED_LIMIT_RESULTS];
 
     int                 sign_count;      /* 禁令/停车牌（PARE / 禁止停车） */
-    AlgSign*            signs;
+    AlgSign             signs[ALG_MAX_SIGN_RESULTS];
 
     int                 license_plate_count;
-    AlgLicensePlate*    license_plates;
+    AlgLicensePlate     license_plates[ALG_MAX_LICENSE_PLATE_RESULTS];
 } AlgResult;
 
 ALG_C_END

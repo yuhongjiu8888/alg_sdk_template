@@ -151,23 +151,11 @@ bool BelowMinBoxShort(const Object& o, const std::map<std::string, int>& m) {
     return (w < h ? w : h) < it->second;
 }
 
-/* 把目标 vector 清空但保留 capacity（每个 Object 内部 vector 也清空保 capacity）。
- * 这样下一帧 push_back / move_assign 不会再 malloc。 */
-void ResetStageObjects(std::vector<Object>& v) {
-    for (auto& o : v) {
-        o.field_mask = 0;
-        o.label      = 0;
-        o.drop       = false;
-        o.attributes.clear();
-    }
-    v.clear();  /* size=0, capacity 保留 */
-}
-
 }  // namespace
 
 Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
                                const cv::Mat& decoded_bgr) {
-    const RuntimeStage& rs = stages_[stage_idx];
+    RuntimeStage& rs = stages_[stage_idx];
     ModelInstance* mi = rs.model;
 
     auto& out_bucket = stage_produces_[stage_idx].objects;
@@ -183,7 +171,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
     };
 
     if (rs.cfg.input_kind == StageInputKind::kImage) {
-        ResetStageObjects(out_bucket);
+        out_bucket.clear();
 
         if (rs.cfg.roi.enabled) {
             /* 固定 ROI 裁剪：在原图上裁出指定区域再送模型。 */
@@ -192,7 +180,6 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
                          rs.cfg.name.c_str());
                 return ALG_E_PREPROCESS;
             }
-            cv::Mat roi_holder;
             AlgImage cropped;
             CropTransform xf;
             AlgBox roi_box;
@@ -201,7 +188,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
             roi_box.xmax = rs.cfg.roi.x + rs.cfg.roi.width;
             roi_box.ymax = rs.cfg.roi.y + rs.cfg.roi.height;
             CropConfig crop_cfg;  /* expand_ratio=1, square=false：不做扩展 */
-            if (!Crop(roi_box, crop_cfg, &roi_holder, &cropped, &xf)) {
+            if (!Crop(roi_box, crop_cfg, &rs.roi_holder, &cropped, &xf)) {
                 ALG_LOGE("ChainSolution: stage '%s' roi crop failed", rs.cfg.name.c_str());
                 return ALG_E_PREPROCESS;
             }
@@ -212,20 +199,20 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
             return ALG_OK;
         }
 
-        return mi->Run(image, &out_bucket);
+        return mi->Run(image, &out_bucket, &shared_input_);
     }
 
     /* 上游 stage 的 objects 作为 ROI。 */
     std::vector<Object>& src_objs = stage_produces_[rs.input_idx].objects;
 
     if (rs.cfg.output_kind == StageOutputKind::kCreateObjects) {
-        ResetStageObjects(out_bucket);
+        out_bucket.clear();
     }
 
-    cv::Mat roi_holder;
+    cv::Mat& roi_holder = rs.roi_holder;
     AlgImage cropped;
     CropTransform xf;
-    std::vector<Object> sub;  /* 子模型一次产出（通常 1 个对象），栈对象，小 */
+    std::vector<Object>& sub = rs.sub_objects;  /* 跨帧保留 capacity */
 
     for (auto& src : src_objs) {
         if (src.drop) continue;
@@ -291,6 +278,9 @@ Status ChainSolution::RunInternal(const AlgImage& image,
                                   std::vector<Object>* out_objects) {
     if (!initialized_) return ALG_E_NOT_INITIALIZED;
     if (!out_objects) return ALG_E_INVALID_ARG;
+
+    /* 本帧尚无已搬运的 AIPP 原图；第一个动态 AIPP stage 会填充，后续 stage 复用。 */
+    shared_input_.Reset();
 
     /* 整帧只解码一次。把 decoded_bgr_ 作为成员，OpenCV 会自动复用底层 buffer：
      * 同分辨率同格式输入时，cv::cvtColor / 头部构造都不会再分配新内存。

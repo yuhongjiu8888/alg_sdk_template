@@ -9,7 +9,6 @@
  *   AlgHandle h = NULL;
  *   AlgCreate(&h, "/data/speed_limit.json");
  *   AlgRun(h, &image, &result);
- *   AlgFreeResult(&result);
  *   AlgDestroy(h);
  */
 
@@ -29,13 +28,7 @@ ALG_API AlgStatus AlgDestroy(AlgHandle handle);
 /** 对一帧图像跑完整条 solution 流水线。 */
 ALG_API AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 
-/**
- * 释放 SDK 在 result 内部分配的 speed_limits[]、signs[] 和 license_plates[]。
- * 对零值 result 调用安全。
- */
-ALG_API void AlgFreeResult(AlgResult* result);
-
-/** "alg_sdk.v1.0.0+<backend>"，方便日志/崩溃定位。 */
+/** "alg_sdk.v2.0.0+<backend>"，方便日志/崩溃定位。 */
 ALG_API const char* AlgVersion(void);
 
 /** 编译进来的后端名（"xmm" / "rk" / ...）。 */

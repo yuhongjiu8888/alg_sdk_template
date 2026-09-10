@@ -176,7 +176,6 @@ int RunOne(AlgHandle h, const std::string& image_path, const std::string& out_pa
     else
         std::printf("[save  ] %s\n", out_path.c_str());
 
-    AlgFreeResult(&r);
     return 0;
 }
 

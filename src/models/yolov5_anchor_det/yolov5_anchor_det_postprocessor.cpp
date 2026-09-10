@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 #include "core/logger.h"
 #include "core/postprocess/nms.h"
@@ -12,6 +13,13 @@ namespace alg {
 namespace {
 
 inline float Sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
+
+inline float Logit(float p) {
+    if (p <= 0.0f) return -std::numeric_limits<float>::infinity();
+    if (p >= 1.0f) return std::numeric_limits<float>::infinity();
+    /* 略向低侧放宽，避免 log/sigmoid 浮点舍入在阈值边界误剪。 */
+    return std::log(p / (1.0f - p)) - 1e-6f;
+}
 
 inline float ReadElem(const TensorView& t, int idx) {
     switch (t.dtype) {
@@ -72,8 +80,9 @@ Status Yolov5AnchorDetPostprocessor::Configure(const IInferer& inferer, const Js
     stride_         = params.get("stride", 8).asInt();
     conf_threshold_ = params.get("conf_threshold", 0.25f).asFloat();
     nms_threshold_  = params.get("nms_threshold", 0.45f).asFloat();
-    max_det_        = params.get("max_det", 64).asInt();
+    max_det_        = params.get("max_det", 5).asInt();
     obj_prefilter_  = params.get("obj_prefilter", 0.05f).asFloat();
+    obj_logit_threshold_ = Logit(std::max(obj_prefilter_, conf_threshold_));
 
     if (params.isMember("anchor") && params["anchor"].isArray() &&
         params["anchor"].size() == 2) {
@@ -205,7 +214,9 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
     const float fs = static_cast<float>(stride_);
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
-            float obj = Sigmoid(ReadElem(t, idx_at(bbox_channels_, y, x)));
+            const float obj_logit = ReadElem(t, idx_at(bbox_channels_, y, x));
+            if (obj_logit < obj_logit_threshold_) continue;
+            float obj = Sigmoid(obj_logit);
             if (obj < obj_prefilter_) continue;
 
             /* cls 分支用 softmax（与训练 model_src/postprocess.py 严格一致）。
@@ -246,8 +257,7 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
         }
     }
 
-    Nms(props_, nms_threshold_, &nms_scratch_);
-    if (static_cast<int>(props_.size()) > max_det_) props_.resize(max_det_);
+    Nms(props_, nms_threshold_, &nms_scratch_, max_det_);
 
     {
         static bool dumped2 = false;

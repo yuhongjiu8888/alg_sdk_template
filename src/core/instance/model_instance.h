@@ -33,7 +33,8 @@ class ModelInstance {
     Status Init(const ModelInstanceConfig& cfg);
 
     /** 对单张 AlgImage 跑一次完整三件套。 */
-    Status Run(const AlgImage& image, std::vector<Object>* out);
+    Status Run(const AlgImage& image, std::vector<Object>* out,
+               SharedInputStaging* shared_staging = nullptr);
 
     const std::string& name() const { return cfg_.name; }
     const PreprocessConfig& pre_cfg() const { return cfg_.pre; }
@@ -45,7 +46,8 @@ class ModelInstance {
     std::unique_ptr<IPostprocessor> post_;
     bool                            initialized_ = false;
 
-    Status RunImpl(const AlgImage& image, std::vector<Object>* out);
+    Status RunImpl(const AlgImage& image, std::vector<Object>* out,
+                   SharedInputStaging* shared_staging);
 };
 
 }  // namespace alg

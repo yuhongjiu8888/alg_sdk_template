@@ -44,7 +44,7 @@
         "conf_threshold": 0.25,
         "nms_threshold": 0.45,
         "min_bbox_size": 4.0,
-        "max_det": 5
+        "max_det": 2
       }
     },
     "rec_cfg": {

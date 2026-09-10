@@ -30,8 +30,10 @@ struct NmsScratch {
 /**
  * 就地硬 NMS。FCOS 风格 IoU（无 +1）。
  * scratch 不为空则复用其 suppressed 缓冲；为空则函数内部临时分配（一次性场合）。
+ * max_keep > 0 时，按分数保留到该数量后立即停止；结果与完整 NMS 后 resize 等价。
  */
-void Nms(std::vector<Proposal>& props, float iou_thresh, NmsScratch* scratch = nullptr);
+void Nms(std::vector<Proposal>& props, float iou_thresh,
+         NmsScratch* scratch = nullptr, int max_keep = 0);
 
 }  // namespace alg
 

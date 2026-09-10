@@ -50,7 +50,7 @@
         "anchor": [36, 36],
         "conf_threshold": 0.25,
         "nms_threshold": 0.45,
-        "max_det": 64,
+        "max_det": 5,
         "obj_prefilter": 0.05
       }
     },

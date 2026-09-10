@@ -92,8 +92,8 @@ function package_artifacts() {
     else
         cp include/alg_interface.h "${pkg_dir}/"
         cp include/alg_types.h     "${pkg_dir}/"
-        if [[ -f "alg_sdk_api_documentation_v1.0.0.md" ]]; then
-            cp alg_sdk_api_documentation_v1.0.0.md "${pkg_dir}/"
+        if [[ -f "alg_sdk_api_documentation_v2.0.0.md" ]]; then
+            cp alg_sdk_api_documentation_v2.0.0.md "${pkg_dir}/"
         fi
     fi
 

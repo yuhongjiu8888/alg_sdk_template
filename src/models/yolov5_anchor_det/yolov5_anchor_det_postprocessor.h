@@ -24,7 +24,7 @@
  *     "anchor":         [36, 36],
  *     "conf_threshold": 0.25,
  *     "nms_threshold":  0.45,
- *     "max_det":        64,
+ *     "max_det":        5,
  *     "obj_prefilter":  0.05
  *   }
  */
@@ -55,8 +55,9 @@ class Yolov5AnchorDetPostprocessor : public IPostprocessor {
     float anchor_h_       = 36.0f;
     float conf_threshold_ = 0.25f;
     float nms_threshold_  = 0.45f;
-    int   max_det_        = 64;
+    int   max_det_        = 5;
     float obj_prefilter_  = 0.05f;
+    float obj_logit_threshold_ = 0.0f;
     bool  configured_     = false;
 
     std::vector<Proposal> props_;

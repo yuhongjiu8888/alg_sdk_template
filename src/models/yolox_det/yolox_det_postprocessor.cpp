@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 #include "core/logger.h"
 #include "core/postprocess/nms.h"
@@ -12,6 +13,13 @@ namespace alg {
 namespace {
 
 inline float Sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
+
+inline float Logit(float p) {
+    if (p <= 0.0f) return -std::numeric_limits<float>::infinity();
+    if (p >= 1.0f) return std::numeric_limits<float>::infinity();
+    /* 略向低侧放宽，避免 log/sigmoid 浮点舍入在阈值边界误剪。 */
+    return std::log(p / (1.0f - p)) - 1e-6f;
+}
 
 /* 反量化辅助：与 alg_traffic_light_detection/src/deploy_src/pre_post.cpp::dequant 等价。 */
 inline float ReadElem(const TensorView& t, int idx) {
@@ -108,11 +116,14 @@ inline int FlatIndex(const LevelView& v, int c, int y, int x) {
 }
 
 void DecodeLevel(const LevelView& v, int num_classes, int obj_offset, int cls_offset,
-                 float obj_prefilter, float score_thresh, std::vector<Proposal>* out) {
+                 float obj_prefilter, float obj_logit_threshold,
+                 float score_thresh, std::vector<Proposal>* out) {
     const float stride = static_cast<float>(v.stride);
     for (int y = 0; y < v.H; ++y) {
         for (int x = 0; x < v.W; ++x) {
-            float obj = Sigmoid(ReadElem(*v.t, FlatIndex(v, obj_offset, y, x)));
+            const float obj_logit = ReadElem(*v.t, FlatIndex(v, obj_offset, y, x));
+            if (obj_logit < obj_logit_threshold) continue;
+            float obj = Sigmoid(obj_logit);
             if (obj < obj_prefilter) continue;
 
             float best_cls = -1.f;
@@ -157,6 +168,7 @@ Status YoloxDetPostprocessor::Configure(const IInferer& inferer, const Json::Val
     nms_threshold_  = params.get("nms_threshold", 0.5f).asFloat();
     max_det_        = params.get("max_det", 100).asInt();
     obj_prefilter_  = params.get("obj_prefilter", 0.05f).asFloat();
+    obj_logit_threshold_ = Logit(std::max(obj_prefilter_, conf_threshold_));
 
     if (params.isMember("strides") && params["strides"].isArray()) {
         strides_.clear();
@@ -223,11 +235,10 @@ Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSta
                            strides_[i], channels, &v) != 0)
             return ALG_E_POSTPROCESS;
         DecodeLevel(v, num_classes_, bbox_channels_, cls_offset_,
-                    obj_prefilter_, conf_threshold_, &props_);
+                    obj_prefilter_, obj_logit_threshold_, conf_threshold_, &props_);
     }
 
-    Nms(props_, nms_threshold_, &nms_scratch_);
-    if (static_cast<int>(props_.size()) > max_det_) props_.resize(max_det_);
+    Nms(props_, nms_threshold_, &nms_scratch_, max_det_);
 
     /* letterbox 反映射回原图。 */
     const float inv_s = state.scale_ratio > 0 ? 1.0f / state.scale_ratio : 1.0f;

@@ -18,6 +18,7 @@
 #ifndef ALG_CORE_INFER_INFERER_H
 #define ALG_CORE_INFER_INFERER_H
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,29 @@
 #include "core/preprocess/preprocessor.h"
 
 namespace alg {
+
+/**
+ * 同一条 ChainSolution 内多个动态 AIPP 模型共享的原始帧 staging 描述。
+ *
+ * 第一个模型把调用方图像复制到自己的 ACL 输入缓冲并 flush；后续模型仅临时
+ * 绑定这块已同步的缓冲。描述本身不拥有内存，实际缓冲仍由第一个 inferer 持有。
+ */
+struct SharedInputStaging {
+    const void*    source_data = nullptr;
+    int            source_width = 0;
+    int            source_height = 0;
+    int            source_stride = 0;
+    AlgPixelFormat source_format = ALG_PIX_BGR;
+    int            source_data_len = 0;
+
+    void*  data = nullptr;
+    size_t capacity = 0;
+    size_t data_size = 0;
+    size_t row_stride = 0;
+    bool   flushed = false;
+
+    void Reset() { *this = SharedInputStaging{}; }
+};
 
 class IInferer {
   public:
@@ -41,7 +65,8 @@ class IInferer {
     virtual bool SupportsDynamicAipp() const { return false; }
     virtual Status PrepareDynamicAipp(const AlgImage&,
                                       const PreprocessConfig&,
-                                      PreprocessState&) {
+                                      PreprocessState&,
+                                      SharedInputStaging*) {
         return ALG_E_BACKEND;
     }
 

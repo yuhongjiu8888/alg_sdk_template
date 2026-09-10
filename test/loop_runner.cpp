@@ -286,7 +286,6 @@ int main(int argc, char** argv) {
         if (s != ALG_OK) {
             std::fprintf(stderr, "[frame %ld] AlgRun err %d\n", frame, s);
             ++failures;
-            AlgFreeResult(&r);
             if (failures >= 10) {
                 std::fprintf(stderr, "连续失败过多，退出\n");
                 break;
@@ -334,8 +333,6 @@ int main(int argc, char** argv) {
             cv::imwrite(out_path, draw);
             std::printf("        [save  ] %s\n", out_path);
         }
-        AlgFreeResult(&r);
-
         ++frame;
         if (frame % stats_every == 0) {
             std::printf("[stats ] %ld frames: avg %.2f ms  min %.2f  max %.2f  fps %.2f\n", frame, win_ms / stats_every,

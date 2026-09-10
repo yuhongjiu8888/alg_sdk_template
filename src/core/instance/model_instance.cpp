@@ -64,12 +64,14 @@ Status ModelInstance::Init(const ModelInstanceConfig& cfg) {
     return ALG_OK;
 }
 
-Status ModelInstance::Run(const AlgImage& image, std::vector<Object>* out) {
-    return RunImpl(image, out);
+Status ModelInstance::Run(const AlgImage& image, std::vector<Object>* out,
+                          SharedInputStaging* shared_staging) {
+    return RunImpl(image, out, shared_staging);
 }
 
 Status ModelInstance::RunImpl(const AlgImage& image,
-                              std::vector<Object>* out) {
+                              std::vector<Object>* out,
+                              SharedInputStaging* shared_staging) {
     if (!initialized_) return ALG_E_NOT_INITIALIZED;
     if (!out) return ALG_E_INVALID_ARG;
     out->clear();
@@ -84,7 +86,7 @@ Status ModelInstance::RunImpl(const AlgImage& image,
     const bool try_aipp = cfg_.pre.engine != PreprocessEngine::kOpenCV &&
                           inferer_->SupportsDynamicAipp();
     if (try_aipp) {
-        s = inferer_->PrepareDynamicAipp(image, cfg_.pre, state);
+        s = inferer_->PrepareDynamicAipp(image, cfg_.pre, state, shared_staging);
     } else if (cfg_.pre.engine == PreprocessEngine::kAipp) {
         ALG_LOGE("[%s] preprocess.engine=aipp but dynamic AIPP is unavailable",
                  cfg_.name.c_str());

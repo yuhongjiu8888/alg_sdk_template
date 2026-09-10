@@ -1,10 +1,10 @@
 # alg_sdk 开发接入指南
 
-本指南说明 alg_sdk 的工程接入流程、主要模块和问题定位方法，适用于应用集成和后续维护。完整接口定义见 [接口文档](alg_sdk_api_documentation_v1.0.0.md)，设计说明见 [架构文档](ARCHITECTURE.md)。
+本指南说明 alg_sdk 的工程接入流程、主要模块和问题定位方法，适用于应用集成和后续维护。完整接口定义见 [接口文档](alg_sdk_api_documentation_v2.0.0.md)，设计说明见 [架构文档](ARCHITECTURE.md)。
 
 ## 1. 接入范围
 
-SDK 通过六个 C 函数完成实例管理、同步推理和结果释放，公共结果包含限速牌、禁令 / 停车牌和车牌。红绿灯模型及处理流程保留在工程内部，未纳入公共结果结构。
+SDK 通过五个 C 函数完成实例管理和同步推理，公共结果包含限速牌、禁令 / 停车牌和车牌。红绿灯模型及处理流程保留在工程内部，未纳入公共结果结构。
 
 应用接入需要准备目标架构、后端运行库、配套模型和业务配置。XMM、SVP ACL 和 MNN 提供推理实现；RK 保留接口桩，不用于业务验证。
 
@@ -39,12 +39,11 @@ cd build_linux_aarch64_svp_acl
 |------|----------|
 | `AlgCreate` | 传入配置路径和句柄输出指针，检查返回状态后使用句柄 |
 | `AlgRun` | 同步处理一帧；输入缓冲在返回前保持有效 |
-| `AlgFreeResult` | 释放三个结果数组并清空数量，可对已清空结果重复调用 |
 | `AlgDestroy` | 释放有效句柄，应用随后将句柄变量设为 `NULL` |
 | `AlgVersion` | 获取版本字符串，由 SDK 持有 |
 | `AlgBackendName` | 获取编译后端名称，由 SDK 持有 |
 
-`AlgResult` 首次使用必须零初始化。通过顶层指针检查后，`AlgRun` 会先释放结果结构中的旧数组；`AlgDestroy` 不代替应用释放已经返回的结果。跨帧保存数据时应复制数组内容，避免浅拷贝后重复释放。
+`AlgResult` 使用固定容量内联数组，建议在栈上零初始化。`AlgRun` 会覆盖数量和有效元素，无需释放；结构体复制也是完整的值复制。
 
 下面示例用于单帧接入验证，输入图像由调用方准备。连续采集场景应将创建和销毁移到帧循环之外，复用同一句柄。
 
@@ -84,7 +83,6 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
         }
     }
 
-    AlgFreeResult(&result);
     {
         AlgStatus destroy_status = AlgDestroy(handle);
         handle = NULL;
@@ -160,7 +158,7 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 | 文件或目录 | 维护内容 |
 |------------|----------|
 | [alg_interface.h](include/alg_interface.h)、[alg_types.h](include/alg_types.h) | 公共接口和数据结构 |
-| [alg_interface.cpp](src/interface/alg_interface.cpp) | 句柄、结果释放和帧号 |
+| [alg_interface.cpp](src/interface/alg_interface.cpp) | 句柄、结果转换和帧号 |
 | [chain_solution.cpp](src/core/solution/chain_solution.cpp) | 阶段执行、裁剪及结果写回 |
 | [model_instance.cpp](src/core/instance/model_instance.cpp) | 单模型初始化和执行 |
 | [config.cpp](src/core/config/config.cpp) | 配置字段及引用校验 |
@@ -170,7 +168,7 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 | [模型后处理目录](src/models) | 检测、OCR 和车牌识别后处理 |
 | [后端目录](src/backend) | 平台适配和后端资源管理 |
 
-新增后端需维护工具链和链接依赖；新增模型类型需实现后处理并加入构建；新增公共结果类型需同时维护类型定义、转换、释放和调用示例。具体流程见 [架构设计](ARCHITECTURE.md)。
+新增后端需维护工具链和链接依赖；新增模型类型需实现后处理并加入构建；新增公共结果类型需同时维护类型定义、转换和调用示例。具体流程见 [架构设计](ARCHITECTURE.md)。
 
 ## 7. 问题定位
 

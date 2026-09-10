@@ -41,11 +41,14 @@ class ChainSolution {
         ModelInstance*  model;          /* 直接指针，省 unordered_map 查询 */
         int             input_idx;      /* -1 表示 input == "image" */
         int             output_target;  /* -1 表示 produces == "objects" */
+        cv::Mat         roi_holder;     /* 跨帧复用 ROI 像素缓冲 */
+        std::vector<Object> sub_objects;/* 跨帧复用子模型结果容量 */
     };
 
     std::vector<std::unique_ptr<ModelInstance>>  model_storage_;  /* 持有所有模型实例 */
     std::vector<RuntimeStage>                    stages_;
     std::vector<StageProduce>                    stage_produces_; /* 与 stages_ 索引对齐 */
+    SharedInputStaging                           shared_input_;   /* 每帧 AIPP 原图只搬运一次 */
     cv::Mat                                      decoded_bgr_;    /* 复用：避免每帧重新分配 */
     bool                                         needs_decoded_bgr_ = false;
     bool                                         initialized_ = false;

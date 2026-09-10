@@ -23,7 +23,7 @@
  *     "conf_threshold": 0.25,
  *     "nms_threshold":  0.45,
  *     "min_bbox_size":  4.0,
- *     "max_det":        5,
+ *     "max_det":        2,
  *     "category":       "license_plate" }  // 可选：单阶段直出时打 category（二阶段由识别器覆盖）
  */
 
@@ -49,7 +49,8 @@ class RtmdetDetPostprocessor : public IPostprocessor {
     float conf_threshold_ = 0.25f;
     float nms_threshold_  = 0.45f;
     float min_bbox_size_  = 4.0f;
-    int   max_det_        = 5;
+    int   max_det_        = 2;
+    float conf_logit_threshold_ = 0.0f;
     std::string category_;
     bool  configured_     = false;
 
@@ -61,6 +62,7 @@ class RtmdetDetPostprocessor : public IPostprocessor {
     std::vector<int> reg_idx_;       /* level → reg 输出张量索引 */
 
     std::vector<Proposal> props_;
+    std::vector<Proposal> filtered_;
     NmsScratch            nms_scratch_;
 };
 

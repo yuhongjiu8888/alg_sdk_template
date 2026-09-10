@@ -76,9 +76,9 @@ struct Object {
 
 /**
  * 把 C++ Object 数组按 category attribute 分桶到 AlgResult 的强类型数组。
- * 无 category attribute 的 Object 会被跳过并打 warning。失败返回非 0。
+ * 无 category attribute 的 Object 会被跳过；超出固定容量的结果会被截断并告警。
  */
-int FillAlgResult(const std::vector<Object>& objs, AlgResult* result);
+void FillAlgResult(const std::vector<Object>& objs, AlgResult* result);
 
 }  // namespace alg
 

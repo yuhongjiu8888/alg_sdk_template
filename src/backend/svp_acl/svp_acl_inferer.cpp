@@ -101,8 +101,6 @@ void DestroyDataset(svp_acl_mdl_dataset*& dataset) {
         svp_acl_data_buffer* buffer =
             svp_acl_mdl_get_dataset_buffer(dataset, i);
         if (!buffer) continue;
-        void* address = svp_acl_get_data_buffer_addr(buffer);
-        if (address) (void)svp_acl_rt_free(address);
         (void)svp_acl_destroy_data_buffer(buffer);
     }
     (void)svp_acl_mdl_destroy_dataset(dataset);
@@ -176,12 +174,20 @@ void SvpAclInferer::FreeAll() {
     }
     dynamic_aipp_input_index_ = static_cast<size_t>(-1);
     image_input_capacity_ = 0;
+    own_image_input_ = nullptr;
+    image_input_preflushed_ = false;
 #endif
     input_views_.clear();
     output_views_.clear();
     output_raw_indices_.clear();
     DestroyDataset(input_dataset_);
     DestroyDataset(output_dataset_);
+    for (void* memory : input_allocations_)
+        if (memory) (void)svp_acl_rt_free(memory);
+    for (void* memory : output_allocations_)
+        if (memory) (void)svp_acl_rt_free(memory);
+    input_allocations_.clear();
+    output_allocations_.clear();
     if (model_desc_) {
         (void)svp_acl_mdl_destroy_desc(model_desc_);
         model_desc_ = nullptr;
@@ -258,6 +264,8 @@ Status SvpAclInferer::Load(const std::string& model_path) {
         ALG_LOGI("svp_acl: model='%s' inputs=%zu outputs=%zu",
                  model_path.c_str(), input_count, output_count);
         if (input_count == 0 || output_count == 0) break;
+        input_allocations_.assign(input_count, nullptr);
+        output_allocations_.assign(output_count, nullptr);
 
 #ifdef ALG_SVP_DYNAMIC_AIPP
         /* 动态 AIPP 模型会增加一个由运行时自动填写的辅助输入。先找出其
@@ -310,10 +318,14 @@ Status SvpAclInferer::Load(const std::string& model_path) {
                 io_ok = false;
                 break;
             }
+            input_allocations_[i] = memory;
             bool auxiliary = IsAuxiliaryInput(dims.name);
 #ifdef ALG_SVP_DYNAMIC_AIPP
             auxiliary = auxiliary || i == dynamic_aipp_input_index_;
-            if (i == image_input_index_) image_input_capacity_ = size;
+            if (i == image_input_index_) {
+                image_input_capacity_ = size;
+                own_image_input_ = memory;
+            }
 #endif
             ALG_LOGI("svp_acl: input[%zu] name='%s' shape=%s dtype=%d "
                      "size=%zu stride=%zu%s",
@@ -364,6 +376,7 @@ Status SvpAclInferer::Load(const std::string& model_path) {
                 io_ok = false;
                 break;
             }
+            output_allocations_[i] = memory;
             ALG_LOGI("svp_acl: output[%zu] name='%s' shape=%s dtype=%d "
                      "size=%zu stride=%zu",
                      i, dims.name, DimsString(dims).c_str(),
@@ -432,13 +445,22 @@ Status SvpAclInferer::Forward() {
 
     svp_acl_data_buffer* image_buffer =
         svp_acl_mdl_get_dataset_buffer(input_dataset_, image_input_index_);
-    svp_acl_error ret = svp_acl_rt_mem_flush(
-        svp_acl_get_data_buffer_addr(image_buffer),
-        svp_acl_get_data_buffer_size(image_buffer));
-    if (ret != SVP_ACL_SUCCESS) {
-        ALG_LOGE("svp_acl: input flush failed, ret=%d", ret);
-        return ALG_E_BACKEND;
+    svp_acl_error ret = SVP_ACL_SUCCESS;
+#ifdef ALG_SVP_DYNAMIC_AIPP
+    if (!image_input_preflushed_)
+#endif
+    {
+        ret = svp_acl_rt_mem_flush(
+            svp_acl_get_data_buffer_addr(image_buffer),
+            svp_acl_get_data_buffer_size(image_buffer));
+        if (ret != SVP_ACL_SUCCESS) {
+            ALG_LOGE("svp_acl: input flush failed, ret=%d", ret);
+            return ALG_E_BACKEND;
+        }
     }
+#ifdef ALG_SVP_DYNAMIC_AIPP
+    image_input_preflushed_ = false;
+#endif
 
     ret = svp_acl_mdl_execute(model_id_, input_dataset_, output_dataset_);
     if (ret != SVP_ACL_SUCCESS) {
@@ -468,11 +490,40 @@ bool SvpAclInferer::SupportsDynamicAipp() const {
 #endif
 }
 
+#ifdef ALG_SVP_DYNAMIC_AIPP
+Status SvpAclInferer::EnsureOwnImageInput() {
+    if (own_image_input_) return ALG_OK;
+    if (image_input_index_ == static_cast<size_t>(-1) ||
+        image_input_capacity_ == 0 ||
+        image_input_index_ >= input_allocations_.size()) {
+        return ALG_E_BACKEND;
+    }
+
+    void* memory = nullptr;
+    svp_acl_error ret = svp_acl_rt_malloc_cached(
+        &memory, image_input_capacity_, SVP_ACL_MEM_MALLOC_NORMAL_ONLY);
+    if (ret != SVP_ACL_SUCCESS) {
+        ALG_LOGE("svp_acl: allocate private AIPP input failed, ret=%d", ret);
+        return ALG_E_OOM;
+    }
+    std::memset(memory, 0, image_input_capacity_);
+    ret = svp_acl_rt_mem_flush(memory, image_input_capacity_);
+    if (ret != SVP_ACL_SUCCESS) {
+        (void)svp_acl_rt_free(memory);
+        return ALG_E_BACKEND;
+    }
+    own_image_input_ = memory;
+    input_allocations_[image_input_index_] = memory;
+    return ALG_OK;
+}
+#endif
+
 Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
                                          const PreprocessConfig& cfg,
-                                         PreprocessState& state) {
+                                         PreprocessState& state,
+                                         SharedInputStaging* shared_staging) {
 #ifndef ALG_SVP_DYNAMIC_AIPP
-    (void)image; (void)cfg; (void)state;
+    (void)image; (void)cfg; (void)state; (void)shared_staging;
     return ALG_E_BACKEND;
 #else
     if (!initialized_ || !dynamic_aipp_) return ALG_E_NOT_INITIALIZED;
@@ -636,16 +687,75 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     const size_t needed_dst = dst_stride * image.height * 3 / 2;
     if (needed_dst > dst_size) return ALG_E_PREPROCESS;
 
-    ret = svp_acl_update_data_buffer(image_buffer, dst, dst_size, dst_stride);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
-    for (int y = 0; y < image.height; ++y)
-        std::memcpy(dst + static_cast<size_t>(y) * dst_stride,
-                    src + static_cast<size_t>(y) * src_stride, image.width);
-    const uint8_t* src_uv = src + src_stride * image.height;
-    uint8_t* dst_uv = dst + dst_stride * image.height;
-    for (int y = 0; y < image.height / 2; ++y)
-        std::memcpy(dst_uv + static_cast<size_t>(y) * dst_stride,
-                    src_uv + static_cast<size_t>(y) * src_stride, image.width);
+    const bool can_share = shared_staging && shared_staging->flushed &&
+        shared_staging->source_data == image.data &&
+        shared_staging->source_width == image.width &&
+        shared_staging->source_height == image.height &&
+        shared_staging->source_stride == static_cast<int>(src_stride) &&
+        shared_staging->source_format == image.format &&
+        shared_staging->source_data_len == image.data_len &&
+        shared_staging->data && shared_staging->capacity >= dst_size &&
+        shared_staging->data_size == needed_dst &&
+        shared_staging->row_stride == dst_stride;
+
+    if (can_share) {
+        ret = svp_acl_update_data_buffer(image_buffer, shared_staging->data,
+                                         dst_size, dst_stride);
+        if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+        input_views_[0].data = shared_staging->data;
+        input_views_[0].size_bytes = dst_size;
+        image_input_preflushed_ = true;
+
+        /* 本 inferer 后续始终由同一静态 chain 顺序取得共享帧，可释放不再使用的
+         * 私有整帧缓存。dataset buffer 不拥有地址，FreeAll 只释放 allocations_。 */
+        if (own_image_input_ && own_image_input_ != shared_staging->data) {
+            (void)svp_acl_rt_free(own_image_input_);
+            input_allocations_[image_input_index_] = nullptr;
+            own_image_input_ = nullptr;
+            ALG_LOGI("svp_acl: switched to shared AIPP staging, released private input");
+        }
+    } else {
+        Status own_status = EnsureOwnImageInput();
+        if (own_status != ALG_OK) return own_status;
+        dst = static_cast<uint8_t*>(own_image_input_);
+        ret = svp_acl_update_data_buffer(image_buffer, dst, dst_size, dst_stride);
+        if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+        input_views_[0].data = dst;
+        input_views_[0].size_bytes = dst_size;
+
+        if (src_stride == dst_stride) {
+            std::memcpy(dst, src, needed_dst);
+        } else {
+            for (int y = 0; y < image.height; ++y)
+                std::memcpy(dst + static_cast<size_t>(y) * dst_stride,
+                            src + static_cast<size_t>(y) * src_stride, image.width);
+            const uint8_t* src_uv = src + src_stride * image.height;
+            uint8_t* dst_uv = dst + dst_stride * image.height;
+            for (int y = 0; y < image.height / 2; ++y)
+                std::memcpy(dst_uv + static_cast<size_t>(y) * dst_stride,
+                            src_uv + static_cast<size_t>(y) * src_stride, image.width);
+        }
+        ret = svp_acl_rt_mem_flush(dst, dst_size);
+        if (ret != SVP_ACL_SUCCESS) {
+            ALG_LOGE("svp_acl: staged AIPP input flush failed, ret=%d", ret);
+            return ALG_E_BACKEND;
+        }
+        image_input_preflushed_ = true;
+
+        if (shared_staging) {
+            shared_staging->source_data = image.data;
+            shared_staging->source_width = image.width;
+            shared_staging->source_height = image.height;
+            shared_staging->source_stride = static_cast<int>(src_stride);
+            shared_staging->source_format = image.format;
+            shared_staging->source_data_len = image.data_len;
+            shared_staging->data = dst;
+            shared_staging->capacity = image_input_capacity_;
+            shared_staging->data_size = needed_dst;
+            shared_staging->row_stride = dst_stride;
+            shared_staging->flushed = true;
+        }
+    }
 
     state.scale_ratio = scale_ratio;
     state.pad_left = pad_left;

@@ -57,6 +57,7 @@ class YoloxDetPostprocessor : public IPostprocessor {
     float                    nms_threshold_  = 0.5f;
     int                      max_det_        = 100;
     float                    obj_prefilter_  = 0.05f;
+    float                    obj_logit_threshold_ = 0.0f;
     /* class_names 可选；提供时会给每个 Object 加一个 "class" attribute（value_str=类名,
      * value_int=label, value_float=score），方便排错；ABI 层最终走 enum，不依赖此字段。 */
     std::vector<std::string> class_names_;

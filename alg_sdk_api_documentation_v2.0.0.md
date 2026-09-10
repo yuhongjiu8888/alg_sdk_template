@@ -2,7 +2,7 @@
 
 | 项目 | 版本 | 更新日期 |
 |------|------|----------|
-| 限速牌 / 禁令停车牌 / 车牌识别（alg_sdk） | Version-1.0.0 | 2026 年 09 月 07 日 |
+| 限速牌 / 禁令停车牌 / 车牌识别（alg_sdk） | Version-2.0.0 | 2026 年 09 月 09 日 |
 
 ## 文档控制
 
@@ -18,8 +18,9 @@
 |------|------|------|------|
 | 1.0.0 | 喻伟 | 2026.07.17 | 初版接口文档：限速牌及停车牌识别 |
 | 1.0.0（文档修订） | 喻伟 | 2026.09.07 | 完善公共接口参数、返回值及数据结构说明 |
+| 2.0.0 | — | 2026.09.09 | 结果改为固定容量内联数组，移除 `AlgFreeResult` |
 
-本文档说明 alg_sdk 1.0.0 的公共函数、枚举和结构体。接口声明见交付头文件 `alg_interface.h`，数据类型见 `alg_types.h`。应用应使用与动态库配套的头文件。
+本文档说明 alg_sdk 2.0.0 的公共函数、枚举和结构体。接口声明见交付头文件 `alg_interface.h`，数据类型见 `alg_types.h`。应用应使用与动态库配套的头文件。
 
 ## 目录
 
@@ -37,7 +38,6 @@ SDK 不保证线程安全，应用应串行调用接口，并同步管理输入�
 | `AlgCreate` | 创建并初始化实例 | `AlgStatus` |
 | `AlgDestroy` | 销毁实例 | `AlgStatus` |
 | `AlgRun` | 同步处理一帧图像 | `AlgStatus` |
-| `AlgFreeResult` | 释放结果数组 | `void` |
 | `AlgVersion` | 获取版本信息 | `const char*` |
 | `AlgBackendName` | 获取运行后端名称 | `const char*` |
 
@@ -72,7 +72,7 @@ AlgStatus AlgDestroy(AlgHandle handle);
 
 有效句柄返回 `ALG_OK`；`NULL` 返回 `ALG_E_INVALID_ARG`。销毁后，调用方应将句柄变量设为 `NULL`，不得再次销毁或继续用于推理。
 
-该函数不释放已经返回的 `AlgResult` 数组，结果须通过 `AlgFreeResult` 单独释放。
+`AlgResult` 使用内联数组，不依赖实例内存；销毁句柄后，调用方持有的结果结构仍可读取。
 
 ### 1.3 AlgRun
 
@@ -86,47 +86,30 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 |------|------|------|
 | `handle` | 输入 | 有效的算法实例句柄 |
 | `image` | 输入 | 图像描述指针，不得为 `NULL`；字段要求见 2.4 |
-| `result` | 输入 / 输出 | 结果结构指针，不得为 `NULL`；首次使用必须零初始化，例如 `AlgResult result = {0};` |
+| `result` | 输出 | 结果结构指针，不得为 `NULL`；建议在栈上零初始化，例如 `AlgResult result = {0};` |
 
 返回 `ALG_OK` 表示本帧处理完成，没有检出目标也返回成功。返回非零时，本次结果不得用于业务处理。
 
 调用要求：
 
 - 图像缓冲由调用方持有，在函数返回前须保持有效且不被修改。
-- 复用同一结果结构时，SDK 会先释放其中的旧数组，再写入本帧结果；旧数组指针随之失效。
+- 复用同一结果结构时，SDK 直接覆盖数量和本帧有效元素。
 - 若任一顶层参数指针为 `NULL`，返回 `ALG_E_INVALID_ARG`，原有结果不变。
 - 通过顶层指针检查后，后续处理若返回错误码，结果数组为空、数量为 0，`frame_id` 不更新。
-- 最后一次结果使用结束后，仍须调用 `AlgFreeResult`。
 
 调用方负责像素指针、图像布局和缓冲长度的有效性；非法图像数据不保证以错误码返回。
 
-### 1.4 AlgFreeResult
-
-```c
-void AlgFreeResult(AlgResult* result);
-```
-
-释放 SDK 分配的结果数组。
-
-| 参数 | 方向 | 说明 |
-|------|------|------|
-| `result` | 输入 / 输出 | 零初始化、由 SDK 填充或已经释放的有效结果结构指针 |
-
-释放 `speed_limits`、`signs` 和 `license_plates`，将对应指针设为 `NULL`、数量设为 0。该函数不释放 `AlgResult` 结构体本身，不修改 `frame_id`，也不释放输入图像。
-
-无返回值。传入 `NULL`、零初始化的结果或已释放的结果均安全。不得对同一结果的多个浅拷贝分别调用此函数，也不得将调用方自行管理的数组交给该函数释放。
-
-### 1.7 AlgVersion
+### 1.4 AlgVersion
 
 ```c
 const char* AlgVersion(void);
 ```
 
-返回版本字符串，格式为 `"alg_sdk.v1.0.0+<backend>"`，例如 `"alg_sdk.v1.0.0+svp_acl"`。
+返回版本字符串，格式为 `"alg_sdk.v2.0.0+<backend>"`，例如 `"alg_sdk.v2.0.0+svp_acl"`。2.0 版本将结果数组改为内联固定容量，因此应用必须使用配套头文件重新编译。
 
 无需创建实例即可调用。字符串由 SDK 持有，调用方不可修改或释放；动态库卸载后不可继续访问该指针。
 
-### 1.8 AlgBackendName
+### 1.5 AlgBackendName
 
 ```c
 const char* AlgBackendName(void);
@@ -338,13 +321,13 @@ typedef struct AlgResult_ {
     long long        frame_id;
 
     int              speed_limit_count;
-    AlgSpeedLimit*   speed_limits;
+    AlgSpeedLimit    speed_limits[ALG_MAX_SPEED_LIMIT_RESULTS];
 
     int              sign_count;
-    AlgSign*         signs;
+    AlgSign          signs[ALG_MAX_SIGN_RESULTS];
 
     int              license_plate_count;
-    AlgLicensePlate* license_plates;
+    AlgLicensePlate  license_plates[ALG_MAX_LICENSE_PLATE_RESULTS];
 } AlgResult;
 ```
 
@@ -358,8 +341,8 @@ typedef struct AlgResult_ {
 | `license_plate_count` | 车牌结果数量 |
 | `license_plates` | 车牌数组，元素类型为 `AlgLicensePlate` |
 
-每个数组按对应数量遍历；未返回该类结果时，数量为 0、指针为 `NULL`。数组索引不表示跨帧跟踪 ID。
+每个数组按对应数量遍历；未返回该类结果时数量为 0。固定容量分别为限速牌 5、禁令 / 停车牌 5、车牌 2；数组索引不表示跨帧跟踪 ID。
 
-`AlgRun` 的 `frame_id` 由同一 SDK 动态库的所有句柄共享，每次成功后递增，包括成功但没有检出目标的帧；该计数不随句柄销毁重建而重置。失败调用和 `AlgFreeResult` 不更新该字段。
+`AlgRun` 的 `frame_id` 由同一 SDK 动态库的所有句柄共享，每次成功后递增，包括成功但没有检出目标的帧；该计数不随句柄销毁重建而重置，失败调用不更新该字段。
 
-结果数组由 SDK 分配，通过 `AlgFreeResult` 统一释放。数组有效期截止于显式释放，或同一结果结构下一次通过顶层指针检查的 `AlgRun` 调用。跨帧保存时应复制数组内容；仅复制 `AlgResult` 结构体不会获得独立的数组所有权。
+结果数组内联在 `AlgResult` 中，不发生堆分配，也不需要释放。调用方可将结构放在栈上；结构体赋值会完整复制当前帧结果。

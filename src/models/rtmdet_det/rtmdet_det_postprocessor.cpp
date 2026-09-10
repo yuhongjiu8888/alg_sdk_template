@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 #include "core/logger.h"
 #include "core/postprocess/nms.h"
@@ -12,6 +13,13 @@ namespace alg {
 namespace {
 
 inline float Sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
+
+inline float Logit(float p) {
+    if (p <= 0.0f) return -std::numeric_limits<float>::infinity();
+    if (p >= 1.0f) return std::numeric_limits<float>::infinity();
+    /* 略向低侧放宽，避免 log/sigmoid 浮点舍入在阈值边界误剪。 */
+    return std::log(p / (1.0f - p)) - 1e-6f;
+}
 
 inline float Clamp(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -92,7 +100,8 @@ Status RtmdetDetPostprocessor::Configure(const IInferer& inferer, const Json::Va
     conf_threshold_ = params.get("conf_threshold", 0.25f).asFloat();
     nms_threshold_  = params.get("nms_threshold", 0.45f).asFloat();
     min_bbox_size_  = params.get("min_bbox_size", 4.0f).asFloat();
-    max_det_        = params.get("max_det", 5).asInt();
+    max_det_        = params.get("max_det", 2).asInt();
+    conf_logit_threshold_ = Logit(conf_threshold_);
     category_       = params.get("category", "").asString();
 
     strides_.clear();
@@ -228,7 +237,9 @@ Status RtmdetDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSt
         for (int y = 0; y < H; ++y) {
             for (int x = 0; x < W; ++x) {
                 const size_t p = FlatIndex(cls, 0, y, x);
-                const float score = Sigmoid(ReadElem(cls, p));
+                const float score_logit = ReadElem(cls, p);
+                if (score_logit < conf_logit_threshold_) continue;
+                const float score = Sigmoid(score_logit);
                 if (score < conf_threshold_) continue;
                 const float left   = ReadElem(reg, FlatIndex(reg, 0, y, x));
                 const float top    = ReadElem(reg, FlatIndex(reg, 1, y, x));
@@ -249,8 +260,8 @@ Status RtmdetDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSt
     }
 
     /* 2. clip 到模型输入空间，过滤过小框（demo 的 min_bbox_size=4）。 */
-    std::vector<Proposal> filtered;
-    filtered.reserve(props_.size());
+    filtered_.clear();
+    filtered_.reserve(props_.size());
     for (const Proposal& c : props_) {
         const float x1 = Clamp(c.x1, 0.0f, static_cast<float>(input_w));
         const float y1 = Clamp(c.y1, 0.0f, static_cast<float>(input_h));
@@ -261,12 +272,11 @@ Status RtmdetDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSt
         p.x1 = x1; p.y1 = y1; p.x2 = x2; p.y2 = y2;
         p.score = c.score;
         p.label = 0;
-        filtered.push_back(p);
+        filtered_.push_back(p);
     }
 
     /* 3. 单类 NMS + 截断 max_det。 */
-    Nms(filtered, nms_threshold_, &nms_scratch_);
-    if (static_cast<int>(filtered.size()) > max_det_) filtered.resize(max_det_);
+    Nms(filtered_, nms_threshold_, &nms_scratch_, max_det_);
 
     /* —— 一次性诊断：板端 0 检出时确认检测头是否有响应（原始 min/max、最强框）。 */
     {
@@ -286,8 +296,8 @@ Status RtmdetDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSt
             }
             ALG_LOGD("[det-diag] rtmdet cls/reg raw[min=%d max=%d] cand=%zu after_nms=%zu "
                      "top_score=%.4f",
-                     raw_min, raw_max, props_.size(), filtered.size(),
-                     filtered.empty() ? -1.0f : filtered[0].score);
+                     raw_min, raw_max, props_.size(), filtered_.size(),
+                     filtered_.empty() ? -1.0f : filtered_[0].score);
         }
     }
 
@@ -297,8 +307,8 @@ Status RtmdetDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSt
     const int max_y = state.original_height - 1;
 
     const bool emit_category = !category_.empty();
-    out->reserve(filtered.size());
-    for (const Proposal& p : filtered) {
+    out->reserve(filtered_.size());
+    for (const Proposal& p : filtered_) {
         Object o;
         o.field_mask = ALG_FIELD_BOX;
         o.box.score = p.score;

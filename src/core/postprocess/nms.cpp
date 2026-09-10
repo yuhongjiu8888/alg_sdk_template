@@ -4,7 +4,8 @@
 
 namespace alg {
 
-void Nms(std::vector<Proposal>& props, float iou_thresh, NmsScratch* scratch) {
+void Nms(std::vector<Proposal>& props, float iou_thresh,
+         NmsScratch* scratch, int max_keep) {
     if (props.empty()) return;
 
     for (auto& p : props) p.area = (p.x2 - p.x1) * (p.y2 - p.y1);
@@ -22,9 +23,17 @@ void Nms(std::vector<Proposal>& props, float iou_thresh, NmsScratch* scratch) {
     uint8_t* sup = sc.suppressed.data();
     Proposal* pp = props.data();
 
+    size_t kept = 0;
     for (size_t i = 0; i < n; ++i) {
         if (sup[i]) continue;
         const Proposal& a = pp[i];
+
+        /* 排序后当前框就是下一个最终结果。达到上限时，后续低分框不可能
+         * 反向影响已保留结果，可直接结束，等价于完整 NMS 后 resize。 */
+        if (kept != i) pp[kept] = a;
+        ++kept;
+        if (max_keep > 0 && kept >= static_cast<size_t>(max_keep)) break;
+
         for (size_t j = i + 1; j < n; ++j) {
             if (sup[j]) continue;
             const Proposal& b = pp[j];
@@ -44,14 +53,7 @@ void Nms(std::vector<Proposal>& props, float iou_thresh, NmsScratch* scratch) {
         }
     }
 
-    size_t w = 0;
-    for (size_t i = 0; i < n; ++i) {
-        if (!sup[i]) {
-            if (w != i) pp[w] = pp[i];
-            ++w;
-        }
-    }
-    props.resize(w);
+    props.resize(kept);
 }
 
 }  // namespace alg
