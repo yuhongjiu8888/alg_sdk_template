@@ -269,23 +269,25 @@ Status XmmInferer::BuildViews() {
      *   dims 与 pch 不一致 → NPU 对维度做了对齐补位（pitch != dims），
      *     后处理按密排 idx 取数会错位 → 也读出垃圾。
      * 确认后可删掉这段。 */
-    auto dump = [](const char* tag, const xmedia_cl_tensor_info_inout& io) {
-        for (xmedia_cl_u32 i = 0; i < io.num; ++i) {
-            const xmedia_cl_tensor& t = io.tensor[i];
-            char dims[64] = {0}, pch[64] = {0};
-            int dn = 0, pn = 0;
-            for (xmedia_cl_u32 d = 0; d < t.shape.ndims && dn < 56; ++d)
-                dn += snprintf(dims + dn, sizeof(dims) - dn, "%u,", t.shape.dims[d]);
-            for (xmedia_cl_u32 d = 0; d < t.shape.ndims && pn < 56; ++d)
-                pn += snprintf(pch + pn, sizeof(pch) - pn, "%u,", t.shape.pch[d]);
-            ALG_LOGD("[xmm-diag] %s[%u] tid=%u name=%s type=%d ndims=%u dims=[%s] pch=[%s] "
-                     "scale=%g zp=%d size=%u addr=%p",
-                     tag, i, t.tensor_id, t.name ? (const char*)t.name : "", (int)t.shape.type,
-                     t.shape.ndims, dims, pch, t.quant.scale, (int)t.quant.zp, t.size, t.addr);
-        }
-    };
-    dump("in", cl_input_);
-    dump("out", cl_output_);
+    if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug)) {
+        auto dump = [](const char* tag, const xmedia_cl_tensor_info_inout& io) {
+            for (xmedia_cl_u32 i = 0; i < io.num; ++i) {
+                const xmedia_cl_tensor& t = io.tensor[i];
+                char dims[64] = {0}, pch[64] = {0};
+                int dn = 0, pn = 0;
+                for (xmedia_cl_u32 d = 0; d < t.shape.ndims && dn < 56; ++d)
+                    dn += snprintf(dims + dn, sizeof(dims) - dn, "%u,", t.shape.dims[d]);
+                for (xmedia_cl_u32 d = 0; d < t.shape.ndims && pn < 56; ++d)
+                    pn += snprintf(pch + pn, sizeof(pch) - pn, "%u,", t.shape.pch[d]);
+                ALG_LOGD("[xmm-diag] %s[%u] tid=%u name=%s type=%d ndims=%u dims=[%s] pch=[%s] "
+                         "scale=%g zp=%d size=%u addr=%p",
+                         tag, i, t.tensor_id, t.name ? (const char*)t.name : "", (int)t.shape.type,
+                         t.shape.ndims, dims, pch, t.quant.scale, (int)t.quant.zp, t.size, t.addr);
+            }
+        };
+        dump("in", cl_input_);
+        dump("out", cl_output_);
+    }
     return ALG_OK;
 }
 
@@ -299,7 +301,7 @@ Status XmmInferer::Forward() {
      * 首个 Forward 是 stage1 检测器，正好对应检测输入。确认后删除。 */
     {
         static int dumped = 0;
-        if (dumped < 3) {
+        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && dumped < 3) {
             ++dumped;
             const uint8_t* p = static_cast<const uint8_t*>(vir_input_);
             int mn = 255, mx = 0;
@@ -334,7 +336,8 @@ Status XmmInferer::Forward() {
      * 若 addr 跟 Load 时不同 → NPU 动态改了输出地址（非拷贝模式）。确认后删除。 */
     {
         static int dumped_out = 0;
-        if (dumped_out < 3 && cl_output_.num > 1) {
+        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) &&
+            dumped_out < 3 && cl_output_.num > 1) {
             ++dumped_out;
             for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
                 const xmedia_cl_tensor& t = cl_output_.tensor[i];

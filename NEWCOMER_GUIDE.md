@@ -1,10 +1,10 @@
 # alg_sdk 开发接入指南
 
-本指南说明 alg_sdk 的工程接入流程、主要模块和问题定位方法，适用于应用集成和后续维护。完整接口定义见 [接口文档](alg_sdk_api_documentation_v2.0.0.md)，设计说明见 [架构文档](ARCHITECTURE.md)。
+本指南说明 alg_sdk 的工程接入流程、主要模块和问题定位方法，适用于应用集成和后续维护。完整接口定义见 [接口文档](alg_sdk_api_documentation_v2.1.0.md)，设计说明见 [架构文档](ARCHITECTURE.md)。
 
 ## 1. 接入范围
 
-SDK 通过五个 C 函数完成实例管理和同步推理，公共结果包含限速牌、禁令 / 停车牌和车牌。红绿灯模型及处理流程保留在工程内部，未纳入公共结果结构。
+SDK 通过六个 C 函数完成实例管理、同步推理和日志控制，公共结果包含限速牌、禁令 / 停车牌和车牌。红绿灯模型及处理流程保留在工程内部，未纳入公共结果结构。
 
 应用接入需要准备目标架构、后端运行库、配套模型和业务配置。XMM、SVP ACL 和 MNN 提供推理实现；RK 保留接口桩，不用于业务验证。
 
@@ -40,6 +40,7 @@ cd build_linux_aarch64_svp_acl
 | `AlgCreate` | 传入配置路径和句柄输出指针，检查返回状态后使用句柄 |
 | `AlgRun` | 同步处理一帧；输入缓冲在返回前保持有效 |
 | `AlgDestroy` | 释放有效句柄，应用随后将句柄变量设为 `NULL` |
+| `AlgSetLogLevel` | 无需句柄，动态设置 SDK 全局日志等级 |
 | `AlgVersion` | 获取版本字符串，由 SDK 持有 |
 | `AlgBackendName` | 获取编译后端名称，由 SDK 持有 |
 
@@ -58,6 +59,8 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
     AlgStatus status;
 
     if (!image) return ALG_E_INVALID_ARG;
+    status = AlgSetLogLevel(ALG_LOG_WARN);
+    if (status != ALG_OK) return status;
     status = AlgCreate(&handle, config_path);
     if (status != ALG_OK) return status;
 

@@ -7,19 +7,15 @@
 #include "core/preprocess/letterbox_preprocessor.h"
 #include "core/registry/postprocessor_registry.h"
 
-#ifdef ALG_PROFILE
 #include <sys/time.h>
-#endif
 
 namespace alg {
 
-#ifdef ALG_PROFILE
 namespace {
 inline double Ms(const timeval& a, const timeval& b) {
     return (b.tv_sec - a.tv_sec) * 1000.0 + (b.tv_usec - a.tv_usec) / 1000.0;
 }
 }  // namespace
-#endif
 
 ModelInstance::ModelInstance() = default;
 ModelInstance::~ModelInstance() = default;
@@ -76,10 +72,9 @@ Status ModelInstance::RunImpl(const AlgImage& image,
     if (!out) return ALG_E_INVALID_ARG;
     out->clear();
 
-#ifdef ALG_PROFILE
     timeval t0, t1, t2, t3;
-    gettimeofday(&t0, nullptr);
-#endif
+    const bool profile = ALG_LOG_IS_ENABLED(alg::log::Level::Info);
+    if (profile) gettimeofday(&t0, nullptr);
 
     PreprocessState state;
     Status s;
@@ -96,23 +91,19 @@ Status ModelInstance::RunImpl(const AlgImage& image,
         s = pre_->Apply(image, inferer_->InputView(0), state);
     }
     if (s != ALG_OK) return s;
-#ifdef ALG_PROFILE
-    gettimeofday(&t1, nullptr);
-#endif
+    if (profile) gettimeofday(&t1, nullptr);
 
     s = inferer_->Forward();
     if (s != ALG_OK) return s;
-#ifdef ALG_PROFILE
-    gettimeofday(&t2, nullptr);
-#endif
+    if (profile) gettimeofday(&t2, nullptr);
 
     s = post_->Apply(*inferer_, state, out);
     if (s != ALG_OK) return s;
-#ifdef ALG_PROFILE
-    gettimeofday(&t3, nullptr);
-    ALG_LOGI("[%s] pre=%.2fms infer=%.2fms post=%.2fms objects=%zu",
-             cfg_.name.c_str(), Ms(t0, t1), Ms(t1, t2), Ms(t2, t3), out->size());
-#endif
+    if (profile) {
+        gettimeofday(&t3, nullptr);
+        ALG_LOGI("[%s] pre=%.2fms infer=%.2fms post=%.2fms objects=%zu",
+                 cfg_.name.c_str(), Ms(t0, t1), Ms(t1, t2), Ms(t2, t3), out->size());
+    }
     return ALG_OK;
 }
 

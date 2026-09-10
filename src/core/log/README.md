@@ -15,7 +15,7 @@
 | 启动信息 | 记录启动时间、主机、进程和日志格式，区分多次运行记录 |
 | 长度限制 | 单条消息超过缓冲上限时截断 |
 
-未启用 `ALG_LOG_FILE` 时，SDK 日志宏直接调用 `fprintf`；Info / Debug 是否编入由相应编译选项决定。日志模块源码列入工程构建，但宏调用路径不启用异步文件输出。
+未启用 `ALG_LOG_FILE` 时，SDK 日志宏直接调用 `fprintf`。所有等级都会编入，输出前先通过原子等级判断；被过滤的日志不会格式化参数或执行 I/O。默认等级为 Warn。
 
 ## 编译配置
 
@@ -29,11 +29,20 @@ cmake .. -DALG_LOG_FILE=ON \
   -DALG_LOG_INFO=ON
 ```
 
-`ALG_LOG_FILE_MAX_SIZE` 单位为字节。Info 日志通过 `ALG_LOG_INFO=ON` 编入，Debug 日志通过 `ALG_LOG_DEBUG=ON` 编入。Android 构建可设置 `ALG_LOG_ANDROID=ON`，并由对应构建配置链接日志依赖。
+`ALG_LOG_FILE_MAX_SIZE` 单位为字节。`ALG_LOG_INFO=ON` 和 `ALG_LOG_DEBUG=ON` 分别把启动默认等级改为 Info 和 Debug，不影响运行期可选等级。Android 构建可设置 `ALG_LOG_ANDROID=ON`，并由对应构建配置链接日志依赖。
 
 ## 运行期配置
 
-日志模块提供独立的 C++ 配置入口，声明见 [alg_log.h](alg_log.h)。这些入口不属于公共业务 C API，使用时需包含日志模块头文件。
+集成方使用公共 C 接口动态控制日志等级：
+
+```c
+AlgSetLogLevel(ALG_LOG_INFO);   /* Error/Warn/Info */
+AlgSetLogLevel(ALG_LOG_OFF);    /* 关闭全部 SDK 日志 */
+```
+
+接口可在 `AlgCreate` 前调用，也可以在运行期间调用，设置作用于同一动态库的全部实例。非法等级返回 `ALG_E_INVALID_ARG`。异步模式下，修改前已经入队的消息仍可能完成输出。
+
+日志模块还提供独立的内部 C++ 配置入口，声明见 [alg_log.h](alg_log.h)，用于配置文件路径和 sink：
 
 ```cpp
 #include "core/log/alg_log.h"
@@ -57,7 +66,7 @@ void ShutdownSdkLog()
 
 部署前应确认日志目录存在且具备写入权限。`init` 可重新配置日志模块；未显式调用时，首次写入采用默认配置初始化。应用结束时可调用 `shutdown` 刷新日志并停止后台线程；模块单例析构时也会执行关闭操作。
 
-`set_level` 调整运行期过滤级别，`flush` 请求刷新日志。运行期级别设置不能恢复编译时已移除的 Info / Debug 日志。
+`set_level` 调整内部运行期过滤级别，`flush` 请求刷新日志。公共集成应优先使用 `AlgSetLogLevel`。
 
 ## 默认参数
 

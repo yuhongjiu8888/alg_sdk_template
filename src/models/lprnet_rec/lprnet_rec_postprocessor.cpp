@@ -176,7 +176,7 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
     /* —— 一次性诊断（前 8 个 ROI）：看 stage2 解出什么文本、置信度如何。 */
     {
         static int dbg_n = 0;
-        if (dbg_n < 8) {
+        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && dbg_n < 8) {
             ++dbg_n;
             char shape[64] = {0};
             int sn = 0;

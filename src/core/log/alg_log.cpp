@@ -23,6 +23,12 @@ namespace alg {
 namespace log {
 namespace {
 
+std::atomic<int> g_level{ALG_LOG_DEFAULT_LEVEL};
+
+bool level_enabled(Level lvl) {
+    return static_cast<int>(lvl) <= g_level.load(std::memory_order_relaxed);
+}
+
 // ---------------------------------------------------------------------------
 // 一条待落盘的日志（环形缓冲的槽位）。定长，避免热路径上的堆分配。
 // ---------------------------------------------------------------------------
@@ -147,11 +153,9 @@ public:
         initialized_.store(true, std::memory_order_release);
     }
 
-    void set_level(Level lvl) { level_.store(static_cast<int>(lvl), std::memory_order_relaxed); }
-
     void submit(Level lvl, const struct timespec& ts, const char* msg, int len) {
         ensure_init();
-        if (static_cast<int>(lvl) > level_.load(std::memory_order_relaxed)) return;
+        if (!level_enabled(lvl)) return;
 
         if (!async_) {                          // 同步：直接落盘（调试用）
             Slot s;
@@ -206,21 +210,22 @@ public:
     }
 
 private:
-    Logger() : level_(static_cast<int>(Level::Debug)) {}
+    Logger() = default;
 
     void ensure_init() {
         if (initialized_.load(std::memory_order_acquire)) return;
         std::lock_guard<std::mutex> lk(cfg_mtx_);
         if (initialized_.load(std::memory_order_relaxed)) return;
-        apply_config_locked(Config{});          // 编译期默认值惰性初始化
+        apply_config_locked(Config{}, false);   // 保留 AlgSetLogLevel 已设置的等级
         initialized_.store(true, std::memory_order_release);
     }
 
     // 持有 cfg_mtx_ 时调用。
-    void apply_config_locked(const Config& cfg) {
+    void apply_config_locked(const Config& cfg, bool update_level = true) {
         stop_worker_locked();
 
-        level_.store(static_cast<int>(cfg.level), std::memory_order_relaxed);
+        if (update_level)
+            g_level.store(static_cast<int>(cfg.level), std::memory_order_relaxed);
         console_     = cfg.to_console;
         file_enabled_ = cfg.to_file;
         async_       = cfg.async;
@@ -387,7 +392,6 @@ private:
     // ---- 配置 / 生命周期 ----
     std::mutex        cfg_mtx_;
     std::atomic<bool> initialized_{false};
-    std::atomic<int>  level_;
     bool              console_      = true;
     bool              file_enabled_ = false;
     bool              async_        = true;
@@ -418,7 +422,8 @@ private:
 // ---------------------------------------------------------------------------
 void init(const Config& cfg)   { Logger::instance().init(cfg); }
 void shutdown()                { Logger::instance().shutdown(); }
-void set_level(Level lvl)      { Logger::instance().set_level(lvl); }
+void set_level(Level lvl)      { g_level.store(static_cast<int>(lvl), std::memory_order_relaxed); }
+bool is_enabled(Level lvl)     { return level_enabled(lvl); }
 void flush()                   { Logger::instance().flush(); }
 
 void vwritef(Level lvl, const char* fmt, va_list ap) {

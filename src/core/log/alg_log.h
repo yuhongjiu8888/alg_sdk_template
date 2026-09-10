@@ -16,7 +16,8 @@
  *            -DALG_LOG_FILE_PATH=/data/log/alg.log \
  *            -DALG_LOG_FILE_MAX_SIZE=10485760 \
  *            -DALG_LOG_FILE_MAX_FILES=5
- * 配合 -DALG_LOG_INFO=ON / -DALG_LOG_DEBUG=ON 才会把 info/debug 也编进去并落盘。
+ * ALG_LOG_INFO / ALG_LOG_DEBUG 只决定默认运行期等级；所有等级均保留，可由公共
+ * C 接口 AlgSetLogLevel 在运行期间动态调整。
  *
  * 运行期还可用 alg::log::init(Config{...}) 覆盖路径等（部署时路径常常只有运行期才知道）。
  */
@@ -50,6 +51,18 @@
 #  endif
 #endif
 
+// 默认仅输出 Error/Warn。兼容原构建选项：INFO/DEBUG 选项改为选择默认等级，
+// 不再编译删除日志代码，确保集成方可在运行期动态开启诊断。
+#ifndef ALG_LOG_DEFAULT_LEVEL
+#  if defined(ALG_ENABLE_LOG_DEBUG)
+#    define ALG_LOG_DEFAULT_LEVEL 3
+#  elif defined(ALG_ENABLE_LOG_INFO)
+#    define ALG_LOG_DEFAULT_LEVEL 2
+#  else
+#    define ALG_LOG_DEFAULT_LEVEL 1
+#  endif
+#endif
+
 // SDK 以 -fvisibility=hidden 构建；导出这几个入口，便于集成方运行期配置。
 #ifndef ALG_LOG_API
 #  if defined(_WIN32)
@@ -64,6 +77,7 @@ namespace log {
 
 // 数值越大越啰嗦（与 level 过滤一致：lvl > Config.level 的消息被丢弃）。
 enum class Level : int {
+    Off   = -1,
     Error = 0,
     Warn  = 1,
     Info  = 2,
@@ -91,7 +105,7 @@ struct Config {
     std::size_t queue_size = ALG_LOG_QUEUE_SIZE;   // 环形槽位数；满了丢弃并计数（不阻塞推理）
 
     // ---- 运行期 level 过滤 ----
-    Level level = Level::Debug;                     // 比该级别更啰嗦的消息直接丢弃
+    Level level = static_cast<Level>(ALG_LOG_DEFAULT_LEVEL);  // 比该级别更啰嗦的消息直接丢弃
 };
 
 // （重新）配置并按需启动后台线程。可重复调用；会先停旧 worker 再应用新配置。
@@ -103,6 +117,9 @@ ALG_LOG_API void shutdown();
 
 // 运行期调整 level 过滤。
 ALG_LOG_API void set_level(Level lvl);
+
+// 热路径轻量判断：只做一次原子读取，不会触发日志模块初始化。
+ALG_LOG_API bool is_enabled(Level lvl);
 
 // 强制把队列里残留的日志刷到各 sink。
 ALG_LOG_API void flush();

@@ -51,6 +51,15 @@ typedef enum AlgStatus_ {
     ALG_E_UNKNOWN = -99,
 } AlgStatus;
 
+/* SDK 全局日志等级。数值越大输出越详细；OFF 关闭全部 SDK 日志。 */
+typedef enum AlgLogLevel_ {
+    ALG_LOG_OFF   = -1,
+    ALG_LOG_ERROR = 0,
+    ALG_LOG_WARN  = 1,
+    ALG_LOG_INFO  = 2,
+    ALG_LOG_DEBUG = 3,
+} AlgLogLevel;
+
 /* 输入像素格式。 */
 typedef enum AlgPixelFormat_ {
     ALG_PIX_BGR  = 0,

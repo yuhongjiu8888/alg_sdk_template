@@ -28,7 +28,13 @@ ALG_API AlgStatus AlgDestroy(AlgHandle handle);
 /** 对一帧图像跑完整条 solution 流水线。 */
 ALG_API AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 
-/** "alg_sdk.v2.0.0+<backend>"，方便日志/崩溃定位。 */
+/**
+ * 动态设置 SDK 全局日志等级，可在 AlgCreate 前或运行期间调用。
+ * 标准构建默认等级为 ALG_LOG_WARN；传入非法枚举值返回 ALG_E_INVALID_ARG。
+ */
+ALG_API AlgStatus AlgSetLogLevel(AlgLogLevel level);
+
+/** "alg_sdk.v2.1.0+<backend>"，方便日志/崩溃定位。 */
 ALG_API const char* AlgVersion(void);
 
 /** 编译进来的后端名（"xmm" / "rk" / ...）。 */

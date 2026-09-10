@@ -281,7 +281,7 @@ Status RtmdetDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSt
     /* —— 一次性诊断：板端 0 检出时确认检测头是否有响应（原始 min/max、最强框）。 */
     {
         static bool dumped = false;
-        if (!dumped) {
+        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && !dumped) {
             dumped = true;
             int raw_min = 0x7FFFFFFF, raw_max = 0;
             for (const TensorView& t : {inferer.OutputView(cls_idx_[0]),

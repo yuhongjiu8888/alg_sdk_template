@@ -331,7 +331,7 @@ Status OcrClassifierPostprocessor::Apply(const IInferer& inferer,
      * cls_id 是否 -1(非法组合，多半是三头顺序错位)。确认后删除。 */
     {
         static int dbg_n = 0;
-        if (dbg_n < 8) {
+        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && dbg_n < 8) {
             ++dbg_n;
             const TensorView& h0 = inferer.OutputView(resolved_head_idx_[0]);
             const TensorView& h1 = inferer.OutputView(resolved_head_idx_[1]);

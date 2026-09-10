@@ -158,7 +158,7 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
      * 确认后删除。 */
     {
         static bool dumped = false;
-        if (!dumped) {
+        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && !dumped) {
             dumped = true;
             float max_obj = -1.f, max_score = -1.f;
             int   mx = -1, my = -1, n_pre = 0, n_conf = 0;
@@ -261,7 +261,7 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer, const Prepro
 
     {
         static bool dumped2 = false;
-        if (!dumped2) {
+        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && !dumped2) {
             dumped2 = true;
             /* 打每个最终框的 label（0=round_sign 1=pare）：全是 0 = 板端 pare 判别失效
              * （pare 框被判成 round → passthrough 不触发 → 进 OCR 被丢）。对比仿真应有 label=1。 */

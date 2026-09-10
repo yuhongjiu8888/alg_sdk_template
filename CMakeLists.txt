@@ -12,19 +12,20 @@ project(alg_sdk LANGUAGES C CXX)
 option(LINUX_AARCH64 "Build for aarch64 Linux (cross-compile)" OFF)
 option(LINUX_X86_64  "Build for x86_64 Linux (host, local MNN test)" OFF)
 
-# 日志开关（默认全关，零热路径开销）。排查时打开：
-#   cmake .. -DALG_LOG_DEBUG=ON   # 板端诊断 dump（xmm/in/out/det/cls-diag）
-#   cmake .. -DALG_LOG_INFO=ON    # 每帧耗时等 info
-option(ALG_LOG_INFO  "Enable ALG_LOGI per-frame info logs"        OFF)
-option(ALG_LOG_DEBUG "Enable ALG_LOGD board debug diagnostics"    OFF)
+# 默认运行期日志等级为 Warn，可用 AlgSetLogLevel 动态调整。以下构建选项仅修改
+# 启动默认等级，所有日志等级都会编入：
+#   cmake .. -DALG_LOG_DEBUG=ON   # 默认 Debug
+#   cmake .. -DALG_LOG_INFO=ON    # 默认 Info
+option(ALG_LOG_INFO  "Use Info as the default runtime log level"  OFF)
+option(ALG_LOG_DEBUG "Use Debug as the default runtime log level" OFF)
 option(ALG_SVP_DYNAMIC_AIPP "Enable HiSilicon dynamic AIPP integration" ON)
 if(ALG_LOG_INFO)
     add_compile_definitions(ALG_ENABLE_LOG_INFO)
-    message(STATUS "ALG_LOGI (info) enabled")
+    message(STATUS "Default runtime log level: Info")
 endif()
 if(ALG_LOG_DEBUG)
     add_compile_definitions(ALG_ENABLE_LOG_DEBUG)
-    message(STATUS "ALG_LOGD (debug diag) enabled")
+    message(STATUS "Default runtime log level: Debug")
 endif()
 # 异步落盘日志模块（借鉴 spdlog：异步 + 多 sink + 滚动文件）。默认关闭，
 # 不影响现有逐字节行为。打开后 ALG_LOGE/W/I/D 改走 core/log/alg_log。

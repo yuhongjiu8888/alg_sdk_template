@@ -206,6 +206,6 @@ BGR、RGB 和 GRAY 使用图像行跨度。NV12 / NV21 的 Y 与色度平面使�
 ## 7. 配套资料
 
 - [项目说明](README.md)：功能范围、平台适配和交付内容。
-- [接口文档](alg_sdk_api_documentation_v2.0.0.md)：公共 ABI、调用约束和错误码。
+- [接口文档](alg_sdk_api_documentation_v2.1.0.md)：公共 ABI、调用约束和错误码。
 - [开发接入指南](NEWCOMER_GUIDE.md)：接入步骤和问题定位。
 - [日志模块说明](src/core/log/README.md)：日志与性能信息配置。

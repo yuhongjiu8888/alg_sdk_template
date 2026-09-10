@@ -2,7 +2,7 @@
 
 | 项目 | 版本 | 更新日期 |
 |------|------|----------|
-| 限速牌 / 禁令停车牌 / 车牌识别（alg_sdk） | Version-2.0.0 | 2026 年 09 月 09 日 |
+| 限速牌 / 禁令停车牌 / 车牌识别（alg_sdk） | Version-2.1.0 | 2026 年 09 月 10 日 |
 
 ## 文档控制
 
@@ -19,8 +19,9 @@
 | 1.0.0 | 喻伟 | 2026.07.17 | 初版接口文档：限速牌及停车牌识别 |
 | 1.0.0（文档修订） | 喻伟 | 2026.09.07 | 完善公共接口参数、返回值及数据结构说明 |
 | 2.0.0 | — | 2026.09.09 | 结果改为固定容量内联数组，移除 `AlgFreeResult` |
+| 2.1.0 | — | 2026.09.10 | 新增运行期日志等级控制接口 `AlgSetLogLevel` |
 
-本文档说明 alg_sdk 2.0.0 的公共函数、枚举和结构体。接口声明见交付头文件 `alg_interface.h`，数据类型见 `alg_types.h`。应用应使用与动态库配套的头文件。
+本文档说明 alg_sdk 2.1.0 的公共函数、枚举和结构体。接口声明见交付头文件 `alg_interface.h`，数据类型见 `alg_types.h`。应用应使用与动态库配套的头文件。
 
 ## 目录
 
@@ -31,13 +32,14 @@
 
 公共接口支持 C / C++ 调用，在 C++ 中采用 `extern "C"` 声明。返回 `AlgStatus` 的函数以 `ALG_OK`（0）表示成功，负数表示错误，错误码见 2.2。
 
-SDK 不保证线程安全，应用应串行调用接口，并同步管理输入图像和结果结构的访问。
+除 `AlgSetLogLevel` 外，SDK 不保证接口线程安全；应用应串行调用实例接口，并同步管理输入图像和结果结构的访问。`AlgSetLogLevel` 的等级读写使用原子操作，可独立动态调整。
 
 | 接口 | 功能 | 返回类型 |
 |------|------|----------|
 | `AlgCreate` | 创建并初始化实例 | `AlgStatus` |
 | `AlgDestroy` | 销毁实例 | `AlgStatus` |
 | `AlgRun` | 同步处理一帧图像 | `AlgStatus` |
+| `AlgSetLogLevel` | 动态设置 SDK 全局日志等级 | `AlgStatus` |
 | `AlgVersion` | 获取版本信息 | `const char*` |
 | `AlgBackendName` | 获取运行后端名称 | `const char*` |
 
@@ -85,7 +87,7 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 | 参数 | 方向 | 说明 |
 |------|------|------|
 | `handle` | 输入 | 有效的算法实例句柄 |
-| `image` | 输入 | 图像描述指针，不得为 `NULL`；字段要求见 2.4 |
+| `image` | 输入 | 图像描述指针，不得为 `NULL`；字段要求见 2.5 |
 | `result` | 输出 | 结果结构指针，不得为 `NULL`；建议在栈上零初始化，例如 `AlgResult result = {0};` |
 
 返回 `ALG_OK` 表示本帧处理完成，没有检出目标也返回成功。返回非零时，本次结果不得用于业务处理。
@@ -99,17 +101,39 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 
 调用方负责像素指针、图像布局和缓冲长度的有效性；非法图像数据不保证以错误码返回。
 
-### 1.4 AlgVersion
+### 1.4 AlgSetLogLevel
+
+```c
+AlgStatus AlgSetLogLevel(AlgLogLevel level);
+```
+
+动态设置 SDK 全局日志过滤等级。无需创建实例，建议在 `AlgCreate` 前调用，以便同时控制模型加载和初始化日志；也可以在运行过程中调用，新的等级立即对后续日志生效。
+
+| 参数 | 方向 | 说明 |
+|------|------|------|
+| `level` | 输入 | `ALG_LOG_OFF`、`ALG_LOG_ERROR`、`ALG_LOG_WARN`、`ALG_LOG_INFO` 或 `ALG_LOG_DEBUG` |
+
+合法等级返回 `ALG_OK`，其他数值返回 `ALG_E_INVALID_ARG` 且不修改当前等级。标准构建默认等级为 `ALG_LOG_WARN`；构建时可覆盖启动默认等级。等级越高，输出越详细；所选等级及更严重的日志会被输出。该设置作用于同一动态库中的所有算法实例，等级读写使用原子操作。
+
+异步日志模式下，修改等级前已经进入队列的消息仍可能完成输出。开启 `ALG_LOG_DEBUG` 会执行额外的张量诊断统计，只建议排查问题时短时使用。
+
+```c
+AlgSetLogLevel(ALG_LOG_INFO);  /* 输出 Error/Warn/Info */
+/* ... AlgCreate / AlgRun ... */
+AlgSetLogLevel(ALG_LOG_OFF);   /* 关闭全部 SDK 日志 */
+```
+
+### 1.5 AlgVersion
 
 ```c
 const char* AlgVersion(void);
 ```
 
-返回版本字符串，格式为 `"alg_sdk.v2.0.0+<backend>"`，例如 `"alg_sdk.v2.0.0+svp_acl"`。2.0 版本将结果数组改为内联固定容量，因此应用必须使用配套头文件重新编译。
+返回版本字符串，格式为 `"alg_sdk.v2.1.0+<backend>"`，例如 `"alg_sdk.v2.1.0+svp_acl"`。2.0 版本将结果数组改为内联固定容量；2.1 新增日志等级接口。应用必须使用配套头文件重新编译。
 
 无需创建实例即可调用。字符串由 SDK 持有，调用方不可修改或释放；动态库卸载后不可继续访问该指针。
 
-### 1.5 AlgBackendName
+### 1.6 AlgBackendName
 
 ```c
 const char* AlgBackendName(void);
@@ -161,7 +185,27 @@ typedef enum AlgStatus_ {
 | `ALG_E_CONFIG` | 初始化文件格式或内容错误 |
 | `ALG_E_UNKNOWN` | 未知错误，保留值 |
 
-### 2.3 AlgPixelFormat：像素格式
+### 2.3 AlgLogLevel：日志等级
+
+```c
+typedef enum AlgLogLevel_ {
+    ALG_LOG_OFF   = -1,
+    ALG_LOG_ERROR = 0,
+    ALG_LOG_WARN  = 1,
+    ALG_LOG_INFO  = 2,
+    ALG_LOG_DEBUG = 3,
+} AlgLogLevel;
+```
+
+| 枚举 | 输出范围 |
+|------|----------|
+| `ALG_LOG_OFF` | 不输出 SDK 日志 |
+| `ALG_LOG_ERROR` | 仅错误 |
+| `ALG_LOG_WARN` | 错误和警告（默认） |
+| `ALG_LOG_INFO` | 错误、警告和运行信息，包括各阶段耗时 |
+| `ALG_LOG_DEBUG` | 全部日志，包括诊断信息 |
+
+### 2.4 AlgPixelFormat：像素格式
 
 ```c
 typedef enum AlgPixelFormat_ {
@@ -183,7 +227,7 @@ typedef enum AlgPixelFormat_ {
 
 输入均为原始 8 位像素。JPEG / PNG 等压缩数据须由调用方解码后再传入。
 
-### 2.4 AlgImage：输入图像
+### 2.5 AlgImage：输入图像
 
 ```c
 typedef struct AlgImage_ {
@@ -217,7 +261,7 @@ typedef struct AlgImage_ {
 
 SDK 不通过 `data_len` 完成缓冲边界检查，调用方须保证实际可用内存满足上述布局，并在 `AlgRun` 返回前保持缓冲有效。
 
-### 2.5 AlgBox：检测框
+### 2.6 AlgBox：检测框
 
 ```c
 typedef struct AlgBox_ {
