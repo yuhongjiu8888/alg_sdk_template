@@ -218,7 +218,15 @@ XMM 使用单输出布局，以避免特定多输出模型被划分为 NPU / CPU
 
 `rtmdet_det` 与 `lprnet_rec` 分别用于车牌检测和 CTC 识别。配套参数见 [车牌配置](config/svp_acl/license_plate.json)，包括检测阈值、NMS、字符集、时间步和 blank 索引。
 
-车牌识别分为保留字符概率的乘积，`lprnet_rec.conf_threshold` 默认 `0.0`，不进行识别分过滤。文本为空时也可能保留结果，应用需检查文本及业务格式。公共字段定义见 [接口文档](../alg_sdk_api_documentation_v3.0.0.md)。
+车牌链路提供三个相互独立的置信度阈值：
+
+| 配置位置 | 参数 | 作用对象 | 默认值 |
+|----------|------|----------|--------|
+| 检测模型 `rtmdet_det.postprocess` | `conf_threshold` | 第一阶段车牌检测分 `det_score` | `0.25` |
+| 识别模型 `lprnet_rec.postprocess` | `conf_threshold` | 第二阶段文字识别分 `rec_score` | `0.5` |
+| 识别 stage（`classify_into`） | `score_threshold` | 最终联合分 `det_score × rec_score` | `0.5` |
+
+三个阈值分别判断，互不替代。车牌识别分为 CTC greedy 解码后保留字符概率的乘积。未解出任何字符时识别分会保持乘积初始值 `1.0`，SDK 会单独判空并丢弃该检测框，避免空文本绕过阈值；应用仍需检查业务要求的文本格式。公共字段定义见 [接口文档](../alg_sdk_api_documentation_v3.0.0.md)。
 
 ## 完整示例
 

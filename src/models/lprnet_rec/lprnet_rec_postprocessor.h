@@ -15,7 +15,8 @@
  *   - box.score = rec_score（classify_into 阶段会再乘 det 作联合置信度）
  *   - attributes = [{category=category}, {text=识别文本}, {rec_score=...}]
  *   FillAlgResult 按 category=="license_plate" 分桶，读 text / rec_score 属性。
- *   conf_threshold > 0 时识别分低于阈值 → 返回空（ChainSolution classify_into 触发 drop）。
+ *   空文本始终返回空；conf_threshold > 0 时识别分低于阈值也返回空
+ *   （ChainSolution classify_into 触发 drop）。
  *
  * JSON 参数：
  *   { "type": "lprnet_rec",

@@ -167,7 +167,7 @@ typedef struct AlgSign_ {
 /* 单个车牌识别结果。
  *   box.score = det × rec 联合置信度（与限速牌一致，应用统一只看这一个分数）
  *   text      = 识别文本（字符集 '0'-'9','A'-'Z'，无分隔符，如 "ABC1D23"；
- *               未识别到内容时为空串）
+ *               未识别到内容的候选会在 SDK 内部丢弃）
  *   rec_score = 识别单独置信度（CTC greedy 被保留字符概率之积，排错/二次过滤用） */
 typedef struct AlgLicensePlate_ {
     AlgBox  box;

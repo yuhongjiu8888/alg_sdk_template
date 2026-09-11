@@ -16,6 +16,7 @@
           "expand_ratio": 1.0,
           "square": false
         },
+        "score_threshold": 0.5,
         "produces": "classify_into:detector"
       }
     ]
@@ -63,7 +64,8 @@
         "characters": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "blank_index": 36,
         "timesteps": 32,
-        "channels": 37
+        "channels": 37,
+        "conf_threshold": 0.5
       }
     }
   }

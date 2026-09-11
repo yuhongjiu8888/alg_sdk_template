@@ -198,8 +198,12 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
         }
     }
 
+    /* 未解出任何字符时 score 仍保持初始值 1.0，不能让空文本绕过识别阈值；
+     * classify_into 收到空结果后会丢弃对应检测框。 */
+    if (text.empty()) return ALG_OK;
+
     /* 置信度过滤（可选）：低于阈值 → 返回空 → classify_into drop 掉该检测框。
-     * 0 = 不过滤，行为与 license demo 一致（demo 对任何结果都保留）。 */
+     * 0 = 不按识别分过滤，但仍拒绝空文本。 */
     if (conf_threshold_ > 0.0f && score < conf_threshold_) return ALG_OK;
 
     Object o;
