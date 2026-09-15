@@ -165,6 +165,16 @@ elseif(ALG_BACKEND STREQUAL "svp_acl")
         endif()
         include_directories(${LIBYUV_ROOT}/include)
     endif()
+    if(ALG_SVP_DYNAMIC_AIPP AND ALG_SVP_IVE_PREPROCESS)
+        set(HISI_SVP_ROOT
+            "/root/codex_dir/haisi/SVP"
+            CACHE PATH "HiSilicon SVP IVE headers/library root")
+        if(NOT EXISTS "${HISI_SVP_ROOT}/include/ss_mpi_ive.h" OR
+           NOT EXISTS "${HISI_SVP_ROOT}/lib/libss_mpi_ive.a")
+            message(FATAL_ERROR "HiSilicon IVE headers/library not found under ${HISI_SVP_ROOT}")
+        endif()
+        include_directories(${HISI_SVP_ROOT}/include)
+    endif()
     link_directories(${SVP_ACL_LIB_DIR} ${HISI_SECUREC_LIB_DIR})
     set(ALG_BACKEND_LIBS
         libprotobuf-c.a
@@ -174,6 +184,9 @@ elseif(ALG_BACKEND STREQUAL "svp_acl")
     )
     if(ALG_SVP_DYNAMIC_AIPP)
         list(APPEND ALG_BACKEND_LIBS "${LIBYUV_ROOT}/lib/libyuv.a")
+    endif()
+    if(ALG_SVP_DYNAMIC_AIPP AND ALG_SVP_IVE_PREPROCESS)
+        list(APPEND ALG_BACKEND_LIBS "${HISI_SVP_ROOT}/lib/libss_mpi_ive.a")
     endif()
 else()
     message(FATAL_ERROR

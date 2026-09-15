@@ -242,6 +242,7 @@ typedef struct AlgImage_ {
     const void*    plane_data[4];
     int            plane_stride[4];
     int            plane_data_len[4];
+    uint64_t       plane_phys_addr[4];
 } AlgImage;
 ```
 
@@ -256,6 +257,7 @@ typedef struct AlgImage_ {
 | `plane_data[4]` | 分平面地址；NV12/NV21 中 `[0]=Y`、`[1]=UV/VU`，其余保留为 `NULL` |
 | `plane_stride[4]` | 各平面独立行跨度；0 表示回退到 `stride`，两者均为 0 时按紧凑宽度 |
 | `plane_data_len[4]` | 各平面可用长度；0 表示调用方不提供该平面的长度检查信息 |
+| `plane_phys_addr[4]` | 各平面 MMZ/VB 物理地址；海思分平面 IVE 路径中 `[0]=Y`、`[1]=UV/VU`，其他平台或普通内存填 0 |
 
 调用方必须先用 `{0}` 或 `memset` 将整个结构体清零，再填写字段。`data != NULL` 时 SDK 只读取兼容字段，不读取新增平面字段；`data == NULL` 时必须填写 `plane_data[0]`，NV12/NV21 还必须填写 `plane_data[1]`。
 
@@ -314,6 +316,8 @@ image.height = frame_height;
 image.data = NULL;
 image.plane_data[0] = y_virtual_address;
 image.plane_data[1] = vu_virtual_address;
+image.plane_phys_addr[0] = y_physical_address;
+image.plane_phys_addr[1] = vu_physical_address;
 image.plane_stride[0] = y_stride;
 image.plane_stride[1] = vu_stride;
 image.plane_data_len[0] = y_stride * frame_height;
@@ -321,6 +325,18 @@ image.plane_data_len[1] = vu_stride * (frame_height / 2);
 
 AlgStatus status = AlgRun(handle, &image, &result);
 ```
+
+当两个 `plane_phys_addr` 均非 0 时，海思后端将源 Y/VU 直接构造为 IVE 图像，
+由 `ss_mpi_ive_resize` 缩放到 `aipp_output_size`，输出到首次使用时分配、随后在
+模型实例生命周期内复用的一块非 cached 连续 MMZ（Y 在前、UV/VU 在后），再把该虚拟地址直接绑定为
+`svp_acl_data_buffer`。此路径无 CPU 像素复制、无需 cache flush；AIPP 继续完成
+CSC 和归一化，模型图完成常量 letterbox padding。源物理地址必须是有效的
+MMZ/VB 地址，两个 plane stride 必须 16 字节对齐，并在 `AlgRun` 返回前保持有效。
+SDK 假定 VPSS/其他硬件生产者已经完成写入；若源平面曾由 CPU 通过 cached 映射
+改写，调用方须在 `AlgRun` 前自行把 cache 刷到 DDR。
+
+若两个物理地址都为 0，则视为普通内存测试输入，兼容使用 libyuv 合并到 cached
+ACL staging；只填写其中一个物理地址属于参数错误。
 
 ### 2.6 AlgBox：检测框
 

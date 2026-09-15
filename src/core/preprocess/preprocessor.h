@@ -80,10 +80,12 @@ struct PreprocessState {
     bool   aipp_staging_reused = false;
     bool   aipp_split_planes = false;
     bool   aipp_external_zero_copy = false;
+    bool   aipp_ive_resize = false;
     double aipp_setup_ms = 0.0;
     double aipp_bind_ms = 0.0;
     double aipp_copy_ms = 0.0;
     double aipp_flush_ms = 0.0;
+    double aipp_ive_ms = 0.0;
     size_t aipp_staging_bytes = 0;
     size_t aipp_staging_stride = 0;
 };

@@ -180,7 +180,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
                          rs.cfg.name.c_str());
                 return ALG_E_PREPROCESS;
             }
-            AlgImage cropped;
+            AlgImage cropped{};
             CropTransform xf;
             AlgBox roi_box;
             roi_box.xmin = rs.cfg.roi.x;
@@ -210,7 +210,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
     }
 
     cv::Mat& roi_holder = rs.roi_holder;
-    AlgImage cropped;
+    AlgImage cropped{};
     CropTransform xf;
     std::vector<Object>& sub = rs.sub_objects;  /* 跨帧保留 capacity */
 

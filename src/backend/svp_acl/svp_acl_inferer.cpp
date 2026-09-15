@@ -9,11 +9,26 @@
 
 #include <sys/time.h>
 
+#ifdef ALG_SVP_IVE_PREPROCESS
+#include <unistd.h>
+#endif
+
 #include "core/image_view.h"
 #include "core/logger.h"
 
 #ifdef ALG_SVP_DYNAMIC_AIPP
 #include "libyuv/planar_functions.h"
+#endif
+
+#ifdef ALG_SVP_IVE_PREPROCESS
+/* CV610 随 IVE/ACL 发布的 sysmem 库导出 ot_mpi_sys_* 底层符号；公开的
+ * ss_mpi_sys_mmz_* 接口是同一实现的兼容命名。随附 SVP 头文件不包含
+ * ss_mpi_sys.h，因此在此按官方原型作私有声明。 */
+extern "C" {
+td_s32 ot_mpi_sys_mmz_alloc(td_phys_addr_t* phys_addr, td_void** virt_addr,
+                            const td_char* mmb, const td_char* zone, td_u32 len);
+td_s32 ot_mpi_sys_mmz_free(td_phys_addr_t phys_addr, td_void* virt_addr);
+}
 #endif
 
 namespace alg {
@@ -129,6 +144,12 @@ std::string DimsString(const svp_acl_mdl_io_dims& dims) {
     return text;
 }
 
+#ifdef ALG_SVP_IVE_PREPROCESS
+inline size_t AlignUp(size_t value, size_t alignment) {
+    return (value + alignment - 1) / alignment * alignment;
+}
+#endif
+
 Status MakeTensorView(const svp_acl_mdl_io_dims& dims,
                       svp_acl_data_type acl_type,
                       void* address,
@@ -190,12 +211,18 @@ void SvpAclInferer::FreeAll() {
     own_image_input_ = nullptr;
     image_input_preflushed_ = false;
     split_copy_path_reported_ = false;
+#ifdef ALG_SVP_IVE_PREPROCESS
+    ive_path_reported_ = false;
+#endif
 #endif
     input_views_.clear();
     output_views_.clear();
     output_raw_indices_.clear();
     DestroyDataset(input_dataset_);
     DestroyDataset(output_dataset_);
+#ifdef ALG_SVP_IVE_PREPROCESS
+    FreeIveBuffers();
+#endif
     for (void* memory : input_allocations_)
         if (memory) (void)svp_acl_rt_free(memory);
     for (void* memory : output_allocations_)
@@ -530,6 +557,83 @@ Status SvpAclInferer::EnsureOwnImageInput() {
     input_allocations_[image_input_index_] = memory;
     return ALG_OK;
 }
+
+#ifdef ALG_SVP_IVE_PREPROCESS
+void SvpAclInferer::FreeIveBuffers() {
+    if (ive_output_virt_) {
+        const td_s32 ret = ot_mpi_sys_mmz_free(ive_output_phys_, ive_output_virt_);
+        if (ret != TD_SUCCESS)
+            ALG_LOGW("svp_acl: free IVE output MMZ failed, ret=%d", ret);
+    }
+    if (ive_assist_virt_) {
+        const td_s32 ret = ot_mpi_sys_mmz_free(ive_assist_phys_, ive_assist_virt_);
+        if (ret != TD_SUCCESS)
+            ALG_LOGW("svp_acl: free IVE resize assist MMZ failed, ret=%d", ret);
+    }
+    ive_output_phys_ = 0;
+    ive_output_virt_ = nullptr;
+    ive_output_capacity_ = 0;
+    ive_assist_phys_ = 0;
+    ive_assist_virt_ = nullptr;
+    ive_assist_capacity_ = 0;
+}
+
+Status SvpAclInferer::EnsureIveBuffers(int width, int height, size_t stride) {
+    size_t y_bytes = 0;
+    size_t uv_bytes = 0;
+    if (width <= 0 || height <= 0 || (width & 1) || (height & 1) ||
+        stride < static_cast<size_t>(width) ||
+        stride > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+        !CheckedPlaneByteSize(static_cast<int>(stride), height, &y_bytes) ||
+        !CheckedPlaneByteSize(static_cast<int>(stride), height / 2, &uv_bytes) ||
+        y_bytes > std::numeric_limits<size_t>::max() - uv_bytes) {
+        return ALG_E_PREPROCESS;
+    }
+    const size_t output_bytes = y_bytes + uv_bytes;
+    if (output_bytes > static_cast<size_t>(std::numeric_limits<td_u32>::max()))
+        return ALG_E_PREPROCESS;
+
+    if (!ive_output_virt_ || ive_output_capacity_ < output_bytes) {
+        if (ive_output_virt_) {
+            (void)ot_mpi_sys_mmz_free(ive_output_phys_, ive_output_virt_);
+            ive_output_phys_ = 0;
+            ive_output_virt_ = nullptr;
+            ive_output_capacity_ = 0;
+        }
+        td_void* virt = nullptr;
+        const td_s32 ret = ot_mpi_sys_mmz_alloc(
+            &ive_output_phys_, &virt, "alg_ive_aipp", nullptr,
+            static_cast<td_u32>(output_bytes));
+        if (ret != TD_SUCCESS || !virt) {
+            ALG_LOGE("svp_acl: allocate IVE output MMZ (%zu bytes) failed, ret=%d",
+                     output_bytes, ret);
+            ive_output_phys_ = 0;
+            return ALG_E_OOM;
+        }
+        ive_output_virt_ = virt;
+        ive_output_capacity_ = output_bytes;
+    }
+
+    /* CV610 文档：resize 辅助内存 = 12 + sum(component * 64)。
+     * 单张 YUV420SP 有 Y/UV 两个分量。 */
+    constexpr size_t kResizeAssistBytes = 12 + 2 * 64;
+    const size_t assist_bytes = kResizeAssistBytes;
+    if (!ive_assist_virt_) {
+        td_void* virt = nullptr;
+        const td_s32 ret = ot_mpi_sys_mmz_alloc(
+            &ive_assist_phys_, &virt, "alg_ive_resize", nullptr,
+            static_cast<td_u32>(assist_bytes));
+        if (ret != TD_SUCCESS || !virt) {
+            ALG_LOGE("svp_acl: allocate IVE resize assist MMZ failed, ret=%d", ret);
+            ive_assist_phys_ = 0;
+            return ALG_E_OOM;
+        }
+        ive_assist_virt_ = virt;
+        ive_assist_capacity_ = assist_bytes;
+    }
+    return ALG_OK;
+}
+#endif
 #endif
 
 Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
@@ -621,25 +725,46 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         return ALG_E_PREPROCESS;
     }
 
-    /* 连续 MMZ/VB 映射直接绑定；分平面输入以原图尺寸合并到 ACL staging。
-     * 两种路径都不在 CPU 上缩放，缩放和 CSC 统一由 AIPP 完成。 */
+    /* 连续 MMZ/VB 映射直接绑定。分平面源若同时提供物理地址，则由 IVE
+     * 缩放到 AIPP 有效区并输出为一块连续 MMZ；普通测试内存仍兼容 libyuv
+     * 合并，后续缩放交给 AIPP。 */
     const bool copy_split_planes = source.uses_separate_planes;
     const bool profile = ALG_LOG_IS_ENABLED(alg::log::Level::Info);
-    const int aipp_src_width = image.width;
-    const int aipp_src_height = image.height;
+    const bool has_any_phys = source.phys_addr[0] != 0 || source.phys_addr[1] != 0;
+    if (copy_split_planes && has_any_phys &&
+        (source.phys_addr[0] == 0 || source.phys_addr[1] == 0)) {
+        ALG_LOGE("svp_acl: split-plane IVE input requires both Y and UV/VU physical addresses");
+        return ALG_E_INVALID_ARG;
+    }
+#ifdef ALG_SVP_IVE_PREPROCESS
+    const bool use_ive_resize = copy_split_planes && has_any_phys;
+#else
+    const bool use_ive_resize = false;
+#endif
+    const int aipp_src_width = use_ive_resize ? output_width : image.width;
+    const int aipp_src_height = use_ive_resize ? output_height : image.height;
     if (aipp_src_width <= 0 || aipp_src_height <= 0 ||
         (aipp_src_width & 1) || (aipp_src_height & 1)) {
         ALG_LOGE("svp_acl: AIPP YUV size must be positive and even, got %dx%d",
                  aipp_src_width, aipp_src_height);
         return ALG_E_PREPROCESS;
     }
-    if (copy_split_planes && !split_copy_path_reported_ &&
+    if (copy_split_planes && !use_ive_resize && !split_copy_path_reported_ &&
         ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
         ALG_LOGI("svp_acl: split-plane %s %dx%d -> libyuv copy -> shared AIPP staging",
                  image.format == ALG_PIX_NV21 ? "NV21" : "NV12",
                  image.width, image.height);
         split_copy_path_reported_ = true;
     }
+#ifdef ALG_SVP_IVE_PREPROCESS
+    if (use_ive_resize && !ive_path_reported_ &&
+        ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
+        ALG_LOGI("svp_acl: split-plane %s %dx%d -> IVE resize %dx%d -> contiguous MMZ -> AIPP",
+                 image.format == ALG_PIX_NV21 ? "NV21" : "NV12",
+                 image.width, image.height, aipp_src_width, aipp_src_height);
+        ive_path_reported_ = true;
+    }
+#endif
 
     timeval setup_begin{}, setup_end{};
     if (profile) gettimeofday(&setup_begin, nullptr);
@@ -677,7 +802,8 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     ret = svp_acl_mdl_set_aipp_padding_params(dynamic_aipp_, 0, 0, 0, 0, 0, 0);
     if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
 
-    const bool resize = image.width != output_width || image.height != output_height;
+    const bool resize = aipp_src_width != output_width ||
+                        aipp_src_height != output_height;
     ret = svp_acl_mdl_set_aipp_scf_params(
         dynamic_aipp_, resize ? 2 : 0,
         aipp_src_width, aipp_src_height, output_width, output_height, 0);
@@ -719,6 +845,124 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
 
     svp_acl_data_buffer* image_buffer =
         svp_acl_mdl_get_dataset_buffer(input_dataset_, image_input_index_);
+
+#ifdef ALG_SVP_IVE_PREPROCESS
+    if (use_ive_resize) {
+        if ((source.stride[0] & 15) || (source.stride[1] & 15) ||
+            image.width > aipp_src_width * 16 || image.height > aipp_src_height * 16 ||
+            aipp_src_width > image.width * 16 || aipp_src_height > image.height * 16) {
+            ALG_LOGE("svp_acl: IVE resize requires 16-byte strides and scale <= 16x");
+            return ALG_E_PREPROCESS;
+        }
+
+        const size_t ive_stride = AlignUp(static_cast<size_t>(aipp_src_width), 16);
+        Status ive_status = EnsureIveBuffers(aipp_src_width, aipp_src_height,
+                                             ive_stride);
+        if (ive_status != ALG_OK) return ive_status;
+
+        ot_svp_src_img ive_src{};
+        ive_src.type = OT_SVP_IMG_TYPE_YUV420SP;
+        ive_src.width = static_cast<td_u32>(image.width);
+        ive_src.height = static_cast<td_u32>(image.height);
+        ive_src.stride[0] = static_cast<td_u32>(source.stride[0]);
+        ive_src.stride[1] = static_cast<td_u32>(source.stride[1]);
+        ive_src.phys_addr[0] = source.phys_addr[0];
+        ive_src.phys_addr[1] = source.phys_addr[1];
+        ive_src.virt_addr[0] = static_cast<td_u64>(
+            reinterpret_cast<uintptr_t>(source.plane[0]));
+        ive_src.virt_addr[1] = static_cast<td_u64>(
+            reinterpret_cast<uintptr_t>(source.plane[1]));
+
+        const size_t ive_y_bytes = ive_stride * static_cast<size_t>(aipp_src_height);
+        const size_t ive_bytes = ive_y_bytes +
+            ive_stride * static_cast<size_t>(aipp_src_height / 2);
+        if (ive_bytes > ive_output_capacity_ || ive_bytes > dst_size) {
+            ALG_LOGE("svp_acl: IVE output size=%zu exceeds buffer/model input=%zu/%zu",
+                     ive_bytes, ive_output_capacity_, dst_size);
+            return ALG_E_PREPROCESS;
+        }
+
+        ot_svp_dst_img ive_dst{};
+        ive_dst.type = OT_SVP_IMG_TYPE_YUV420SP;
+        ive_dst.width = static_cast<td_u32>(aipp_src_width);
+        ive_dst.height = static_cast<td_u32>(aipp_src_height);
+        ive_dst.stride[0] = static_cast<td_u32>(ive_stride);
+        ive_dst.stride[1] = static_cast<td_u32>(ive_stride);
+        ive_dst.phys_addr[0] = static_cast<td_u64>(ive_output_phys_);
+        ive_dst.phys_addr[1] = static_cast<td_u64>(ive_output_phys_) + ive_y_bytes;
+        ive_dst.virt_addr[0] = static_cast<td_u64>(
+            reinterpret_cast<uintptr_t>(ive_output_virt_));
+        ive_dst.virt_addr[1] = ive_dst.virt_addr[0] + ive_y_bytes;
+
+        ot_ive_resize_ctrl ive_ctrl{};
+        ive_ctrl.mode = OT_IVE_RESIZE_MODE_LINEAR;
+        ive_ctrl.num = 1;
+        ive_ctrl.mem.phys_addr = static_cast<td_u64>(ive_assist_phys_);
+        ive_ctrl.mem.virt_addr = static_cast<td_u64>(
+            reinterpret_cast<uintptr_t>(ive_assist_virt_));
+        ive_ctrl.mem.size = static_cast<td_u32>(ive_assist_capacity_);
+
+        timeval ive_begin{}, ive_end{};
+        if (profile) gettimeofday(&ive_begin, nullptr);
+        ot_ive_handle ive_handle = 0;
+        td_s32 ive_ret = ss_mpi_ive_resize(
+            &ive_handle, &ive_src, &ive_dst, &ive_ctrl, TD_TRUE);
+        if (ive_ret != TD_SUCCESS) {
+            ALG_LOGE("svp_acl: ss_mpi_ive_resize failed, ret=%d", ive_ret);
+            return ALG_E_PREPROCESS;
+        }
+        td_bool ive_finished = TD_FALSE;
+        do {
+            ive_ret = ss_mpi_ive_query(ive_handle, &ive_finished, TD_TRUE);
+            if (ive_ret == OT_ERR_IVE_QUERY_TIMEOUT) usleep(100);
+        } while (ive_ret == OT_ERR_IVE_QUERY_TIMEOUT);
+        if (ive_ret != TD_SUCCESS || ive_finished != TD_TRUE) {
+            ALG_LOGE("svp_acl: wait IVE resize failed, ret=%d finished=%d",
+                     ive_ret, static_cast<int>(ive_finished));
+            return ALG_E_PREPROCESS;
+        }
+        if (profile) {
+            gettimeofday(&ive_end, nullptr);
+            state.aipp_ive_ms = ElapsedMs(ive_begin, ive_end);
+        }
+
+        timeval bind_begin{}, bind_end{};
+        if (profile) gettimeofday(&bind_begin, nullptr);
+        ret = svp_acl_update_data_buffer(image_buffer, ive_output_virt_,
+                                         ive_bytes, ive_stride);
+        if (ret != SVP_ACL_SUCCESS) {
+            ALG_LOGE("svp_acl: bind IVE output to AIPP failed, ret=%d", ret);
+            return ALG_E_PREPROCESS;
+        }
+        input_views_[0].data = ive_output_virt_;
+        input_views_[0].size_bytes = ive_bytes;
+        if (own_image_input_ && own_image_input_ != ive_output_virt_) {
+            (void)svp_acl_rt_free(own_image_input_);
+            input_allocations_[image_input_index_] = nullptr;
+            own_image_input_ = nullptr;
+        }
+        if (profile) {
+            gettimeofday(&bind_end, nullptr);
+            state.aipp_bind_ms = ElapsedMs(bind_begin, bind_end);
+        }
+        image_input_preflushed_ = true;
+
+        state.aipp_profile_valid = profile;
+        state.aipp_staging_reused = false;
+        state.aipp_split_planes = true;
+        state.aipp_external_zero_copy = false;
+        state.aipp_ive_resize = true;
+        state.aipp_staging_bytes = ive_bytes;
+        state.aipp_staging_stride = ive_stride;
+        state.scale_ratio = scale_ratio;
+        state.pad_left = pad_left;
+        state.pad_top = pad_top;
+        state.original_width = image.width;
+        state.original_height = image.height;
+        return ALG_OK;
+    }
+#endif
+
     uint8_t* dst = static_cast<uint8_t*>(svp_acl_get_data_buffer_addr(image_buffer));
     size_t dst_y_bytes = 0;
     size_t dst_uv_bytes = 0;

@@ -104,7 +104,7 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 | BGR / RGB | 8 位交错三通道数据，`stride` 为每行字节数，0 表示 `width*3` |
 | GRAY | 8 位单通道数据，`stride=0` 表示 `width` |
 | NV12 / NV21 连续模式 | `data` 指向 Y，UV/VU 紧跟在 `data + stride*height`；海思动态 AIPP 要求该地址为整帧非 cached MMZ/VB 连续映射 |
-| NV12 / NV21 分平面模式 | `data=NULL`，`plane_data[0]` 指向 Y，`plane_data[1]` 指向 UV/VU，可用独立 stride |
+| NV12 / NV21 分平面模式 | `data=NULL`，`plane_data[0]` 指向 Y，`plane_data[1]` 指向 UV/VU，可用独立 stride；海思生产输入同时填写对应的 `plane_phys_addr[0/1]` |
 | 长度字段 | `data_len` 或 `plane_data_len[]` 大于 0 时 SDK 校验最小长度；0 表示未知 |
 | 检测坐标 | 对应传入原图，SDK 负责恢复配置 ROI 和裁剪产生的偏移 |
 | 限速值 | `SLV_10`～`SLV_120` 的枚举值乘 10 得到 km/h |
@@ -116,7 +116,7 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 
 图片文件应先解码为像素再传入。JSON 的 `preprocess.color` 定义模型输入颜色顺序，`AlgImage.format` 定义源图像格式，两者不要求相同。
 
-海思 VPSS 实时流使用 `AlgRun`：连续 NV12/NV21 的 `data` 直接绑定到动态 AIPP，不复制、不 flush；Y 与 UV/VU 地址分离时，由 libyuv 按原尺寸合并到 SDK staging。两种输入均由 AIPP 做缩放和 CSC、包装模型图做 padding/归一化，不需要额外创建模型尺寸的 VPSS 通道。连续映射的释放仍由调用方负责，且须在 `AlgRun` 返回前保持有效。
+海思 VPSS 实时流使用 `AlgRun`：连续 NV12/NV21 的 `data` 直接绑定动态 AIPP；Y 与 UV/VU 地址分离时，同时传入两个物理地址，由 IVE 缩放并写入 SDK 复用的连续 MMZ，随后零拷贝绑定 ACL。普通内存测试数据没有物理地址时才走 libyuv 回退。IVE/AIPP/模型图分别承担缩放、CSC/归一化和 padding，不需要额外创建模型尺寸的 VPSS 通道。调用方输入在 `AlgRun` 返回前须保持有效。
 
 ## 5. 配置与执行关系
 

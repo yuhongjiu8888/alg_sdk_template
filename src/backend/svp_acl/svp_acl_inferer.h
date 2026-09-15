@@ -15,6 +15,10 @@
 #include <acl/svp_acl_mdl.h>
 #include <acl/svp_acl_rt.h>
 
+#ifdef ALG_SVP_IVE_PREPROCESS
+#include <ss_mpi_ive.h>
+#endif
+
 #include "core/infer/inferer.h"
 
 namespace alg {
@@ -56,6 +60,18 @@ class SvpAclInferer : public IInferer {
     void*                 own_image_input_ = nullptr;
     bool                  image_input_preflushed_ = false;
     bool                  split_copy_path_reported_ = false;
+#ifdef ALG_SVP_IVE_PREPROCESS
+    td_phys_addr_t        ive_output_phys_ = 0;
+    void*                 ive_output_virt_ = nullptr;
+    size_t                ive_output_capacity_ = 0;
+    td_phys_addr_t        ive_assist_phys_ = 0;
+    void*                 ive_assist_virt_ = nullptr;
+    size_t                ive_assist_capacity_ = 0;
+    bool                  ive_path_reported_ = false;
+
+    Status EnsureIveBuffers(int width, int height, size_t stride);
+    void FreeIveBuffers();
+#endif
 
     Status EnsureOwnImageInput();
 #endif

@@ -17,6 +17,7 @@ namespace alg {
 
 struct ImageView {
     const uint8_t* plane[ALG_MAX_IMAGE_PLANES] = {};
+    uint64_t phys_addr[ALG_MAX_IMAGE_PLANES] = {};
     int stride[ALG_MAX_IMAGE_PLANES] = {};
     int data_len[ALG_MAX_IMAGE_PLANES] = {};
     bool uses_separate_planes = false;
@@ -98,6 +99,7 @@ inline Status ResolveImageView(const AlgImage& image, ImageView* view) {
         if (image.plane_stride[i] < 0 || image.plane_data_len[i] < 0)
             return ALG_E_INVALID_ARG;
         view->plane[i] = static_cast<const uint8_t*>(image.plane_data[i]);
+        view->phys_addr[i] = image.plane_phys_addr[i];
         view->stride[i] = image.plane_stride[i];
         view->data_len[i] = image.plane_data_len[i];
     }

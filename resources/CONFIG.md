@@ -93,9 +93,11 @@ PARE 等由检测阶段确定的类别采用透传方式，跳过第二阶段 OC
 
 FLOAT32 输入的有效图像区域采用 `y = (x - mean) * (scale / std)`，`std` 不得为 0；填充区域直接写入 `pad_value`。UINT8 输入要求 `mean=0`、`std=1`、`scale=1`，归一化由模型按其约定完成。输入宽高须与模型实际尺寸一致。
 
-海思配置经 `AlgRun` 接收原分辨率 NV12/NV21 帧。动态 AIPP 完成转色、缩放和归一化；CV610 AIPP 无法生成值为 114 的大范围 padding，因此 `aipp_graph_padding` 对应的常量 Pad 必须在转换前加入模型图。运行时会按实际原图尺寸复算有效区和四边补边，不匹配时返回前处理错误。
+海思配置经 `AlgRun` 接收原分辨率 NV12/NV21 帧。物理双平面输入先由 IVE 缩放到 `aipp_output_size`，动态 AIPP 完成转色和配置的 DTC；连续输入或普通内存兼容路径仍可由 AIPP 缩放。CV610 AIPP 无法生成值为 114 的大范围 padding，因此 `aipp_graph_padding` 对应的常量 Pad 必须加入模型图。运行时会按实际原图尺寸复算有效区和四边补边，不匹配时返回前处理错误。
 
 ATC 动态 AIPP 模板位于 [`config/svp_acl/aipp/`](config/svp_acl/aipp/)。动态 OM 应使用独立文件名；`engine=auto` 会根据模型是否带动态 AIPP 自动选择硬件或 OpenCV 路径。
+
+当前同一份动态 AIPP OM 同时适用 IVE resize 和 AIPP resize 路径：SDK 在每帧调用 `svp_acl_mdl_set_aipp_scf_params` 时自动设置 `scf_switch`，IVE 已缩放时为 0，否则为 2，不需要两份 OM。未来若改为“IVE resize/padding + 静态 AIPP”，必须重新转换静态 AIPP OM，并同步移除图内 Pad、增加静态 AIPP 后端绑定支持。详细决策和验证项见 [`config/svp_acl/aipp/README.md`](config/svp_acl/aipp/README.md)。
 
 ### 缩放策略
 

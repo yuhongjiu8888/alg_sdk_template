@@ -106,7 +106,7 @@ backup/                   历史接口归档
 
 海思环境的工具链及依赖路径可通过 CMake 参数 `HISI_TOOLCHAIN_ROOT`、`SVP_ACL_ROOT`、`SVP_ACL_LIB_DIR`、`HISI_SECUREC_LIB_DIR` 和 `SVP_OPENCV_ROOT` 配置。
 动态 AIPP 默认通过 `ALG_SVP_DYNAMIC_AIPP=ON` 编译；需要兼容不含动态 AIPP API 的旧版 ACL 头文件时可显式关闭。
-分平面 NV12/NV21 的平面合并使用 `third_party/libyuv/hi3516`，可通过 `LIBYUV_ROOT` 覆盖头文件和静态库目录。
+物理双平面 NV12/NV21 默认通过 `ALG_SVP_IVE_PREPROCESS=ON` 启用 IVE，可通过 `HISI_SVP_ROOT` 指定 IVE 头文件和静态库目录；未提供物理地址的测试输入回退到 `third_party/libyuv/hi3516`，可通过 `LIBYUV_ROOT` 覆盖。
 
 在匹配的目标设备或本地运行环境中，从仓库一级构建目录启动验证程序：
 
@@ -126,7 +126,7 @@ cd build_linux_aarch64_svp_acl
 
 - 图像格式支持 BGR、RGB、GRAY、NV12 和 NV21。NV12/NV21 可通过 `data` 传入整帧连续映射，也可通过 `plane_data[0]` 和 `[1]` 分别传入 Y 与 UV/VU，分平面支持独立 stride。默认 VPSS 格式为 NV21，同时兼容 NV12。
 - 海思通过 `AlgRun` 传入原分辨率 VPSS 帧，不要求为各模型增加 VPSS 缩放通道。
-- 海思动态 AIPP 下，`data` 须指向整帧非 cached MMZ/VB 连续虚拟映射，SDK 直接绑定该地址，不复制、不 flush、不释放；分平面输入先由 libyuv 按原尺寸合并。AIPP 完成 NV12/NV21 转色和缩放，值为 114 的 letterbox 补边固化在模型图中；普通 OM 保持 OpenCV 路径。
+- 海思动态 AIPP 下，连续 `data` 直接绑定，不复制、不 flush、不释放；分平面输入同时填写 `plane_phys_addr[0/1]` 后，由 IVE 缩放并输出连续非 cached MMZ，再零拷贝绑定 ACL。无物理地址的普通测试内存回退到 libyuv。IVE/AIPP 完成缩放、转色和归一化，值为 114 的 letterbox 补边固化在模型图中；普通 OM 保持 OpenCV 路径。
 - 网络前处理输出 NCHW，支持 UINT8 和 FLOAT32 输入类型，输入尺寸须与模型一致。
 - SDK 调用由应用串行调度；共享结果和图像缓冲的访问需要同步。
 - 车牌识别未解出字符时，SDK 会丢弃对应检测框；应用仍应按业务要求校验车牌文本格式。

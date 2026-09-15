@@ -80,7 +80,9 @@ typedef enum AlgPixelFormat_ {
  * 非 cached MMZ/VB 的连续虚拟映射，调用方须保证 AlgRun 返回前有效且不改写。
  *
  * 支持分平面：data 设为 NULL，plane_data[0] 传 Y、plane_data[1] 传 UV/VU；
- * 各平面可有独立 stride 和长度。结构体必须零初始化后再填写。
+ * 各平面可有独立 stride 和长度。海思 IVE 硬件前处理还需在
+ * plane_phys_addr[0/1] 传入对应 MMZ/VB 物理地址；不提供物理地址时保留
+ * CPU 合并兼容路径。结构体必须零初始化后再填写。
  */
 typedef struct AlgImage_ {
     AlgPixelFormat format;
@@ -93,6 +95,7 @@ typedef struct AlgImage_ {
     const void*    plane_data[ALG_MAX_IMAGE_PLANES];
     int            plane_stride[ALG_MAX_IMAGE_PLANES];
     int            plane_data_len[ALG_MAX_IMAGE_PLANES];
+    uint64_t       plane_phys_addr[ALG_MAX_IMAGE_PLANES];
 } AlgImage;
 
 

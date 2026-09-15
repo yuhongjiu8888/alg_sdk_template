@@ -106,16 +106,20 @@ Status ModelInstance::RunImpl(const AlgImage& image,
                  cfg_.name.c_str(), pre_ms, Ms(t1, t2), Ms(t2, t3), out->size());
         if (state.aipp_profile_valid) {
             const double measured_ms = state.aipp_setup_ms + state.aipp_bind_ms +
-                                       state.aipp_copy_ms + state.aipp_flush_ms;
+                                       state.aipp_copy_ms + state.aipp_flush_ms +
+                                       state.aipp_ive_ms;
             const double other_ms = std::max(0.0, pre_ms - measured_ms);
             ALG_LOGI("[%s] aipp_pre setup=%.2fms bind=%.2fms copy=%.2fms "
-                     "flush=%.2fms other=%.2fms reused=%d split=%d external=%d "
+                     "flush=%.2fms ive=%.2fms other=%.2fms reused=%d split=%d "
+                     "external=%d ive_path=%d "
                      "bytes=%zu stride=%zu",
                      cfg_.name.c_str(), state.aipp_setup_ms, state.aipp_bind_ms,
-                     state.aipp_copy_ms, state.aipp_flush_ms, other_ms,
+                     state.aipp_copy_ms, state.aipp_flush_ms, state.aipp_ive_ms,
+                     other_ms,
                      state.aipp_staging_reused ? 1 : 0,
                      state.aipp_split_planes ? 1 : 0,
                      state.aipp_external_zero_copy ? 1 : 0,
+                     state.aipp_ive_resize ? 1 : 0,
                      state.aipp_staging_bytes, state.aipp_staging_stride);
         }
     }
