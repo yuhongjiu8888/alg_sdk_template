@@ -1,7 +1,8 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 
-set(TOOLCHAIN_DIR /root/project/ez/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf)
+# set(TOOLCHAIN_DIR /root/project/ez/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf)
+set(TOOLCHAIN_DIR /home/yuwei/opt/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf)
 
 # 编译器
 set(CMAKE_C_COMPILER   ${TOOLCHAIN_DIR}/bin/arm-linux-gnueabihf-gcc)

@@ -29,7 +29,7 @@ set(CMAKE_C_FLAGS   "-fpermissive -O3 -s -Wl,--gc-sections -Wall -fPIC -fvisibil
 # -----------------------------------------------------------------------------
 if(ALG_BACKEND STREQUAL "svp_acl")
     set(SVP_OPENCV_ROOT
-        "/root/opensource/opencv-4.5.0/build_arm_hisi/install"
+        "/home/yuwei/opensource/opencv-4.5.0/build_linux_hisi/install"
         CACHE PATH "OpenCV install root for HiSilicon v610")
     include_directories(${SVP_OPENCV_ROOT}/include/opencv4)
     link_directories(
@@ -46,9 +46,8 @@ endif()
 set(OPENCV4_LIB_STATIC
     libopencv_imgcodecs.a libopencv_imgproc.a libopencv_calib3d.a
     libopencv_features2d.a libopencv_flann.a libopencv_videoio.a
-    libopencv_core.a liblibjpeg-turbo.a liblibopenjp2.a liblibpng.a
-    libade.a libzlib.a libIlmImf.a liblibtiff.a
-    libittnotify.a libquirc.a libzlib.a)
+    libopencv_core.a  libittnotify.a libquirc.a libtegra_hal.a
+    liblibjpeg-turbo.a  liblibpng.a libzlib.a)
 
 # -----------------------------------------------------------------------------
 # jsoncpp（用户可通过 -DJSONCPP_ROOT=/path/to/jsoncpp/install 覆盖）
@@ -146,15 +145,15 @@ elseif(ALG_BACKEND STREQUAL "svp_acl")
         src/backend/svp_acl/svp_acl_backend.cpp
     )
     set(SVP_ACL_ROOT
-        "/root/project/haisi-v610/acllib"
+        "/home/yuwei/alg_sdk/chip_sdk/hisi3516cv610"
         CACHE PATH "HiSilicon SVP ACLlib root")
     set(SVP_ACL_LIB_DIR
-        "${SVP_ACL_ROOT}/lib32_arm-v01c02-linux-musleabi/stub"
+        "${SVP_ACL_ROOT}/acllib/lib"
         CACHE PATH "SVP ACL library directory")
     set(HISI_SECUREC_LIB_DIR
-        "/root/project/haisi-v610/gcc-20250305-arm-v01c02-linux-musleabi/arm-v01c02-linux-musleabi-gcc/target/usr/lib/a7_softfp_neon-vfpv4"
+        "/home/yuwei/opt/gcc-20250305-arm-v01c02-linux-musleabi/arm-v01c02-linux-musleabi-gcc/target/usr/lib/a7_softfp_neon-vfpv4"
         CACHE PATH "HiSilicon securec library directory")
-    include_directories(${SVP_ACL_ROOT}/include)
+    include_directories(${SVP_ACL_ROOT}/acllib/include)
     set(LIBYUV_ROOT
         "${CMAKE_SOURCE_DIR}/third_party/libyuv/hi3516"
         CACHE PATH "libyuv root for split-plane NV12/NV21 preprocessing")
@@ -167,7 +166,7 @@ elseif(ALG_BACKEND STREQUAL "svp_acl")
     endif()
     if(ALG_SVP_DYNAMIC_AIPP AND ALG_SVP_IVE_PREPROCESS)
         set(HISI_SVP_ROOT
-            "/root/codex_dir/haisi/SVP"
+            "/home/yuwei/alg_sdk/chip_sdk/hisi3516cv610/SVP"
             CACHE PATH "HiSilicon SVP IVE headers/library root")
         if(NOT EXISTS "${HISI_SVP_ROOT}/include/ss_mpi_ive.h" OR
            NOT EXISTS "${HISI_SVP_ROOT}/lib/libss_mpi_ive.a")
