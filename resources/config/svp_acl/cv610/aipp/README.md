@@ -58,7 +58,7 @@ OM 的整帧 OpenCV 回退路径是否保留，作为独立兼容性决策处理
 
 ## 转换完成与接入记录（2026-09-08）
 
-`speedsignnet_aipp.om` 已生成并拷入 `resources/model/svp_acl/`，`speed_limit.json`
+`speedsignnet_aipp.om` 已生成并拷入 `resources/model/svp_acl/cv610/`，`speed_limit.json`
 与 `all.json` 的 `ssn_cfg` 已切到 `speedsignnet_aipp.om`，板端验证通过（NV21 整帧 +
 动态 AIPP 正常检出）。
 

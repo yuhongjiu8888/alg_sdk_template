@@ -1,9 +1,7 @@
 #include "core/config/config.h"
-
 #include <fstream>
 #include <sstream>
 #include <unordered_set>
-
 #include "core/logger.h"
 
 namespace alg {
@@ -12,41 +10,55 @@ namespace {
 
 void SetErr(std::string* err, const std::string& msg) {
     ALG_LOGE("%s", msg.c_str());
-    if (err) *err = msg;
+    if (err)
+        *err = msg;
 }
 
 ColorOrder ParseColor(const std::string& s) {
-    if (s == "RGB")  return ColorOrder::kRGB;
-    if (s == "GRAY" || s == "Gray") return ColorOrder::kGray;
+    if (s == "RGB")
+        return ColorOrder::kRGB;
+    if (s == "GRAY" || s == "Gray")
+        return ColorOrder::kGray;
     return ColorOrder::kBGR;
 }
 
 ResizeMode ParseResize(const std::string& s) {
-    if (s == "stretch")           return ResizeMode::kStretch;
-    if (s == "letterbox_center")  return ResizeMode::kLetterboxCenter;
-    if (s == "letterbox_tl_fit")  return ResizeMode::kLetterboxTLFit;
+    if (s == "stretch")
+        return ResizeMode::kStretch;
+    if (s == "letterbox_center")
+        return ResizeMode::kLetterboxCenter;
+    if (s == "letterbox_tl_fit")
+        return ResizeMode::kLetterboxTLFit;
     return ResizeMode::kLetterboxTL; /* 默认与 sgk-sdk 行为一致 */
 }
 
 Layout ParseLayout(const std::string& s) {
-    if (s == "NHWC") return Layout::kNHWC;
+    if (s == "NHWC")
+        return Layout::kNHWC;
     return Layout::kNCHW;
 }
 
 PreprocessEngine ParseEngine(const std::string& s) {
-    if (s == "opencv") return PreprocessEngine::kOpenCV;
-    if (s == "aipp") return PreprocessEngine::kAipp;
+    if (s == "opencv")
+        return PreprocessEngine::kOpenCV;
+    if (s == "aipp")
+        return PreprocessEngine::kAipp;
     return PreprocessEngine::kAuto;
 }
 
 InputFormatPolicy ParseInputFormat(const std::string& s) {
-    if (s == "NV12" || s == "nv12") return InputFormatPolicy::kNV12;
-    if (s == "NV21" || s == "nv21") return InputFormatPolicy::kNV21;
+    if (s == "NV12" || s == "nv12")
+        return InputFormatPolicy::kNV12;
+    if (s == "NV21" || s == "nv21")
+        return InputFormatPolicy::kNV21;
     return InputFormatPolicy::kAuto;
 }
 
 bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* err) {
-    if (!v.isObject()) { SetErr(err, "preprocess must be an object"); return false; }
+    if (!v.isObject()) {
+        SetErr(err, "preprocess must be an object");
+        return false;
+    }
 
     if (v.isMember("input_size")) {
         const Json::Value& sz = v["input_size"];
@@ -54,10 +66,10 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
             SetErr(err, "preprocess.input_size must be [w, h]");
             return false;
         }
-        cfg->net_width  = sz[0].asInt();
+        cfg->net_width = sz[0].asInt();
         cfg->net_height = sz[1].asInt();
     } else {
-        cfg->net_width  = v.get("input_width",  0).asInt();
+        cfg->net_width = v.get("input_width", 0).asInt();
         cfg->net_height = v.get("input_height", 0).asInt();
     }
     if (cfg->net_width <= 0 || cfg->net_height <= 0) {
@@ -65,7 +77,7 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
         return false;
     }
 
-    cfg->color  = ParseColor(v.get("color",  "BGR").asString());
+    cfg->color = ParseColor(v.get("color", "BGR").asString());
     cfg->resize = ParseResize(v.get("resize", "letterbox_tl").asString());
     cfg->layout = ParseLayout(v.get("layout", "NCHW").asString());
 
@@ -95,16 +107,15 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
     }
     cfg->engine = ParseEngine(engine);
     const std::string input_format = v.get("input_format", "auto").asString();
-    if (input_format != "auto" && input_format != "NV12" && input_format != "nv12" &&
-        input_format != "NV21" && input_format != "nv21") {
+    if (input_format != "auto" && input_format != "NV12" && input_format != "nv12" && input_format != "NV21" &&
+        input_format != "nv21") {
         SetErr(err, "preprocess.input_format must be auto, NV12 or NV21");
         return false;
     }
     cfg->input_format = ParseInputFormat(input_format);
     if (v.isMember("max_input_size")) {
         const Json::Value& max_sz = v["max_input_size"];
-        if (!max_sz.isArray() || max_sz.size() != 2 ||
-            max_sz[0].asInt() <= 0 || max_sz[1].asInt() <= 0) {
+        if (!max_sz.isArray() || max_sz.size() != 2 || max_sz[0].asInt() <= 0 || max_sz[1].asInt() <= 0) {
             SetErr(err, "preprocess.max_input_size must be [w, h]");
             return false;
         }
@@ -117,8 +128,7 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
     }
     if (v.isMember("aipp_output_size")) {
         const Json::Value& aipp_sz = v["aipp_output_size"];
-        if (!aipp_sz.isArray() || aipp_sz.size() != 2 ||
-            aipp_sz[0].asInt() <= 0 || aipp_sz[1].asInt() <= 0) {
+        if (!aipp_sz.isArray() || aipp_sz.size() != 2 || aipp_sz[0].asInt() <= 0 || aipp_sz[1].asInt() <= 0) {
             SetErr(err, "preprocess.aipp_output_size must be [w, h]");
             return false;
         }
@@ -135,21 +145,19 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
         cfg->graph_pad_top = pad[1].asInt();
         cfg->graph_pad_right = pad[2].asInt();
         cfg->graph_pad_bottom = pad[3].asInt();
-        if (cfg->graph_pad_left < 0 || cfg->graph_pad_top < 0 ||
-            cfg->graph_pad_right < 0 || cfg->graph_pad_bottom < 0) {
+        if (cfg->graph_pad_left < 0 || cfg->graph_pad_top < 0 || cfg->graph_pad_right < 0 ||
+            cfg->graph_pad_bottom < 0) {
             SetErr(err, "preprocess.aipp_graph_padding values must be non-negative");
             return false;
         }
     }
     const bool custom_aipp_output = cfg->aipp_output_width > 0;
-    const bool graph_padding = cfg->graph_pad_left || cfg->graph_pad_top ||
-                               cfg->graph_pad_right || cfg->graph_pad_bottom;
+    const bool graph_padding =
+        cfg->graph_pad_left || cfg->graph_pad_top || cfg->graph_pad_right || cfg->graph_pad_bottom;
     if (custom_aipp_output != graph_padding ||
         (custom_aipp_output &&
-         (cfg->aipp_output_width + cfg->graph_pad_left + cfg->graph_pad_right !=
-              cfg->net_width ||
-          cfg->aipp_output_height + cfg->graph_pad_top + cfg->graph_pad_bottom !=
-              cfg->net_height))) {
+         (cfg->aipp_output_width + cfg->graph_pad_left + cfg->graph_pad_right != cfg->net_width ||
+          cfg->aipp_output_height + cfg->graph_pad_top + cfg->graph_pad_bottom != cfg->net_height))) {
         SetErr(err, "aipp_output_size plus aipp_graph_padding must equal model input_size");
         return false;
     }
@@ -160,8 +168,7 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
     return true;
 }
 
-bool ParseModelInstance(const std::string& name, const Json::Value& v,
-                        ModelInstanceConfig* m, std::string* err) {
+bool ParseModelInstance(const std::string& name, const Json::Value& v, ModelInstanceConfig* m, std::string* err) {
     if (!v.isObject()) {
         SetErr(err, "models." + name + " must be an object");
         return false;
@@ -178,7 +185,7 @@ bool ParseModelInstance(const std::string& name, const Json::Value& v,
         SetErr(err, "models." + name + ".postprocess is required");
         return false;
     }
-    m->post_type   = v["postprocess"].get("type", "").asString();
+    m->post_type = v["postprocess"].get("type", "").asString();
     if (m->post_type.empty()) {
         SetErr(err, "models." + name + ".postprocess.type is required");
         return false;
@@ -189,9 +196,15 @@ bool ParseModelInstance(const std::string& name, const Json::Value& v,
 
 bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
     s->name = v.get("name", "").asString();
-    if (s->name.empty()) { SetErr(err, "stage.name is required"); return false; }
+    if (s->name.empty()) {
+        SetErr(err, "stage.name is required");
+        return false;
+    }
     s->model_ref = v.get("model", "").asString();
-    if (s->model_ref.empty()) { SetErr(err, "stage.model is required"); return false; }
+    if (s->model_ref.empty()) {
+        SetErr(err, "stage.model is required");
+        return false;
+    }
 
     std::string in = v.get("input", "image").asString();
     if (in == "image") {
@@ -208,15 +221,15 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
     }
     if (v.isMember("crop") && v["crop"].isObject()) {
         s->crop.expand_ratio = v["crop"].get("expand_ratio", 1.0f).asFloat();
-        s->crop.square       = v["crop"].get("square", false).asBool();
-        s->crop.pad_value    = v["crop"].get("pad_value", -1).asInt();
+        s->crop.square = v["crop"].get("square", false).asBool();
+        s->crop.pad_value = v["crop"].get("pad_value", -1).asInt();
     }
     if (v.isMember("roi") && v["roi"].isObject()) {
         const Json::Value& r = v["roi"];
         s->roi.enabled = true;
-        s->roi.x      = r.get("x", 0).asInt();
-        s->roi.y      = r.get("y", 0).asInt();
-        s->roi.width  = r.get("width", 0).asInt();
+        s->roi.x = r.get("x", 0).asInt();
+        s->roi.y = r.get("y", 0).asInt();
+        s->roi.width = r.get("width", 0).asInt();
         s->roi.height = r.get("height", 0).asInt();
     }
     s->score_threshold = v.get("score_threshold", 0.0f).asFloat();
@@ -226,10 +239,10 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
         for (Json::ArrayIndex i = 0; i < v["passthrough"].size(); ++i) {
             const Json::Value& p = v["passthrough"][i];
             PassthroughRule r;
-            r.label      = p.get("label", -1).asInt();
-            r.category   = p.get("category", "").asString();
+            r.label = p.get("label", -1).asInt();
+            r.category = p.get("category", "").asString();
             r.sign_value = p.get("sign_value", 0).asInt();
-            r.min_score  = p.get("min_score", 0.0f).asFloat();
+            r.min_score = p.get("min_score", 0.0f).asFloat();
             if (r.label < 0 || r.category.empty()) {
                 SetErr(err, "stage.passthrough entry needs label>=0 and non-empty category");
                 return false;
@@ -252,15 +265,16 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
         /* "attributes_into:<stage>" / "classify_into:<stage>" */
         auto parse_into = [&](const std::string& tag, StageOutputKind kind) -> int {
             const std::string prefix = tag + ":";
-            if (produces.rfind(prefix, 0) != 0) return 0;
+            if (produces.rfind(prefix, 0) != 0)
+                return 0;
             s->output_kind = kind;
             s->output_target = produces.substr(prefix.size());
             return 1;
         };
         if (!parse_into("attributes_into", StageOutputKind::kFillAttributes) &&
-            !parse_into("classify_into",   StageOutputKind::kClassifyInto) &&
-            !parse_into("keypoints_into",  StageOutputKind::kKeypointsInto) &&
-            !parse_into("mask_into",       StageOutputKind::kMaskInto)) {
+            !parse_into("classify_into", StageOutputKind::kClassifyInto) &&
+            !parse_into("keypoints_into", StageOutputKind::kKeypointsInto) &&
+            !parse_into("mask_into", StageOutputKind::kMaskInto)) {
             SetErr(err, "stage.produces unrecognized: " + produces);
             return false;
         }
@@ -272,7 +286,10 @@ bool ParseStage(const Json::Value& v, StageConfig* s, std::string* err) {
 
 AlgStatus LoadSolutionConfig(const std::string& path, SolutionConfig* out, std::string* err_msg) {
     std::ifstream ifs(path);
-    if (!ifs.is_open()) { SetErr(err_msg, "cannot open config: " + path); return ALG_E_IO; }
+    if (!ifs.is_open()) {
+        SetErr(err_msg, "cannot open config: " + path);
+        return ALG_E_IO;
+    }
 
     Json::CharReaderBuilder builder;
     Json::Value root;
@@ -284,23 +301,27 @@ AlgStatus LoadSolutionConfig(const std::string& path, SolutionConfig* out, std::
 
     /* solution */
     if (!root.isMember("solution") || !root["solution"].isObject()) {
-        SetErr(err_msg, "config.solution missing"); return ALG_E_CONFIG;
+        SetErr(err_msg, "config.solution missing");
+        return ALG_E_CONFIG;
     }
     out->solution_type = root["solution"].get("type", "chain").asString();
 
     /* models */
     if (!root.isMember("models") || !root["models"].isObject()) {
-        SetErr(err_msg, "config.models missing"); return ALG_E_CONFIG;
+        SetErr(err_msg, "config.models missing");
+        return ALG_E_CONFIG;
     }
     const Json::Value& models = root["models"];
     out->models.clear();
     for (const auto& name : models.getMemberNames()) {
         ModelInstanceConfig m;
-        if (!ParseModelInstance(name, models[name], &m, err_msg)) return ALG_E_CONFIG;
+        if (!ParseModelInstance(name, models[name], &m, err_msg))
+            return ALG_E_CONFIG;
         out->models.push_back(std::move(m));
     }
     if (out->models.empty()) {
-        SetErr(err_msg, "config.models is empty"); return ALG_E_CONFIG;
+        SetErr(err_msg, "config.models is empty");
+        return ALG_E_CONFIG;
     }
 
     /* stages */
@@ -310,31 +331,29 @@ AlgStatus LoadSolutionConfig(const std::string& path, SolutionConfig* out, std::
         return ALG_E_CONFIG;
     }
     std::unordered_set<std::string> known_models;
-    for (const auto& m : out->models) known_models.insert(m.name);
+    for (const auto& m : out->models)
+        known_models.insert(m.name);
 
     out->stages.clear();
     std::unordered_set<std::string> seen_stage_names;
     for (Json::ArrayIndex i = 0; i < stages.size(); ++i) {
         StageConfig s;
-        if (!ParseStage(stages[i], &s, err_msg)) return ALG_E_CONFIG;
+        if (!ParseStage(stages[i], &s, err_msg))
+            return ALG_E_CONFIG;
         if (!known_models.count(s.model_ref)) {
             SetErr(err_msg, "stage '" + s.name + "' references unknown model '" + s.model_ref + "'");
             return ALG_E_CONFIG;
         }
-        if (s.input_kind == StageInputKind::kObjectsFromStage &&
-            !seen_stage_names.count(s.input_stage)) {
-            SetErr(err_msg, "stage '" + s.name + "' inputs from unknown earlier stage '" +
-                                s.input_stage + "'");
+        if (s.input_kind == StageInputKind::kObjectsFromStage && !seen_stage_names.count(s.input_stage)) {
+            SetErr(err_msg, "stage '" + s.name + "' inputs from unknown earlier stage '" + s.input_stage + "'");
             return ALG_E_CONFIG;
         }
         if (s.roi.enabled && s.input_kind != StageInputKind::kImage) {
             SetErr(err_msg, "stage '" + s.name + "': roi is only valid for input='image'");
             return ALG_E_CONFIG;
         }
-        if (s.output_kind != StageOutputKind::kCreateObjects &&
-            !seen_stage_names.count(s.output_target)) {
-            SetErr(err_msg, "stage '" + s.name + "' outputs into unknown earlier stage '" +
-                                s.output_target + "'");
+        if (s.output_kind != StageOutputKind::kCreateObjects && !seen_stage_names.count(s.output_target)) {
+            SetErr(err_msg, "stage '" + s.name + "' outputs into unknown earlier stage '" + s.output_target + "'");
             return ALG_E_CONFIG;
         }
         seen_stage_names.insert(s.name);

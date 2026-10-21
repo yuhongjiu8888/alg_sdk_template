@@ -98,7 +98,7 @@ def main() -> int:
 
     print("\n拷到板端后逐张测（每张跑几十帧取稳定值）：")
     for ln in lines[:5]:
-        print(f"  ./loop_runner resources/config/svp_acl/all.json "
+        print(f"  ./loop_runner resources/config/svp_acl/cv610/all.json "
               f"{Path(ln).name} -fmt nv21 -n 30")
     if len(lines) > 5:
         print(f"  ... 共 {len(lines)} 张，其余见 {list_path.name}")

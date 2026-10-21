@@ -10,23 +10,22 @@
 
 #include <string>
 #include <vector>
-
 #include "alg_types.h"
 
 namespace alg {
 
 /* 内部 field_mask 位标志（仅 SDK 内部使用，不暴露到 C ABI）。 */
 enum InternalFieldMask {
-    ALG_FIELD_BOX        = 1 << 0,
+    ALG_FIELD_BOX = 1 << 0,
     ALG_FIELD_ATTRIBUTES = 1 << 1,
-    ALG_FIELD_KEYPOINTS  = 1 << 2,
-    ALG_FIELD_MASK       = 1 << 3,
+    ALG_FIELD_KEYPOINTS = 1 << 2,
+    ALG_FIELD_MASK = 1 << 3,
 };
 
 struct Attribute {
     std::string name;
-    int         value_int = 0;
-    float       value_float = 0.0f;
+    int value_int = 0;
+    float value_float = 0.0f;
     std::string value_str;
 };
 
@@ -35,14 +34,14 @@ struct Attribute {
 struct Keypoint {
     float x = 0;
     float y = 0;
-    int   visibility = 2;
+    int visibility = 2;
 };
 
 /* 分割掩码：RLE 编码（紧凑、适合目标级 mask）。
  * width/height 对应裁剪 ROI 尺寸；counts 为交替的 0-run / 1-run。 */
 struct RLEMask {
-    int              width  = 0;
-    int              height = 0;
+    int width = 0;
+    int height = 0;
     std::vector<int> counts;
 };
 
@@ -57,21 +56,21 @@ struct RLEMask {
  * - keypoints  : 关键点数组（内部预留，C ABI 暂不透出）
  * - mask       : RLE 编码的分割掩码（内部预留，C ABI 暂不透出） */
 struct Object {
-    int                    field_mask = 0;
-    AlgBox                 box{};
-    int                    label = 0;
+    int field_mask = 0;
+    AlgBox box{};
+    int label = 0;
     std::vector<Attribute> attributes;
-    bool                   drop = false;
-    int                    value = 0;      /* 后处理器写入的业务值（enum 编号） */
+    bool drop = false;
+    int value = 0; /* 后处理器写入的业务值（enum 编号） */
 
     /* 内部预留：关键点 & 分割 */
-    std::vector<Keypoint>  keypoints;
-    RLEMask                mask;
+    std::vector<Keypoint> keypoints;
+    RLEMask mask;
 
-    bool has_box()        const { return field_mask & ALG_FIELD_BOX; }
+    bool has_box() const { return field_mask & ALG_FIELD_BOX; }
     bool has_attributes() const { return field_mask & ALG_FIELD_ATTRIBUTES; }
-    bool has_keypoints()  const { return field_mask & ALG_FIELD_KEYPOINTS; }
-    bool has_mask()       const { return field_mask & ALG_FIELD_MASK; }
+    bool has_keypoints() const { return field_mask & ALG_FIELD_KEYPOINTS; }
+    bool has_mask() const { return field_mask & ALG_FIELD_MASK; }
 };
 
 /**

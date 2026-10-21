@@ -33,11 +33,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
 #include <string>
 #include <vector>
 #include "alg_interface.h"
+#include "opencv2/opencv.hpp"
+#include "yuv_tool.hpp" /* -scale：送 AlgRun 前的 CPU 侧 YUV420SP 下采样 */
+#ifdef ALG_TEST_HAVE_LIBYUV
+#include "libyuv/scale.h" /* NV12Scale(kFilterBox)：Y + 交错 UV 一步缩放 */
+#endif
 
 namespace {
 
@@ -170,6 +173,18 @@ int main(int argc, char** argv) {
                      "  -stats-every <N>  每 N 帧打印窗口统计（默认 100）\n"
                      "  -fps <N>          帧率上限：usleep 补齐到 1000/N ms/帧（0=不限速，默认 0）\n"
                      "  -v                每帧打印完整检出明细\n"
+                     "  -log <level>      SDK 日志等级：error|warn|info|debug（默认保持编译期默认值）\n"
+                     "                    info 会打印每模型的 pre/infer/post 及 AIPP 子阶段耗时\n"
+                     "  -aipp-scale <m>   DV500 上缩放由谁做：auto（SDK 内部 libyuv 预缩放，默认）\n"
+                     "                    | external（调用方/VPSS 已缩好，尺寸不符直接报错）\n"
+                     "                    给了 -scale 时默认隐含 external，避免 SDK 二次缩放\n"
+                     "  -scale <WxH>      送 AlgRun 前先用 CPU 把 yuv 缩放到该尺寸\n"
+                     "                    DV500 上让 AIPP 做大比例缩放极慢，传 aipp_output_size\n"
+                     "                    （车牌检测为 640x360）即可让 AIPP 只做转色\n"
+                     "  -scale-mode <m>   缩放算法：libyuv（NEON 区域平均，最快）\n"
+                     "                    | opencv（cv::resize INTER_AREA）\n"
+                     "                    | box（区域平均的标量实现，慢但无依赖）\n"
+                     "                    | nearest（最近邻，最快但抽稀像素，会掉识别率）\n"
                      "示例: %s license_plate.json /data/raw_1920x1080_nv12.yuv -n 1000\n",
                      argv[0], argv[0]);
         return 1;
@@ -187,6 +202,61 @@ int main(int argc, char** argv) {
     const long period_us = fps > 0 ? 1000000L / fps : 0; /* 每帧目标间隔（微秒） */
     const bool verbose = HasOpt(args, "-v");
 
+    /* 日志等级：不传就沿用编译期默认值，便于按需打开分段耗时而不必重新编译动态库。 */
+    const std::string log_opt = Opt(args, "-log", "");
+    if (!log_opt.empty()) {
+        AlgLogLevel level = ALG_LOG_WARN;
+        if (log_opt == "error")
+            level = ALG_LOG_ERROR;
+        else if (log_opt == "warn")
+            level = ALG_LOG_WARN;
+        else if (log_opt == "info")
+            level = ALG_LOG_INFO;
+        else if (log_opt == "debug")
+            level = ALG_LOG_DEBUG;
+        else {
+            std::fprintf(stderr, "bad -log: %s（期望 error|warn|info|debug）\n", log_opt.c_str());
+            return 1;
+        }
+        AlgSetLogLevel(level);
+        std::printf("[log   ] SDK 日志等级 -> %s\n", log_opt.c_str());
+    }
+
+    /* 动态 AIPP 缩放的执行方（仅 DV500 生效）。便于按 CPU 余量在板上切。
+     *
+     * 与 -scale 的关系：本程序自己缩过之后，必须让 SDK 别再缩，否则会缩两次
+     * （结果仍正确，但白损画质、白花 CPU，而且是静默的）。所以给了 -scale 就默认
+     * 隐含 external —— 此时如果缩到的尺寸不是模型的 aipp_output_size，SDK 会直接
+     * 报错，而不是闷声二次缩放。要对比不同缩放内核时显式传 -aipp-scale auto。 */
+    std::string aipp_scale_opt = Opt(args, "-aipp-scale", "");
+    const bool aipp_scale_explicit = !aipp_scale_opt.empty();
+    if (!aipp_scale_explicit && HasOpt(args, "-scale")) {
+        aipp_scale_opt = "external";
+        std::printf("[aipp  ] 已带 -scale，隐含 -aipp-scale external（避免 SDK 二次缩放）\n");
+    }
+    if (!aipp_scale_opt.empty()) {
+        AlgAippScaleMode m = ALG_AIPP_SCALE_AUTO;
+        if (aipp_scale_opt == "auto")
+            m = ALG_AIPP_SCALE_AUTO;
+        else if (aipp_scale_opt == "external")
+            m = ALG_AIPP_SCALE_EXTERNAL;
+        else {
+            std::fprintf(stderr, "bad -aipp-scale: %s（期望 auto|external）\n", aipp_scale_opt.c_str());
+            return 1;
+        }
+        const AlgStatus as = AlgSetAippScaleMode(m);
+        if (as != ALG_OK) {
+            std::fprintf(stderr, "AlgSetAippScaleMode err %d\n", as);
+            return as;
+        }
+        std::printf("[aipp  ] 缩放执行方 -> %s\n", aipp_scale_opt.c_str());
+        if (aipp_scale_explicit && aipp_scale_opt == "auto" && HasOpt(args, "-scale")) {
+            std::fprintf(stderr,
+                         "警告: -scale 与 -aipp-scale auto 同时使用；若 -scale 的目标尺寸不等于\n"
+                         "      模型的 aipp_output_size，SDK 会再缩一次（双重缩放）。\n");
+        }
+    }
+
     /* 输入判定：图片 vs 原始 YUV。扩展名 .yuv / .bin 一律按 YUV 处理。 */
     const std::string ext = [&]() {
         auto dot = input_path.find_last_of('.');
@@ -195,9 +265,13 @@ int main(int argc, char** argv) {
     const bool is_yuv = (ext == "yuv" || ext == "bin" || ext == "nv12" || ext == "nv21");
 
     /* 准备 AlgImage：图片读一次成 BGR；YUV 整文件读进内存，循环里复用同一 buffer。 */
-    std::vector<uint8_t> yuv_bytes; /* yuv 输入持有原始字节（保持存活） */
+    std::vector<uint8_t> yuv_bytes;    /* yuv 输入持有原始字节（保持存活） */
+    std::vector<uint8_t> scaled_bytes; /* -scale 时的缩放结果缓冲（逐帧覆写） */
     std::vector<uint8_t> y_plane_bytes, uv_plane_bytes;
-    cv::Mat image_bgr;              /* 图片输入持有解码结果 */
+    bool do_scale = false;    /* 每帧送 AlgRun 前先做 CPU 缩放 */
+    std::string scale_mode;   /* box | nearest */
+    int src_w = 0, src_h = 0; /* yuv 文件的原始尺寸 */
+    cv::Mat image_bgr;        /* 图片输入持有解码结果 */
     AlgImage img{};
     if (is_yuv) {
         FILE* f = std::fopen(input_path.c_str(), "rb");
@@ -243,14 +317,61 @@ int main(int argc, char** argv) {
         }
         img.stride = 0; /* NV12/NV21 按 width 紧凑布局 */
         const size_t y_size = static_cast<size_t>(w) * h;
+        src_w = w;
+        src_h = h;
+
+        /* 可选：先用 CPU 把整帧缩到模型需要的尺寸再送 AlgRun。
+         * DV500 的 AIPP 做大比例缩放（1080P -> 640x360）有硬件瓶颈，把缩放挪到
+         * 调用方、让 AIPP 只做转色（scf_switch=0）可规避。这里用 yuv_tool.hpp 的
+         * 最近邻实现，并在循环里逐帧执行，以便量出真实的每帧 CPU 开销。 */
+        int sw = 0, sh = 0;
+        const std::string scale_opt = Opt(args, "-scale");
+        if (!scale_opt.empty()) {
+            if (std::sscanf(scale_opt.c_str(), "%dx%d", &sw, &sh) != 2 || sw <= 0 || sh <= 0 || (sw & 1) || (sh & 1)) {
+                std::fprintf(stderr, "bad -scale: %s（期望偶数 WxH，如 640x360）\n", scale_opt.c_str());
+                return 1;
+            }
+            if (sw > w || sh > h) {
+                std::fprintf(stderr, "-scale %s 不小于源尺寸 %dx%d，本工具只做下采样\n", scale_opt.c_str(), w, h);
+                return 1;
+            }
+            scaled_bytes.resize(static_cast<size_t>(sw) * sh * 3 / 2);
+            scale_mode = Opt(args, "-scale-mode", "libyuv");
+            if (scale_mode != "libyuv" && scale_mode != "opencv" && scale_mode != "box" && scale_mode != "nearest") {
+                std::fprintf(stderr, "bad -scale-mode: %s（期望 libyuv|opencv|box|nearest）\n", scale_mode.c_str());
+                return 1;
+            }
+#ifndef ALG_TEST_HAVE_LIBYUV
+            if (scale_mode == "libyuv") {
+                std::fprintf(stderr, "-scale-mode libyuv 不可用（本次构建没链 libyuv），改用 opencv\n");
+                scale_mode = "opencv";
+            }
+#endif
+            do_scale = true;
+        }
+
         img.data = nullptr;
-        if (HasOpt(args, "-split-plane")) {
+        if (do_scale) {
+            /* 缩放结果是一块连续堆缓冲，仍按分平面兼容路径传入：普通堆地址不能
+             * 当作 MMZ/VB 的外部零拷贝输入。 */
+            const size_t sy = static_cast<size_t>(sw) * sh;
+            img.width = sw;
+            img.height = sh;
+            img.plane_data[0] = scaled_bytes.data();
+            img.plane_data[1] = scaled_bytes.data() + sy;
+            img.plane_data_len[0] = static_cast<int>(sy);
+            img.plane_data_len[1] = static_cast<int>(scaled_bytes.size() - sy);
+            img.plane_stride[0] = sw;
+            img.plane_stride[1] = sw;
+        } else if (HasOpt(args, "-split-plane")) {
             y_plane_bytes.assign(yuv_bytes.begin(), yuv_bytes.begin() + y_size);
             uv_plane_bytes.assign(yuv_bytes.begin() + y_size, yuv_bytes.end());
             img.plane_data[0] = y_plane_bytes.data();
             img.plane_data[1] = uv_plane_bytes.data();
             img.plane_data_len[0] = static_cast<int>(y_plane_bytes.size());
             img.plane_data_len[1] = static_cast<int>(uv_plane_bytes.size());
+            img.plane_stride[0] = w;
+            img.plane_stride[1] = w;
         } else {
             /* 文件缓冲不是 MMZ/VB 映射，按分平面兼容路径传入，避免测试程序
              * 把普通堆地址误用为动态 AIPP 的外部零拷贝输入。 */
@@ -258,12 +379,18 @@ int main(int argc, char** argv) {
             img.plane_data[1] = yuv_bytes.data() + y_size;
             img.plane_data_len[0] = static_cast<int>(y_size);
             img.plane_data_len[1] = static_cast<int>(yuv_bytes.size() - y_size);
+            img.plane_stride[0] = w;
+            img.plane_stride[1] = w;
         }
-        img.plane_stride[0] = w;
-        img.plane_stride[1] = w;
-        std::printf("[input ] yuv %s (%dx%d, %s, %s)\n", input_path.c_str(), w, h,
-                    Opt(args, "-fmt", "nv12").c_str(),
+        std::printf("[input ] yuv %s (%dx%d, %s, %s)\n", input_path.c_str(), w, h, Opt(args, "-fmt", "nv12").c_str(),
                     HasOpt(args, "-split-plane") ? "split-plane" : "file-plane-view");
+        if (do_scale) {
+            const char* mode_name = scale_mode == "nearest" ? "最近邻"
+                : scale_mode == "box"                       ? "区域平均(标量)"
+                : scale_mode == "libyuv"                    ? "libyuv NV12Scale(kFilterBox)"
+                                                            : "OpenCV INTER_AREA";
+            std::printf("[scale ] 每帧 CPU 缩放到 %dx%d（%s），再送 AlgRun\n", sw, sh, mode_name);
+        }
     } else {
         image_bgr = cv::imread(input_path, cv::IMREAD_COLOR);
         if (image_bgr.empty()) {
@@ -300,7 +427,56 @@ int main(int argc, char** argv) {
 
     long frame = 0, failures = 0;
     double win_ms = 0, win_min = 1e30, win_max = -1e30, all_ms = 0;
+    /* -scale-mode opencv 用的可复用缓冲：只在第一帧分配，之后 cv::resize 原地复用。
+     * Y 与 UV 分开缩放。UV 必须按“UV 对”来缩放，即 CV_8UC2、宽 src_w/2：若退化成
+     * 宽 src_w 的单通道图，INTER_AREA 的 3 字节窗口会是 [V0,U0,V1]，把 U 和 V 混
+     * 在一起平均，颜色就错了。CV_8UC2 让 cv::resize 对两个通道分别求平均。 */
+    cv::Mat scale_y_src, scale_y_dst, scale_uv_src, scale_uv_dst;
+    if (do_scale && scale_mode == "opencv") {
+        scale_y_src = cv::Mat(src_h, src_w, CV_8UC1, yuv_bytes.data());
+        scale_uv_src = cv::Mat(src_h / 2, src_w / 2, CV_8UC2, yuv_bytes.data() + static_cast<size_t>(src_w) * src_h);
+    }
+
+    timeval t2, t3, t4, t5, t6;
     while (!g_stop && (total <= 0 || frame < total)) {
+        double scale_ms = 0.0, scale_y_ms = 0.0, scale_uv_ms = 0.0;
+        if (do_scale) {
+            gettimeofday(&t2, nullptr);
+            if (scale_mode == "nearest") {
+                FastYuv420spResize(yuv_bytes.data(), src_w, src_h, scaled_bytes.data(), img.width, img.height,
+                                   img.format == ALG_PIX_NV21);
+            } else if (scale_mode == "box") {
+                FastYuv420spResizeBox(yuv_bytes.data(), src_w, src_h, scaled_bytes.data(), img.width, img.height,
+                                      img.format == ALG_PIX_NV21);
+            } else if (scale_mode == "opencv") {
+                /* 分开计时，方便判断哪一部分慢（Y 占大头还是 UV 走了慢路径）。 */
+                gettimeofday(&t4, nullptr);
+                const size_t y_dst = static_cast<size_t>(img.width) * img.height;
+                cv::resize(scale_y_src, scale_y_dst, cv::Size(img.width, img.height), 0, 0, cv::INTER_AREA);
+                gettimeofday(&t5, nullptr);
+                std::memcpy(scaled_bytes.data(), scale_y_dst.data, y_dst);
+                cv::resize(scale_uv_src, scale_uv_dst, cv::Size(img.width / 2, img.height / 2), 0, 0, cv::INTER_AREA);
+                std::memcpy(scaled_bytes.data() + y_dst, scale_uv_dst.data,
+                            static_cast<size_t>(img.width) * (img.height / 2));
+                gettimeofday(&t6, nullptr);
+                scale_y_ms = Ms(t4, t5);
+                scale_uv_ms = Ms(t5, t6);
+            }
+#ifdef ALG_TEST_HAVE_LIBYUV
+            else {
+                /* NV12Scale 内部把 UV 平面按“UV 对”（width/2）缩放，不解释 U/V 字节
+                 * 语义，所以对 NV12 和 NV21 都正确 —— NV21 只是对内字节顺序不同。
+                 * 一步到位，不需要先拆 I420（那会多 6.8MB/帧的读写）。 */
+                const int sw_ = src_w, sh_ = src_h, dw_ = img.width, dh_ = img.height;
+                libyuv::NV12Scale(yuv_bytes.data(), sw_, yuv_bytes.data() + static_cast<size_t>(sw_) * sh_, sw_, sw_,
+                                  sh_, scaled_bytes.data(), dw_, scaled_bytes.data() + static_cast<size_t>(dw_) * dh_,
+                                  dw_, dw_, dh_, libyuv::kFilterBox);
+            }
+#endif
+            gettimeofday(&t3, nullptr);
+            scale_ms = Ms(t2, t3);
+        }
+
         gettimeofday(&t0, nullptr);
         AlgResult r{};
         AlgStatus s = AlgRun(h, &img, &r);
@@ -315,16 +491,19 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        const double infer_ms = Ms(t0, t1);
+        /* 统计口径是"每帧端到端"：开了 -scale 就含缩放，否则与原来完全一致。 */
+        const double ms = scale_ms + infer_ms;
+
         /* 帧率控制：帧间隔不足 1/fps 秒时 usleep 补齐（仅上限，推理更慢则不强制）。
          * 用整数微秒避免 softfp 板端浮点开销。 */
         if (period_us > 0) {
-            const long infer_us = (t1.tv_sec - t0.tv_sec) * 1000000L + (t1.tv_usec - t0.tv_usec);
-            const long sleep_us = period_us - infer_us;
+            const long used_us = static_cast<long>(ms * 1000.0);
+            const long sleep_us = period_us - used_us;
             if (sleep_us > 0)
                 usleep(static_cast<useconds_t>(sleep_us));
         }
 
-        const double ms = Ms(t0, t1);
         win_ms += ms;
         all_ms += ms;
         if (ms < win_min)
@@ -332,8 +511,21 @@ int main(int argc, char** argv) {
         if (ms > win_max)
             win_max = ms;
 
-        std::printf("[frame %ld] infer: %7.2f ms  SL=%d SG=%d LP=%d\n", frame, ms, r.speed_limit_count, r.sign_count,
-                    r.license_plate_count);
+        if (do_scale) {
+            /* opencv 模式额外打出 Y/UV 两段的耗时：22ms 这种量级下需要知道
+             * 是 Y 平面本身慢，还是 UV 走到了没有 SIMD 的慢路径。 */
+            if (scale_mode == "opencv")
+                std::printf("[frame %ld] scale: %6.2f ms (y %5.2f uv %5.2f)  infer: %7.2f ms  "
+                            "total: %7.2f ms  SL=%d SG=%d LP=%d\n",
+                            frame, scale_ms, scale_y_ms, scale_uv_ms, infer_ms, ms, r.speed_limit_count, r.sign_count,
+                            r.license_plate_count);
+            else
+                std::printf("[frame %ld] scale: %6.2f ms  infer: %7.2f ms  total: %7.2f ms  "
+                            "SL=%d SG=%d LP=%d\n",
+                            frame, scale_ms, infer_ms, ms, r.speed_limit_count, r.sign_count, r.license_plate_count);
+        } else
+            std::printf("[frame %ld] infer: %7.2f ms  SL=%d SG=%d LP=%d\n", frame, infer_ms, r.speed_limit_count,
+                        r.sign_count, r.license_plate_count);
         if (verbose)
             PrintResultDetails(r);
 
@@ -341,8 +533,9 @@ int main(int argc, char** argv) {
         if (save_every > 0 && frame % save_every == 0) {
             cv::Mat draw;
             if (is_yuv) {
-                cv::Mat yuv_raw(img.height * 3 / 2, img.width, CV_8UC1,
-                                yuv_bytes.data());
+                /* 画框要看实际送进 AlgRun 的那一帧（开 -scale 时是缩放后的）。 */
+                uint8_t* frame_base = do_scale ? scaled_bytes.data() : yuv_bytes.data();
+                cv::Mat yuv_raw(img.height * 3 / 2, img.width, CV_8UC1, frame_base);
                 cv::cvtColor(yuv_raw, draw,
                              img.format == ALG_PIX_NV21 ? cv::COLOR_YUV2BGR_NV21 : cv::COLOR_YUV2BGR_NV12);
                 DrawResult(draw, r);

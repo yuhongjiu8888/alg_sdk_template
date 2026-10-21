@@ -95,9 +95,14 @@ FLOAT32 输入的有效图像区域采用 `y = (x - mean) * (scale / std)`，`st
 
 海思配置经 `AlgRun` 接收原分辨率 NV12/NV21 帧。物理双平面输入先由 IVE 缩放到 `aipp_output_size`，动态 AIPP 完成转色和配置的 DTC；连续输入或普通内存兼容路径仍可由 AIPP 缩放。CV610 AIPP 无法生成值为 114 的大范围 padding，因此 `aipp_graph_padding` 对应的常量 Pad 必须加入模型图。运行时会按实际原图尺寸复算有效区和四边补边，不匹配时返回前处理错误。
 
-ATC 动态 AIPP 模板位于 [`config/svp_acl/aipp/`](config/svp_acl/aipp/)。动态 OM 应使用独立文件名；`engine=auto` 会根据模型是否带动态 AIPP 自动选择硬件或 OpenCV 路径。
+海思配置按芯片分目录：`config/svp_acl/cv610/`（Hi3516CV610）与 `config/svp_acl/dv500/`（Hi3519DV500），
+两份参数完全相同，只有 `model_path` 的模型文件名不同。DV500 没有 IVE，
+分平面输入由 aarch64 libyuv 合并后再交给 AIPP；其 AIPP padding 能力与 CV610 不同，
+图内 Pad 是否保留需重新验证，详见 [`config/svp_acl/dv500/README.md`](config/svp_acl/dv500/README.md)。
 
-当前同一份动态 AIPP OM 同时适用 IVE resize 和 AIPP resize 路径：SDK 在每帧调用 `svp_acl_mdl_set_aipp_scf_params` 时自动设置 `scf_switch`，IVE 已缩放时为 0，否则为 2，不需要两份 OM。未来若改为“IVE resize/padding + 静态 AIPP”，必须重新转换静态 AIPP OM，并同步移除图内 Pad、增加静态 AIPP 后端绑定支持。详细决策和验证项见 [`config/svp_acl/aipp/README.md`](config/svp_acl/aipp/README.md)。
+ATC 动态 AIPP 模板位于 [`config/svp_acl/cv610/aipp/`](config/svp_acl/cv610/aipp/)。动态 OM 应使用独立文件名；`engine=auto` 会根据模型是否带动态 AIPP 自动选择硬件或 OpenCV 路径。
+
+当前同一份动态 AIPP OM 同时适用 IVE resize 和 AIPP resize 路径：SDK 在每帧调用 `svp_acl_mdl_set_aipp_scf_params` 时自动设置 `scf_switch`，IVE 已缩放时为 0，否则为 2，不需要两份 OM。未来若改为“IVE resize/padding + 静态 AIPP”，必须重新转换静态 AIPP OM，并同步移除图内 Pad、增加静态 AIPP 后端绑定支持。详细决策和验证项见 [`config/svp_acl/cv610/aipp/README.md`](config/svp_acl/cv610/aipp/README.md)。
 
 ### 缩放策略
 
@@ -218,7 +223,7 @@ XMM 使用单输出布局，以避免特定多输出模型被划分为 NPU / CPU
 
 ## 车牌处理器
 
-`rtmdet_det` 与 `lprnet_rec` 分别用于车牌检测和 CTC 识别。配套参数见 [车牌配置](config/svp_acl/license_plate.json)，包括检测阈值、NMS、字符集、时间步和 blank 索引。
+`rtmdet_det` 与 `lprnet_rec` 分别用于车牌检测和 CTC 识别。配套参数见 [车牌配置](config/svp_acl/cv610/license_plate.json)，包括检测阈值、NMS、字符集、时间步和 blank 索引。
 
 车牌链路提供三个相互独立的置信度阈值：
 
@@ -232,6 +237,6 @@ XMM 使用单输出布局，以避免特定多输出模型被划分为 NPU / CPU
 
 ## 完整示例
 
-- [SVP ACL 限速牌](config/svp_acl/speed_limit.json)：检测、OCR 和禁令 / 停车牌处理。
-- [SVP ACL 组合业务](config/svp_acl/all.json)：限速牌、禁令 / 停车牌及车牌识别。
+- [SVP ACL 限速牌](config/svp_acl/cv610/speed_limit.json)：检测、OCR 和禁令 / 停车牌处理。
+- [SVP ACL 组合业务](config/svp_acl/cv610/all.json)：限速牌、禁令 / 停车牌及车牌识别。
 - [XMM 组合业务](config/xmm/all.json)、[MNN 组合业务](config/mnn/all.json)：内部红绿灯及限速牌处理；公共结果不包含红绿灯。

@@ -1,9 +1,7 @@
 #include "models/lprnet_rec/lprnet_rec_postprocessor.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-
 #include "core/logger.h"
 
 namespace alg {
@@ -43,21 +41,24 @@ inline float ReadElemAt(const TensorView& t, const uint8_t* p) {
         case DataType::kI32: {
             int32_t raw;
             std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<float>(raw) - static_cast<float>(t.quant.zero_point)) *
-                   t.quant.scale;
+            return (static_cast<float>(raw) - static_cast<float>(t.quant.zero_point)) * t.quant.scale;
         }
         case DataType::kF16: {
             uint16_t h;
             std::memcpy(&h, p, sizeof(h));
             uint32_t sign = (h & 0x8000u) << 16;
-            uint32_t exp  = (h & 0x7C00u) >> 10;
+            uint32_t exp = (h & 0x7C00u) >> 10;
             uint32_t mant = (h & 0x03FFu);
             uint32_t f;
             if (exp == 0) {
-                if (mant == 0) { f = sign; }
-                else {
+                if (mant == 0) {
+                    f = sign;
+                } else {
                     exp = 1;
-                    while ((mant & 0x0400u) == 0) { mant <<= 1; exp--; }
+                    while ((mant & 0x0400u) == 0) {
+                        mant <<= 1;
+                        exp--;
+                    }
                     mant &= 0x03FFu;
                     f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
                 }
@@ -77,21 +78,21 @@ inline float ReadElemAt(const TensorView& t, const uint8_t* p) {
 }  // namespace
 
 Status LprnetRecPostprocessor::Configure(const IInferer& inferer, const Json::Value& params) {
-    characters_     = params.get("characters", "").asString();
-    blank_index_    = params.get("blank_index", 36).asInt();
-    timesteps_      = params.get("timesteps", 32).asInt();
-    channels_       = params.get("channels", 0).asInt();
+    characters_ = params.get("characters", "").asString();
+    blank_index_ = params.get("blank_index", 36).asInt();
+    timesteps_ = params.get("timesteps", 32).asInt();
+    channels_ = params.get("channels", 0).asInt();
     conf_threshold_ = params.get("conf_threshold", 0.0f).asFloat();
-    category_       = params.get("category", "").asString();
+    category_ = params.get("category", "").asString();
 
     if (characters_.empty()) {
         ALG_LOGE("lprnet_rec: characters 不能为空");
         return ALG_E_POSTPROCESS;
     }
-    if (channels_ <= 0) channels_ = static_cast<int>(characters_.size()) + 1;
+    if (channels_ <= 0)
+        channels_ = static_cast<int>(characters_.size()) + 1;
     if (timesteps_ <= 0 || channels_ <= blank_index_ || blank_index_ < 0) {
-        ALG_LOGE("lprnet_rec: 参数非法 timesteps=%d channels=%d blank_index=%d",
-                 timesteps_, channels_, blank_index_);
+        ALG_LOGE("lprnet_rec: 参数非法 timesteps=%d channels=%d blank_index=%d", timesteps_, channels_, blank_index_);
         return ALG_E_POSTPROCESS;
     }
     if (inferer.NumOutputs() < 1) {
@@ -100,25 +101,22 @@ Status LprnetRecPostprocessor::Configure(const IInferer& inferer, const Json::Va
     }
     const TensorView& t = inferer.OutputView(0);
     if (t.shape.Numel() < timesteps_ * channels_) {
-        ALG_LOGE("lprnet_rec: output numel=%d < timesteps*channels=%d",
-                 t.shape.Numel(), timesteps_ * channels_);
+        ALG_LOGE("lprnet_rec: output numel=%d < timesteps*channels=%d", t.shape.Numel(), timesteps_ * channels_);
         return ALG_E_POSTPROCESS;
     }
     /* 按行对齐输出（row_stride>0）时，逐行字节容量也要够。 */
     {
-        const size_t row_bytes = t.row_stride
-            ? t.row_stride
-            : static_cast<size_t>(channels_) * BytesPerElement(t.dtype);
+        const size_t row_bytes =
+            t.row_stride ? t.row_stride : static_cast<size_t>(channels_) * BytesPerElement(t.dtype);
         if (t.size_bytes < static_cast<size_t>(timesteps_) * row_bytes) {
-            ALG_LOGE("lprnet_rec: output size=%zu < timesteps*row_bytes=%zu",
-                     t.size_bytes, static_cast<size_t>(timesteps_) * row_bytes);
+            ALG_LOGE("lprnet_rec: output size=%zu < timesteps*row_bytes=%zu", t.size_bytes,
+                     static_cast<size_t>(timesteps_) * row_bytes);
             return ALG_E_POSTPROCESS;
         }
     }
 
-    ALG_LOGI("lprnet_rec: ready, chars=%zu timesteps=%d channels=%d blank=%d thr=%.2f cat='%s'",
-             characters_.size(), timesteps_, channels_, blank_index_, conf_threshold_,
-             category_.c_str());
+    ALG_LOGI("lprnet_rec: ready, chars=%zu timesteps=%d channels=%d blank=%d thr=%.2f cat='%s'", characters_.size(),
+             timesteps_, channels_, blank_index_, conf_threshold_, category_.c_str());
     configured_ = true;
     return ALG_OK;
 }
@@ -126,8 +124,10 @@ Status LprnetRecPostprocessor::Configure(const IInferer& inferer, const Json::Va
 Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
                                      const PreprocessState& /*state*/,
                                      std::vector<Object>* out) {
-    if (!configured_) return ALG_E_NOT_INITIALIZED;
-    if (!out) return ALG_E_INVALID_ARG;
+    if (!configured_)
+        return ALG_E_NOT_INITIALIZED;
+    if (!out)
+        return ALG_E_INVALID_ARG;
     out->clear();
 
     const TensorView& t = inferer.OutputView(0);
@@ -149,14 +149,18 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
         float m = ReadElemAt(t, row);
         for (int c = 1; c < channels_; ++c) {
             float v = ReadElemAt(t, row + static_cast<size_t>(c) * elem_bytes);
-            if (v > m) m = v;
+            if (v > m)
+                m = v;
         }
         float sum = 0.0f;
         int best = 0;
         float best_logit = ReadElemAt(t, row);
         for (int c = 0; c < channels_; ++c) {
             const float v = ReadElemAt(t, row + static_cast<size_t>(c) * elem_bytes);
-            if (v > best_logit) { best_logit = v; best = c; }
+            if (v > best_logit) {
+                best_logit = v;
+                best = c;
+            }
             sum += std::exp(v - m);
         }
         if (best_logit > dbg_max_logit) {
@@ -165,8 +169,7 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
             dbg_max_c = best;
         }
         const float best_prob = std::exp(best_logit - m) / (sum + 1e-9f);
-        if (best != previous && best != blank_index_ &&
-            best >= 0 && best < static_cast<int>(characters_.size())) {
+        if (best != previous && best != blank_index_ && best >= 0 && best < static_cast<int>(characters_.size())) {
             text += characters_[best];
             score *= best_prob;
         }
@@ -181,36 +184,39 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
             char shape[64] = {0};
             int sn = 0;
             for (int i = 0; i < t.shape.ndims && sn < 60; ++i)
-                sn += snprintf(shape + sn, sizeof(shape) - sn, "%s%d",
-                               i ? "x" : "", t.shape.dims[i]);
+                sn += snprintf(shape + sn, sizeof(shape) - sn, "%s%d", i ? "x" : "", t.shape.dims[i]);
             int raw_min = 0x7FFFFFFF, raw_max = 0;
             if (t.dtype == DataType::kU8 || t.dtype == DataType::kI8) {
                 const uint8_t* p = static_cast<const uint8_t*>(t.data);
                 for (size_t i = 0; i < t.size_bytes; ++i) {
-                    if (p[i] < raw_min) raw_min = p[i];
-                    if (p[i] > raw_max) raw_max = p[i];
+                    if (p[i] < raw_min)
+                        raw_min = p[i];
+                    if (p[i] > raw_max)
+                        raw_max = p[i];
                 }
             }
             ALG_LOGD("[cls-diag] lprnet '%s' shape=%s numel=%d raw[min=%d max=%d] "
                      "text='%s' rec_score=%.4f max_logit=%.2f@(t=%d,c=%d)",
-                     t.name.c_str(), shape, t.shape.Numel(), raw_min, raw_max,
-                     text.c_str(), score, dbg_max_logit, dbg_max_t, dbg_max_c);
+                     t.name.c_str(), shape, t.shape.Numel(), raw_min, raw_max, text.c_str(), score, dbg_max_logit,
+                     dbg_max_t, dbg_max_c);
         }
     }
 
     /* 未解出任何字符时 score 仍保持初始值 1.0，不能让空文本绕过识别阈值；
      * classify_into 收到空结果后会丢弃对应检测框。 */
-    if (text.empty()) return ALG_OK;
+    if (text.empty())
+        return ALG_OK;
 
     /* 置信度过滤（可选）：低于阈值 → 返回空 → classify_into drop 掉该检测框。
      * 0 = 不按识别分过滤，但仍拒绝空文本。 */
-    if (conf_threshold_ > 0.0f && score < conf_threshold_) return ALG_OK;
+    if (conf_threshold_ > 0.0f && score < conf_threshold_)
+        return ALG_OK;
 
     Object o;
     o.field_mask = ALG_FIELD_BOX | ALG_FIELD_ATTRIBUTES;
-    o.label      = -1;             /* 非检测类，label 不用 */
-    o.box.score  = score;          /* 识别置信度；classify_into 再乘 det */
-    o.box.xmin = o.box.ymin = o.box.xmax = o.box.ymax = 0;  /* ROI 内坐标，ChainSolution 不用 */
+    o.label = -1;                                          /* 非检测类，label 不用 */
+    o.box.score = score;                                   /* 识别置信度；classify_into 再乘 det */
+    o.box.xmin = o.box.ymin = o.box.xmax = o.box.ymax = 0; /* ROI 内坐标，ChainSolution 不用 */
 
     Attribute cat;
     cat.name = "category";

@@ -1,9 +1,7 @@
 #include "backend/mnn/mnn_inferer.h"
-
 #include <algorithm>
 #include <cstring>
 #include <vector>
-
 #include "core/logger.h"
 
 namespace alg {
@@ -12,24 +10,31 @@ namespace {
 
 DataType MapMnnDtype(halide_type_t type) {
     if (type.code == halide_type_float) {
-        if (type.bits == 16) return DataType::kF16;
-        if (type.bits == 32) return DataType::kF32;
+        if (type.bits == 16)
+            return DataType::kF16;
+        if (type.bits == 32)
+            return DataType::kF32;
     }
     if (type.code == halide_type_int) {
-        if (type.bits == 8)  return DataType::kI8;
-        if (type.bits == 16) return DataType::kI16;
-        if (type.bits == 32) return DataType::kI32;
+        if (type.bits == 8)
+            return DataType::kI8;
+        if (type.bits == 16)
+            return DataType::kI16;
+        if (type.bits == 32)
+            return DataType::kI32;
     }
     if (type.code == halide_type_uint) {
-        if (type.bits == 8)  return DataType::kU8;
-        if (type.bits == 16) return DataType::kU16;
+        if (type.bits == 8)
+            return DataType::kU8;
+        if (type.bits == 16)
+            return DataType::kU16;
     }
     return DataType::kF32;
 }
 
 TensorView BuildTensorView(const MNN::Tensor* t) {
     TensorView v;
-    v.dtype  = MapMnnDtype(t->getType());
+    v.dtype = MapMnnDtype(t->getType());
 
     auto dims = t->shape();
     v.shape.ndims = static_cast<int>(dims.size());
@@ -50,11 +55,11 @@ TensorView BuildTensorView(const MNN::Tensor* t) {
         v.layout = Layout::kNCHW;
     }
 
-    v.quant.scale      = 1.0f;
+    v.quant.scale = 1.0f;
     v.quant.zero_point = 0;
-    v.quant.quantized  = false;
+    v.quant.quantized = false;
 
-    v.data       = t->host<void>();
+    v.data = t->host<void>();
     v.size_bytes = t->size();
     return v;
 }
@@ -65,11 +70,15 @@ TensorView BuildTensorView(const MNN::Tensor* t) {
 std::vector<TensorView> CollectOutputs(MNN::Interpreter* interp, MNN::Session* session) {
     auto output_map = interp->getSessionOutputAll(session);
 
-    struct Entry { TensorView view; int spatial; };
+    struct Entry {
+        TensorView view;
+        int spatial;
+    };
     std::vector<Entry> entries;
     for (auto& kv : output_map) {
         MNN::Tensor* t = kv.second;
-        if (!t || t->size() == 0) continue;
+        if (!t || t->size() == 0)
+            continue;
         TensorView v = BuildTensorView(t);
         v.name = kv.first;
         int h = (v.layout == Layout::kNHWC) ? v.shape.dims[1] : v.shape.dims[2];
@@ -77,18 +86,20 @@ std::vector<TensorView> CollectOutputs(MNN::Interpreter* interp, MNN::Session* s
         entries.push_back({v, h * w});
     }
 
-    std::sort(entries.begin(), entries.end(),
-              [](const Entry& a, const Entry& b) { return a.spatial > b.spatial; });
+    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.spatial > b.spatial; });
 
     std::vector<TensorView> result;
-    for (auto& e : entries) result.push_back(e.view);
+    for (auto& e : entries)
+        result.push_back(e.view);
     return result;
 }
 
 }  // namespace
 
 MnnInferer::MnnInferer() = default;
-MnnInferer::~MnnInferer() { FreeAll(); }
+MnnInferer::~MnnInferer() {
+    FreeAll();
+}
 
 void MnnInferer::FreeAll() {
     if (interpreter_) {
@@ -100,7 +111,8 @@ void MnnInferer::FreeAll() {
 }
 
 Status MnnInferer::Load(const std::string& model_path) {
-    if (initialized_) return ALG_E_INVALID_ARG;
+    if (initialized_)
+        return ALG_E_INVALID_ARG;
 
     interpreter_ = MNN::Interpreter::createFromFile(model_path.c_str());
     if (!interpreter_) {
@@ -126,8 +138,7 @@ Status MnnInferer::Load(const std::string& model_path) {
     }
 
     initialized_ = true;
-    ALG_LOGI("MNN: model loaded, %d inputs, %d outputs",
-             NumInputs(), NumOutputs());
+    ALG_LOGI("MNN: model loaded, %d inputs, %d outputs", NumInputs(), NumOutputs());
     return ALG_OK;
 }
 
@@ -139,7 +150,8 @@ Status MnnInferer::BuildViews() {
     auto input_names = interpreter_->getSessionInputAll(session_);
     for (auto& kv : input_names) {
         MNN::Tensor* t = kv.second;
-        if (!t || t->size() == 0) continue;
+        if (!t || t->size() == 0)
+            continue;
         TensorView v = BuildTensorView(t);
         v.name = kv.first;
         input_views_.push_back(v);
@@ -149,24 +161,22 @@ Status MnnInferer::BuildViews() {
     output_views_ = CollectOutputs(interpreter_, session_);
 
     if (input_views_.empty() || output_views_.empty()) {
-        ALG_LOGE("MNN: no I/O tensors (in=%zu out=%zu)",
-                 input_views_.size(), output_views_.size());
+        ALG_LOGE("MNN: no I/O tensors (in=%zu out=%zu)", input_views_.size(), output_views_.size());
         return ALG_E_BACKEND;
     }
 
     for (size_t i = 0; i < output_views_.size(); ++i) {
         const auto& v = output_views_[i];
-        ALG_LOGI("MNN: output[%zu] '%s' shape=(%d,%d,%d,%d) layout=%s dtype=%d",
-                 i, v.name.c_str(),
-                 v.shape.dims[0], v.shape.dims[1], v.shape.dims[2], v.shape.dims[3],
-                 v.layout == Layout::kNHWC ? "NHWC" : "NCHW",
+        ALG_LOGI("MNN: output[%zu] '%s' shape=(%d,%d,%d,%d) layout=%s dtype=%d", i, v.name.c_str(), v.shape.dims[0],
+                 v.shape.dims[1], v.shape.dims[2], v.shape.dims[3], v.layout == Layout::kNHWC ? "NHWC" : "NCHW",
                  static_cast<int>(v.dtype));
     }
     return ALG_OK;
 }
 
 Status MnnInferer::Forward() {
-    if (!initialized_) return ALG_E_NOT_INITIALIZED;
+    if (!initialized_)
+        return ALG_E_NOT_INITIALIZED;
 
     /* Preprocessor has written into InputView(i).data, which points at
      * the MNN input tensor's host buffer. No copy needed. */

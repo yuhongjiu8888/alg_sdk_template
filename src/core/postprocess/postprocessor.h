@@ -12,9 +12,7 @@
 #define ALG_CORE_POSTPROCESS_POSTPROCESSOR_H
 
 #include <json/json.h>
-
 #include <vector>
-
 #include "alg_types.h"
 #include "core/infer/inferer.h"
 #include "core/object.h"
@@ -37,8 +35,7 @@ class IPostprocessor {
      * 解码本次 Forward 后的输出。`state` 给的是相对于"喂给本模型的那张图"
      * 的几何变换，用于把坐标映射回那张图。后续 Solution 层会再映射回原帧。
      */
-    virtual Status Apply(const IInferer& inferer, const PreprocessState& state,
-                         std::vector<Object>* out) = 0;
+    virtual Status Apply(const IInferer& inferer, const PreprocessState& state, std::vector<Object>* out) = 0;
 };
 
 }  // namespace alg

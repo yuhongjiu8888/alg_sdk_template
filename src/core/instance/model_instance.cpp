@@ -1,13 +1,10 @@
 #include "core/instance/model_instance.h"
-
+#include <sys/time.h>
 #include <algorithm>
-
 #include "backend/backend_factory.h"
 #include "core/logger.h"
 #include "core/preprocess/letterbox_preprocessor.h"
 #include "core/registry/postprocessor_registry.h"
-
-#include <sys/time.h>
 
 namespace alg {
 
@@ -24,9 +21,11 @@ Status ModelInstance::Init(const ModelInstanceConfig& cfg) {
     cfg_ = cfg;
 
     inferer_ = MakeInferer();
-    if (!inferer_) return ALG_E_BACKEND;
+    if (!inferer_)
+        return ALG_E_BACKEND;
     Status s = inferer_->Load(cfg.model_path);
-    if (s != ALG_OK) return s;
+    if (s != ALG_OK)
+        return s;
     if (inferer_->NumInputs() < 1 || inferer_->NumOutputs() < 1) {
         ALG_LOGE("[%s] inferer reports no I/O tensors", cfg.name.c_str());
         return ALG_E_BACKEND;
@@ -34,93 +33,91 @@ Status ModelInstance::Init(const ModelInstanceConfig& cfg) {
 
     if (inferer_->SupportsDynamicAipp()) {
         if (cfg.pre.engine == PreprocessEngine::kOpenCV) {
-            ALG_LOGE("[%s] dynamic-AIPP OM cannot use preprocess.engine=opencv",
-                     cfg.name.c_str());
+            ALG_LOGE("[%s] dynamic-AIPP OM cannot use preprocess.engine=opencv", cfg.name.c_str());
             return ALG_E_CONFIG;
         }
     } else {
         pre_.reset(new LetterboxPreprocessor());
         s = pre_->Configure(cfg.pre, inferer_->InputView(0));
-        if (s != ALG_OK) return s;
+        if (s != ALG_OK)
+            return s;
     }
 
     post_ = PostprocessorRegistry::Instance().Create(cfg.post_type);
     if (!post_) {
-        ALG_LOGE("[%s] postprocess type '%s' not registered", cfg.name.c_str(),
-                 cfg.post_type.c_str());
+        ALG_LOGE("[%s] postprocess type '%s' not registered", cfg.name.c_str(), cfg.post_type.c_str());
         return ALG_E_MODEL_NOT_FOUND;
     }
     s = post_->Configure(*inferer_, cfg.post_params);
-    if (s != ALG_OK) return s;
+    if (s != ALG_OK)
+        return s;
 
     initialized_ = true;
-    ALG_LOGI("[%s] model instance ready (post_type=%s, inputs=%d, outputs=%d)",
-             cfg.name.c_str(), cfg.post_type.c_str(),
+    ALG_LOGI("[%s] model instance ready (post_type=%s, inputs=%d, outputs=%d)", cfg.name.c_str(), cfg.post_type.c_str(),
              inferer_->NumInputs(), inferer_->NumOutputs());
     return ALG_OK;
 }
 
-Status ModelInstance::Run(const AlgImage& image, std::vector<Object>* out,
-                          SharedInputStaging* shared_staging) {
+Status ModelInstance::Run(const AlgImage& image, std::vector<Object>* out, SharedInputStaging* shared_staging) {
     return RunImpl(image, out, shared_staging);
 }
 
-Status ModelInstance::RunImpl(const AlgImage& image,
-                              std::vector<Object>* out,
-                              SharedInputStaging* shared_staging) {
-    if (!initialized_) return ALG_E_NOT_INITIALIZED;
-    if (!out) return ALG_E_INVALID_ARG;
+Status ModelInstance::RunImpl(const AlgImage& image, std::vector<Object>* out, SharedInputStaging* shared_staging) {
+    if (!initialized_)
+        return ALG_E_NOT_INITIALIZED;
+    if (!out)
+        return ALG_E_INVALID_ARG;
     out->clear();
 
     timeval t0, t1, t2, t3;
     const bool profile = ALG_LOG_IS_ENABLED(alg::log::Level::Info);
-    if (profile) gettimeofday(&t0, nullptr);
+    if (profile)
+        gettimeofday(&t0, nullptr);
 
     PreprocessState state;
     Status s;
-    const bool try_aipp = cfg_.pre.engine != PreprocessEngine::kOpenCV &&
-                          inferer_->SupportsDynamicAipp();
+    const bool try_aipp = cfg_.pre.engine != PreprocessEngine::kOpenCV && inferer_->SupportsDynamicAipp();
     if (try_aipp) {
         s = inferer_->PrepareDynamicAipp(image, cfg_.pre, state, shared_staging);
     } else if (cfg_.pre.engine == PreprocessEngine::kAipp) {
-        ALG_LOGE("[%s] preprocess.engine=aipp but dynamic AIPP is unavailable",
-                 cfg_.name.c_str());
+        ALG_LOGE("[%s] preprocess.engine=aipp but dynamic AIPP is unavailable", cfg_.name.c_str());
         return ALG_E_PREPROCESS;
     } else {
-        if (!pre_) return ALG_E_PREPROCESS;
+        if (!pre_)
+            return ALG_E_PREPROCESS;
         s = pre_->Apply(image, inferer_->InputView(0), state);
     }
-    if (s != ALG_OK) return s;
-    if (profile) gettimeofday(&t1, nullptr);
+    if (s != ALG_OK)
+        return s;
+    if (profile)
+        gettimeofday(&t1, nullptr);
 
     s = inferer_->Forward();
-    if (s != ALG_OK) return s;
-    if (profile) gettimeofday(&t2, nullptr);
+    if (s != ALG_OK)
+        return s;
+    if (profile)
+        gettimeofday(&t2, nullptr);
 
     s = post_->Apply(*inferer_, state, out);
-    if (s != ALG_OK) return s;
+    if (s != ALG_OK)
+        return s;
     if (profile) {
         gettimeofday(&t3, nullptr);
         const double pre_ms = Ms(t0, t1);
-        ALG_LOGI("[%s] pre=%.2fms infer=%.2fms post=%.2fms objects=%zu",
-                 cfg_.name.c_str(), pre_ms, Ms(t1, t2), Ms(t2, t3), out->size());
+        ALG_LOGI("[%s] pre=%.2fms infer=%.2fms post=%.2fms objects=%zu", cfg_.name.c_str(), pre_ms, Ms(t1, t2),
+                 Ms(t2, t3), out->size());
         if (state.aipp_profile_valid) {
-            const double measured_ms = state.aipp_setup_ms + state.aipp_bind_ms +
-                                       state.aipp_copy_ms + state.aipp_flush_ms +
-                                       state.aipp_ive_ms;
+            const double measured_ms =
+                state.aipp_setup_ms + state.aipp_bind_ms + state.aipp_copy_ms + state.aipp_flush_ms + state.aipp_ive_ms;
             const double other_ms = std::max(0.0, pre_ms - measured_ms);
             ALG_LOGI("[%s] aipp_pre setup=%.2fms bind=%.2fms copy=%.2fms "
                      "flush=%.2fms ive=%.2fms other=%.2fms reused=%d split=%d "
                      "external=%d ive_path=%d "
                      "bytes=%zu stride=%zu",
-                     cfg_.name.c_str(), state.aipp_setup_ms, state.aipp_bind_ms,
-                     state.aipp_copy_ms, state.aipp_flush_ms, state.aipp_ive_ms,
-                     other_ms,
-                     state.aipp_staging_reused ? 1 : 0,
-                     state.aipp_split_planes ? 1 : 0,
-                     state.aipp_external_zero_copy ? 1 : 0,
-                     state.aipp_ive_resize ? 1 : 0,
-                     state.aipp_staging_bytes, state.aipp_staging_stride);
+                     cfg_.name.c_str(), state.aipp_setup_ms, state.aipp_bind_ms, state.aipp_copy_ms,
+                     state.aipp_flush_ms, state.aipp_ive_ms, other_ms, state.aipp_staging_reused ? 1 : 0,
+                     state.aipp_split_planes ? 1 : 0, state.aipp_external_zero_copy ? 1 : 0,
+                     state.aipp_ive_resize ? 1 : 0, state.aipp_staging_bytes, state.aipp_staging_stride);
         }
     }
     return ALG_OK;

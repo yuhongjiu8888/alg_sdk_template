@@ -33,7 +33,7 @@
 
 公共接口支持 C / C++ 调用，在 C++ 中采用 `extern "C"` 声明。返回 `AlgStatus` 的函数以 `ALG_OK`（0）表示成功，负数表示错误，错误码见 2.2。
 
-除 `AlgSetLogLevel` 外，SDK 不保证接口线程安全；应用应串行调用实例接口，并同步管理输入图像和结果结构的访问。`AlgSetLogLevel` 的等级读写使用原子操作，可独立动态调整。
+除 `AlgSetLogLevel` 与 `AlgSetAippScaleMode` 外，SDK 不保证接口线程安全；应用应串行调用实例接口，并同步管理输入图像和结果结构的访问。这两个接口的内部状态读写使用原子操作，可独立动态调整。
 
 | 接口 | 功能 | 返回类型 |
 |------|------|----------|
@@ -41,6 +41,7 @@
 | `AlgDestroy` | 销毁实例 | `AlgStatus` |
 | `AlgRun` | 同步处理一帧图像 | `AlgStatus` |
 | `AlgSetLogLevel` | 动态设置 SDK 全局日志等级 | `AlgStatus` |
+| `AlgSetAippScaleMode` | 设置动态 AIPP 缩放的执行方（DV500） | `AlgStatus` |
 | `AlgVersion` | 获取版本信息 | `const char*` |
 | `AlgBackendName` | 获取运行后端名称 | `const char*` |
 
@@ -124,7 +125,38 @@ AlgSetLogLevel(ALG_LOG_INFO);  /* 输出 Error/Warn/Info */
 AlgSetLogLevel(ALG_LOG_OFF);   /* 关闭全部 SDK 日志 */
 ```
 
-### 1.5 AlgVersion
+### 1.5 AlgSetAippScaleMode
+
+```c
+AlgStatus AlgSetAippScaleMode(AlgAippScaleMode mode);
+```
+
+设置动态 AIPP 前处理中缩放的执行方。**仅对 Hi3519DV500 生效**，其他后端（含
+Hi3516CV610）忽略该设置。
+
+该芯片的 AIPP 只要参与缩放（`scf_switch=2`，BILINEAR 模式）就会每帧多出固定约
+128ms 的开销，与源图尺寸和缩放比例都无关；源图不缩放时只要 4.8ms。因此送进
+`AlgRun` 的帧必须已经是配置里 `preprocess.aipp_output_size` 的尺寸。
+
+| 参数 | 方向 | 说明 |
+|------|------|------|
+| `mode` | 输入 | `ALG_AIPP_SCALE_AUTO` 或 `ALG_AIPP_SCALE_EXTERNAL` |
+
+| 取值 | 含义 |
+|------|------|
+| `ALG_AIPP_SCALE_AUTO` | 默认。源尺寸不等于 `aipp_output_size` 时，由 SDK 内部用 libyuv 缩放到该尺寸后再交给 AIPP。调用方不必关心尺寸，代价约 11ms/帧 CPU。 |
+| `ALG_AIPP_SCALE_EXTERNAL` | 缩放由调用方完成（例如让 VPSS 直接输出该尺寸的通道）。SDK 不缩放，CPU 零开销；但若源尺寸不符会打印错误并返回 `ALG_E_PREPROCESS`，**不会降级**到 AIPP 缩放。 |
+
+可在 `AlgCreate` 前或运行期间调用，等级读写使用原子操作，便于按实机 CPU 余量动态切换。
+源图必须是 16:9（模型图内已固化 letterbox padding），否则前处理返回错误。
+
+```c
+AlgSetAippScaleMode(ALG_AIPP_SCALE_EXTERNAL);  /* VPSS 已按 aipp_output_size 出图 */
+/* ... AlgRun ... */
+AlgSetAippScaleMode(ALG_AIPP_SCALE_AUTO);      /* 交回 SDK 自己缩 */
+```
+
+### 1.6 AlgVersion
 
 ```c
 const char* AlgVersion(void);
@@ -134,7 +166,7 @@ const char* AlgVersion(void);
 
 无需创建实例即可调用。字符串由 SDK 持有，调用方不可修改或释放；动态库卸载后不可继续访问该指针。
 
-### 1.6 AlgBackendName
+### 1.7 AlgBackendName
 
 ```c
 const char* AlgBackendName(void);

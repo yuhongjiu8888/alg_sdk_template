@@ -57,6 +57,7 @@ set(ALG_CORE_SRCS
     src/core/object.cpp
     src/core/config/config.cpp
     src/core/log/alg_log.cpp
+    src/core/infer/aipp_scale.cpp
     src/core/registry/postprocessor_registry.cpp
     src/core/instance/model_instance.cpp
     src/core/preprocess/letterbox_preprocessor.cpp

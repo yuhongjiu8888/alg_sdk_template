@@ -10,11 +10,10 @@
 #ifndef ALG_BACKEND_MNN_MNN_INFERER_H
 #define ALG_BACKEND_MNN_MNN_INFERER_H
 
-#include "core/infer/inferer.h"
-
-#include <MNN/Interpreter.hpp>
 #include <MNN/MNNForwardType.h>
+#include <MNN/Interpreter.hpp>
 #include <MNN/Tensor.hpp>
+#include "core/infer/inferer.h"
 
 namespace alg {
 
@@ -31,8 +30,8 @@ class MnnInferer : public IInferer {
     Status BuildViews();
 
     MNN::Interpreter* interpreter_ = nullptr;
-    MNN::Session*     session_     = nullptr;
-    bool              initialized_ = false;
+    MNN::Session* session_ = nullptr;
+    bool initialized_ = false;
 };
 
 }  // namespace alg

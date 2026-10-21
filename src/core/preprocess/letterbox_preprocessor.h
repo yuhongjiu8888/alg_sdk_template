@@ -15,7 +15,6 @@
 #define ALG_CORE_PREPROCESS_LETTERBOX_PREPROCESSOR_H
 
 #include <opencv2/core/mat.hpp>
-
 #include "core/preprocess/preprocessor.h"
 
 namespace alg {
@@ -27,10 +26,10 @@ class LetterboxPreprocessor : public IPreprocessor {
 
   private:
     PreprocessConfig cfg_{};
-    int   net_w_ = 0;
-    int   net_h_ = 0;
-    bool  configured_ = false;
-    bool  need_norm_  = false;   /* 在 Configure 一次性算出，避免每帧判断 */
+    int net_w_ = 0;
+    int net_h_ = 0;
+    bool configured_ = false;
+    bool need_norm_ = false; /* 在 Configure 一次性算出，避免每帧判断 */
 
     /* 复用的中间缓存，避免每帧分配。 */
     cv::Mat resized_;

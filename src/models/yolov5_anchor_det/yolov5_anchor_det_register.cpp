@@ -3,8 +3,7 @@
 
 namespace alg {
 
-REGISTER_ALG_POST("yolov5_anchor_det", []{
-    return std::unique_ptr<IPostprocessor>(new Yolov5AnchorDetPostprocessor());
-});
+REGISTER_ALG_POST("yolov5_anchor_det",
+                  [] { return std::unique_ptr<IPostprocessor>(new Yolov5AnchorDetPostprocessor()); });
 
 }  // namespace alg

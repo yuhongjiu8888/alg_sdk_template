@@ -18,7 +18,7 @@
 复制整个目录：
 
 ```text
-resources/config/svp_acl/aipp/
+resources/config/svp_acl/cv610/aipp/
 ```
 
 其中检测模型使用：
@@ -121,12 +121,12 @@ speedsignnet_aipp.om
 license_detection_aipp.om
 ```
 
-复制到 SDK 的 `resources/model/svp_acl/` 后，修改对应 JSON 的 `model_path`：
+复制到 SDK 的 `resources/model/svp_acl/cv610/` 后，修改对应 JSON 的 `model_path`：
 
 | 模型 | 需要修改的配置 |
 |---|---|
-| `speedsignnet_aipp.om` | `resources/config/svp_acl/speed_limit.json`、`all.json` |
-| `license_detection_aipp.om` | `resources/config/svp_acl/license_plate.json`、`all.json` |
+| `speedsignnet_aipp.om` | `resources/config/svp_acl/cv610/speed_limit.json`、`all.json` |
+| `license_detection_aipp.om` | `resources/config/svp_acl/cv610/license_plate.json`、`all.json` |
 
 配置中已有以下运行参数，不要删除或改成 VPSS 缩放输入：
 

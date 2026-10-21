@@ -78,11 +78,15 @@ flowchart TD
 
 XMM 后端封装 xmedia_cl 与 MMZ 管理，SVP ACL 后端管理模型及辅助缓冲，MNN 后端提供本地执行。`MakeInferer()` 和 `BackendName()` 由构建配置选入对应实现，一份动态库使用一个后端。
 
+SVP ACL 后端由两个 backend token 复用同一份源码：`svp_acl_cv610`（Hi3516CV610，32 位 arm-musleabi）和 `svp_acl_dv500`（Hi3519DV500，aarch64）。两者差异全部落在构建配置（工具链、ACLlib、OpenCV、securec 路径）和由 CMake 派生的芯片特性宏上，C++ 里没有按芯片分支。DV500 的 acllib 额外需要 `libss_mpi_km.a`（提供 `ot_mpi_km_*` / `ot_mpi_klad_*`）。
+
 ### 3.3 IPreprocessor
 
 [LetterboxPreprocessor](src/core/preprocess/letterbox_preprocessor.cpp) 实现通用前处理。`Configure` 检查网络尺寸、布局和数据类型，`Apply` 将图像写入模型输入并返回 `PreprocessState`，记录缩放比例、填充偏移和模型本次输入图像的尺寸。
 
 海思动态 AIPP 模型通过 `AlgRun` 接收原分辨率 VPSS NV12/NV21 帧。连续的非 cached MMZ/VB 映射直接绑定到 ACL data buffer，不复制、不 flush；Y 与 UV/VU 分离且提供物理地址时，IVE 直接读取两个源平面，缩放到模型有效区并写入一块 Y/UV 连续的非 cached MMZ，ACL 随后借用这块虚拟地址。输出 MMZ 和 resize 辅助内存在模型实例生命周期内复用，帧循环不重复分配。普通内存测试输入仍可由 libyuv 合并到 ACL staging。CV610 AIPP 负责 CSC 和归一化；无法生成值为 114 的大范围 padding，因此检测 OM 在图首用常量 `Pad` 补齐有效区。默认格式是 NV21，运行时同时支持 NV12。
+
+IVE 与 libyuv 两条路径分别由 `ALG_SVP_IVE_PREPROCESS`、`ALG_SVP_LIBYUV_FALLBACK` 控制，后者服务于“分平面且无物理地址”的 AIPP staging，按芯片选取对应架构的预编译库（`libyuv/hi3516` 或 `libyuv/3519dv500`）。DV500 的 acllib 不含 SVP/IVE，因此该目标只关闭 IVE：连续 NV12/NV21 走零拷贝 AIPP，分平面输入由 libyuv 合并后交给 AIPP 缩放。
 
 支持 `stretch`、`letterbox_tl`、`letterbox_tl_fit` 和 `letterbox_center`。UINT8 输入直接写入像素，FLOAT32 的有效图像区域可按 `(x-mean)*scale/std` 归一化；FLOAT32 填充区域直接使用 `pad_value`。
 

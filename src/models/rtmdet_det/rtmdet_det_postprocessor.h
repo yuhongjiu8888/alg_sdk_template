@@ -31,7 +31,6 @@
 #define ALG_MODELS_RTMDET_DET_RTMDET_DET_POSTPROCESSOR_H
 
 #include <vector>
-
 #include "core/postprocess/nms.h"
 #include "core/postprocess/postprocessor.h"
 
@@ -40,30 +39,29 @@ namespace alg {
 class RtmdetDetPostprocessor : public IPostprocessor {
   public:
     Status Configure(const IInferer& inferer, const Json::Value& params) override;
-    Status Apply(const IInferer& inferer, const PreprocessState& state,
-                 std::vector<Object>* out) override;
+    Status Apply(const IInferer& inferer, const PreprocessState& state, std::vector<Object>* out) override;
 
   private:
-    int   num_classes_    = 1;
-    int   bbox_channels_  = 4;
+    int num_classes_ = 1;
+    int bbox_channels_ = 4;
     float conf_threshold_ = 0.25f;
-    float nms_threshold_  = 0.45f;
-    float min_bbox_size_  = 4.0f;
-    int   max_det_        = 2;
+    float nms_threshold_ = 0.45f;
+    float min_bbox_size_ = 4.0f;
+    int max_det_ = 2;
     float conf_logit_threshold_ = 0.0f;
     std::string category_;
-    bool  configured_     = false;
+    bool configured_ = false;
 
-    int input_w_ = 0;   /* 模型输入宽（Configure 时从 inferer.InputView(0) 读） */
+    int input_w_ = 0; /* 模型输入宽（Configure 时从 inferer.InputView(0) 读） */
     int input_h_ = 0;
 
-    std::vector<int> strides_;       /* level → stride（默认 8/16/32） */
-    std::vector<int> cls_idx_;       /* level → cls 输出张量索引 */
-    std::vector<int> reg_idx_;       /* level → reg 输出张量索引 */
+    std::vector<int> strides_; /* level → stride（默认 8/16/32） */
+    std::vector<int> cls_idx_; /* level → cls 输出张量索引 */
+    std::vector<int> reg_idx_; /* level → reg 输出张量索引 */
 
     std::vector<Proposal> props_;
     std::vector<Proposal> filtered_;
-    NmsScratch            nms_scratch_;
+    NmsScratch nms_scratch_;
 };
 
 }  // namespace alg

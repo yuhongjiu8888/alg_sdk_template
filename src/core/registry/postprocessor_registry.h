@@ -17,7 +17,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-
 #include "core/postprocess/postprocessor.h"
 
 namespace alg {
@@ -58,9 +57,8 @@ struct PostRegistrar {
  * 在每个模型 _register.cpp 里调用一次。`__COUNTER__` 保证名字唯一；
  * `used` 防止 release 链接器 --gc-sections 把它当成"没人引用"砍掉。
  */
-#define REGISTER_ALG_POST(TYPE, BUILDER)                                                          \
-    static ::alg::detail::PostRegistrar ALG_USED ALG_PASTE(_alg_post_reg_, __COUNTER__)(TYPE,     \
-                                                                                       BUILDER)
+#define REGISTER_ALG_POST(TYPE, BUILDER)                                                                               \
+    static ::alg::detail::PostRegistrar ALG_USED ALG_PASTE(_alg_post_reg_, __COUNTER__)(TYPE, BUILDER)
 
 }  // namespace alg
 

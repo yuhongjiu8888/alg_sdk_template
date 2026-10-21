@@ -3,8 +3,6 @@
 
 namespace alg {
 
-REGISTER_ALG_POST("rtmdet_det", []{
-    return std::unique_ptr<IPostprocessor>(new RtmdetDetPostprocessor());
-});
+REGISTER_ALG_POST("rtmdet_det", [] { return std::unique_ptr<IPostprocessor>(new RtmdetDetPostprocessor()); });
 
 }  // namespace alg

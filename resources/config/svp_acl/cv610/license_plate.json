@@ -23,14 +23,28 @@
   },
   "models": {
     "det_cfg": {
-      "model_path": "../resources/model/svp_acl/license_detection_aipp.om",
+      "model_path": "../resources/model/svp_acl/cv610/license_detection_aipp.om",
       "preprocess": {
-        "input_size": [640, 448],
+        "input_size": [
+          640,
+          448
+        ],
         "engine": "aipp",
         "input_format": "auto",
-        "max_input_size": [1920, 1080],
-        "aipp_output_size": [640, 360],
-        "aipp_graph_padding": [0, 0, 0, 88],
+        "max_input_size": [
+          1920,
+          1080
+        ],
+        "aipp_output_size": [
+          640,
+          360
+        ],
+        "aipp_graph_padding": [
+          0,
+          0,
+          0,
+          88
+        ],
         "color": "RGB",
         "resize": "letterbox_tl_fit",
         "layout": "NCHW",
@@ -40,8 +54,15 @@
         "type": "rtmdet_det",
         "num_classes": 1,
         "bbox_channels": 4,
-        "strides": [8, 16, 32],
-        "input_size": [640, 448],
+        "strides": [
+          8,
+          16,
+          32
+        ],
+        "input_size": [
+          640,
+          448
+        ],
         "conf_threshold": 0.25,
         "nms_threshold": 0.45,
         "min_bbox_size": 4.0,
@@ -49,9 +70,12 @@
       }
     },
     "rec_cfg": {
-      "model_path": "../resources/model/svp_acl/license_recognizer.om",
+      "model_path": "../resources/model/svp_acl/cv610/license_recognizer.om",
       "preprocess": {
-        "input_size": [256, 64],
+        "input_size": [
+          256,
+          64
+        ],
         "engine": "auto",
         "color": "RGB",
         "resize": "letterbox_center",

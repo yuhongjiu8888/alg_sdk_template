@@ -21,10 +21,9 @@
 #include <cstddef>
 #include <string>
 #include <vector>
-
+#include "core/preprocess/preprocessor.h"
 #include "core/status.h"
 #include "core/tensor.h"
-#include "core/preprocess/preprocessor.h"
 
 namespace alg {
 
@@ -37,22 +36,22 @@ namespace alg {
  * staging 缓冲仍由第一个 inferer 持有。
  */
 struct SharedInputStaging {
-    const void*    source_plane[2] = {};
-    int            source_width = 0;
-    int            source_height = 0;
-    int            source_stride[2] = {};
+    const void* source_plane[2] = {};
+    int source_width = 0;
+    int source_height = 0;
+    int source_stride[2] = {};
     AlgPixelFormat source_format = ALG_PIX_BGR;
-    int            source_data_len[2] = {};
-    bool           source_uses_separate_planes = false;
+    int source_data_len[2] = {};
+    bool source_uses_separate_planes = false;
 
     int staged_width = 0;
     int staged_height = 0;
 
-    void*  data = nullptr;
+    void* data = nullptr;
     size_t capacity = 0;
     size_t data_size = 0;
     size_t row_stride = 0;
-    bool   flushed = false;
+    bool flushed = false;
 
     void Reset() { *this = SharedInputStaging{}; }
 };
@@ -69,10 +68,7 @@ class IInferer {
 
     /** 可选的芯片动态图像前处理；默认后端不支持。 */
     virtual bool SupportsDynamicAipp() const { return false; }
-    virtual Status PrepareDynamicAipp(const AlgImage&,
-                                      const PreprocessConfig&,
-                                      PreprocessState&,
-                                      SharedInputStaging*) {
+    virtual Status PrepareDynamicAipp(const AlgImage&, const PreprocessConfig&, PreprocessState&, SharedInputStaging*) {
         return ALG_E_BACKEND;
     }
 

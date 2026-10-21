@@ -3,8 +3,6 @@
 
 namespace alg {
 
-REGISTER_ALG_POST("lprnet_rec", []{
-    return std::unique_ptr<IPostprocessor>(new LprnetRecPostprocessor());
-});
+REGISTER_ALG_POST("lprnet_rec", [] { return std::unique_ptr<IPostprocessor>(new LprnetRecPostprocessor()); });
 
 }  // namespace alg

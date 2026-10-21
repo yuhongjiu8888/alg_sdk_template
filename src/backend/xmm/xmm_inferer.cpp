@@ -1,21 +1,19 @@
 #include "backend/xmm/xmm_inferer.h"
-
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
 #include "core/logger.h"
 
 #define ALIGN_BYTES 8
 #define ALIGN_UP(A, B) ((((A) % (B)) == 0) ? (A) : ((A) + (B) - ((A) % (B))))
 
-#define XMM_TRY(call, msg)                                              \
-    do {                                                                \
-        xmedia_cl_s32 _r = (call);                                      \
-        if (_r != XMEDIA_CL_SUCCESS) {                                  \
-            ALG_LOGE("%s failed, ret=%d", msg, _r);                     \
-            return ALG_E_BACKEND;                                       \
-        }                                                               \
+#define XMM_TRY(call, msg)                                                                                             \
+    do {                                                                                                               \
+        xmedia_cl_s32 _r = (call);                                                                                     \
+        if (_r != XMEDIA_CL_SUCCESS) {                                                                                 \
+            ALG_LOGE("%s failed, ret=%d", msg, _r);                                                                    \
+            return ALG_E_BACKEND;                                                                                      \
+        }                                                                                                              \
     } while (0)
 
 namespace alg {
@@ -24,12 +22,18 @@ namespace {
 
 DataType MapDtype(int xmm_dtype) {
     switch (xmm_dtype) {
-        case XMEDIA_CL_UINT8:   return DataType::kU8;
-        case XMEDIA_CL_INT8:    return DataType::kI8;
-        case XMEDIA_CL_INT16:   return DataType::kI16;
-        case XMEDIA_CL_UINT16:  return DataType::kU16;
-        case XMEDIA_CL_FP16:    return DataType::kF16;
-        case XMEDIA_CL_INT32:   return DataType::kI32;
+        case XMEDIA_CL_UINT8:
+            return DataType::kU8;
+        case XMEDIA_CL_INT8:
+            return DataType::kI8;
+        case XMEDIA_CL_INT16:
+            return DataType::kI16;
+        case XMEDIA_CL_UINT16:
+            return DataType::kU16;
+        case XMEDIA_CL_FP16:
+            return DataType::kF16;
+        case XMEDIA_CL_INT32:
+            return DataType::kI32;
         default:
             /* 静默落到 kU8 会把 FP16 等当成单字节，按 (raw-zp)*scale 解出全是
              * 垃圾值 → 后处理 obj 全低 → 一个框都检不出。宁可吵也别静默。 */
@@ -40,7 +44,10 @@ DataType MapDtype(int xmm_dtype) {
 
 int XmmMmzAllocCached(xmedia_u64* phy, void** vir, const char* name, unsigned size) {
     *phy = xmedia_mmz_alloc(NULL, name, size);
-    if (*phy == 0) { ALG_LOGE("mmz_alloc(%s, %u) failed", name, size); return -1; }
+    if (*phy == 0) {
+        ALG_LOGE("mmz_alloc(%s, %u) failed", name, size);
+        return -1;
+    }
     *vir = xmedia_mmz_map(*phy, size, 1);
     if (*vir == NULL) {
         xmedia_mmz_free(*phy);
@@ -52,8 +59,10 @@ int XmmMmzAllocCached(xmedia_u64* phy, void** vir, const char* name, unsigned si
 }
 
 void XmmMmzFree(xmedia_u64& phy, void*& vir) {
-    if (vir) xmedia_mmz_unmap(vir);
-    if (phy) xmedia_mmz_free(phy);
+    if (vir)
+        xmedia_mmz_unmap(vir);
+    if (phy)
+        xmedia_mmz_free(phy);
     vir = nullptr;
     phy = 0;
 }
@@ -65,14 +74,18 @@ int AllocInoutInfo(xmedia_cl_tensor_info_inout* io) {
     io->tensor = static_cast<xmedia_cl_tensor*>(calloc(io->num, sizeof(xmedia_cl_tensor)));
     io->current_batch = static_cast<xmedia_cl_u32*>(calloc(io->num, sizeof(xmedia_cl_u32)));
     io->tensor_batch = static_cast<xmedia_cl_tensor_batch*>(calloc(io->num, sizeof(xmedia_cl_tensor_batch)));
-    if (!io->tensor || !io->current_batch || !io->tensor_batch) return XMEDIA_CL_OUT_OF_HOST_MEMORY;
+    if (!io->tensor || !io->current_batch || !io->tensor_batch)
+        return XMEDIA_CL_OUT_OF_HOST_MEMORY;
     return XMEDIA_CL_SUCCESS;
 }
 
 void FreeInoutInfo(xmedia_cl_tensor_info_inout* io) {
-    free(io->tensor);          io->tensor = nullptr;
-    free(io->current_batch);   io->current_batch = nullptr;
-    free(io->tensor_batch);    io->tensor_batch = nullptr;
+    free(io->tensor);
+    io->tensor = nullptr;
+    free(io->current_batch);
+    io->current_batch = nullptr;
+    free(io->tensor_batch);
+    io->tensor_batch = nullptr;
 }
 
 /*
@@ -84,30 +97,53 @@ void FreeInoutInfo(xmedia_cl_tensor_info_inout* io) {
  * 注：端侧推理为单线程顺序执行，这里不加锁。
  */
 struct XmmRuntime {
-    int                   refcount = 0;
-    xmedia_cl_device_id*  devices = nullptr;
-    xmedia_cl_u32         num_devices = 0;
-    xmedia_cl_context     context = nullptr;
+    int refcount = 0;
+    xmedia_cl_device_id* devices = nullptr;
+    xmedia_cl_u32 num_devices = 0;
+    xmedia_cl_context context = nullptr;
 
     xmedia_cl_s32 Acquire() {
-        if (refcount > 0) { ++refcount; return XMEDIA_CL_SUCCESS; }
+        if (refcount > 0) {
+            ++refcount;
+            return XMEDIA_CL_SUCCESS;
+        }
 
         xmedia_cl_s32 ret = xmedia_sys_init(XMEDIA_NULL);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("sys_init=%d", ret); return ret; }
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("sys_init=%d", ret);
+            return ret;
+        }
         ret = xmedia_cl_init();
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("cl_init=%d", ret); xmedia_sys_exit(); return ret; }
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("cl_init=%d", ret);
+            xmedia_sys_exit();
+            return ret;
+        }
 
         ret = xmedia_cl_get_device_ids(XMEDIA_CL_DEVICE_ALL, NULL, &num_devices);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_device_ids(count)=%d", ret); goto fail_cl; }
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("get_device_ids(count)=%d", ret);
+            goto fail_cl;
+        }
         devices = static_cast<xmedia_cl_device_id*>(calloc(num_devices, sizeof(xmedia_cl_device_id)));
-        if (!devices) { ALG_LOGE("calloc devices failed"); goto fail_cl; }
+        if (!devices) {
+            ALG_LOGE("calloc devices failed");
+            goto fail_cl;
+        }
         ret = xmedia_cl_get_device_ids(XMEDIA_CL_DEVICE_ALL, devices, &num_devices);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_device_ids=%d", ret); goto fail_dev; }
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("get_device_ids=%d", ret);
+            goto fail_dev;
+        }
 
         xmedia_cl_s32 err;
         err = 0;
         context = xmedia_cl_create_context(num_devices, devices, &err);
-        if (err != XMEDIA_CL_SUCCESS) { ALG_LOGE("create_context=%d", err); ret = err; goto fail_dev; }
+        if (err != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("create_context=%d", err);
+            ret = err;
+            goto fail_dev;
+        }
 
         refcount = 1;
         return XMEDIA_CL_SUCCESS;
@@ -122,9 +158,14 @@ struct XmmRuntime {
     }
 
     void Release() {
-        if (refcount <= 0) return;
-        if (--refcount > 0) return;
-        if (context) { xmedia_cl_release_context(context); context = nullptr; }
+        if (refcount <= 0)
+            return;
+        if (--refcount > 0)
+            return;
+        if (context) {
+            xmedia_cl_release_context(context);
+            context = nullptr;
+        }
         if (devices) {
             xmedia_cl_release_device_ids(devices, &num_devices);
             free(devices);
@@ -144,28 +185,36 @@ XmmInferer::XmmInferer() {
     memset(&cl_output_, 0, sizeof(cl_output_));
 }
 
-XmmInferer::~XmmInferer() { FreeAll(); }
+XmmInferer::~XmmInferer() {
+    FreeAll();
+}
 
 void XmmInferer::FreeAll() {
-    if (!acquired_ && !graph_ && !vir_input_ && !vir_output_ &&
-        !vir_workspace_ && !vir_weight_) {
+    if (!acquired_ && !graph_ && !vir_input_ && !vir_output_ && !vir_workspace_ && !vir_weight_) {
         return;
     }
     FreeInoutInfo(&cl_input_);
     FreeInoutInfo(&cl_output_);
     /* graph 在共享 context 仍存活时卸载（与 demo session_release 顺序一致）。 */
-    if (graph_) { xmedia_cl_graph_unload(graph_); graph_ = nullptr; }
+    if (graph_) {
+        xmedia_cl_graph_unload(graph_);
+        graph_ = nullptr;
+    }
     XmmMmzFree(phy_workspace_, vir_workspace_);
     XmmMmzFree(phy_weight_, vir_weight_);
     XmmMmzFree(phy_input_, vir_input_);
     XmmMmzFree(phy_output_, vir_output_);
     /* 只在最后一个 inferer 析构时才真正 release context + cl/sys uninit。 */
-    if (acquired_) { g_rt.Release(); acquired_ = false; }
+    if (acquired_) {
+        g_rt.Release();
+        acquired_ = false;
+    }
     initialized_ = false;
 }
 
 Status XmmInferer::Load(const std::string& model_path) {
-    if (initialized_) return ALG_E_INVALID_ARG;
+    if (initialized_)
+        return ALG_E_INVALID_ARG;
 
     /* 取共享运行时（首个实例真正 init，其余只 ++refcount）。 */
     if (g_rt.Acquire() != XMEDIA_CL_SUCCESS) {
@@ -179,41 +228,64 @@ Status XmmInferer::Load(const std::string& model_path) {
     do {
         xmedia_cl_u32 worksize = 0, weightsize = 0;
         ret = xmedia_cl_graph_querysize_from_file(model_path.c_str(), &worksize, &weightsize);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("querysize=%d", ret); break; }
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("querysize=%d", ret);
+            break;
+        }
 
-        if (worksize && XmmMmzAllocCached(&phy_workspace_, &vir_workspace_, "npu_ws", worksize) != 0) break;
-        if (weightsize && XmmMmzAllocCached(&phy_weight_, &vir_weight_, "npu_wt", weightsize) != 0) break;
+        if (worksize && XmmMmzAllocCached(&phy_workspace_, &vir_workspace_, "npu_ws", worksize) != 0)
+            break;
+        if (weightsize && XmmMmzAllocCached(&phy_weight_, &vir_weight_, "npu_wt", weightsize) != 0)
+            break;
 
         /* 两个 graph 共享同一个 context（&g_rt.context）——与 demo 一致。 */
-        ret = xmedia_cl_graph_loadmodel_from_file_withmem(&g_rt.context, model_path.c_str(),
-                                                          vir_workspace_, worksize,
+        ret = xmedia_cl_graph_loadmodel_from_file_withmem(&g_rt.context, model_path.c_str(), vir_workspace_, worksize,
                                                           vir_weight_, weightsize, &graph_);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("loadmodel=%d", ret); break; }
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("loadmodel=%d", ret);
+            break;
+        }
 
         /* Inputs: two-pass query. */
         ret = xmedia_cl_graph_get_input(graph_, 0, &cl_input_);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_input(count)=%d", ret); break; }
-        if (AllocInoutInfo(&cl_input_) != XMEDIA_CL_SUCCESS) break;
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("get_input(count)=%d", ret);
+            break;
+        }
+        if (AllocInoutInfo(&cl_input_) != XMEDIA_CL_SUCCESS)
+            break;
         ret = xmedia_cl_graph_get_input(graph_, cl_input_.num, &cl_input_);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_input=%d", ret); break; }
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("get_input=%d", ret);
+            break;
+        }
 
         /* Outputs: two-pass query. */
         ret = xmedia_cl_graph_get_output(graph_, 0, &cl_output_);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_output(count)=%d", ret); break; }
-        if (AllocInoutInfo(&cl_output_) != XMEDIA_CL_SUCCESS) break;
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("get_output(count)=%d", ret);
+            break;
+        }
+        if (AllocInoutInfo(&cl_output_) != XMEDIA_CL_SUCCESS)
+            break;
         ret = xmedia_cl_graph_get_output(graph_, cl_output_.num, &cl_output_);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("get_output=%d", ret); break; }
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("get_output=%d", ret);
+            break;
+        }
 
         /* MMZ allocations for I/O. */
         input_total_size_ = 0;
         for (xmedia_cl_u32 i = 0; i < cl_input_.num; ++i)
             input_total_size_ += ALIGN_UP(cl_input_.tensor[i].size, ALIGN_BYTES);
-        if (XmmMmzAllocCached(&phy_input_, &vir_input_, "npu_in", input_total_size_) != 0) break;
+        if (XmmMmzAllocCached(&phy_input_, &vir_input_, "npu_in", input_total_size_) != 0)
+            break;
 
         output_total_size_ = 0;
         for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i)
             output_total_size_ += ALIGN_UP(cl_output_.tensor[i].size, ALIGN_BYTES);
-        if (XmmMmzAllocCached(&phy_output_, &vir_output_, "npu_out", output_total_size_) != 0) break;
+        if (XmmMmzAllocCached(&phy_output_, &vir_output_, "npu_out", output_total_size_) != 0)
+            break;
 
         {
             char* base = static_cast<char*>(vir_input_);
@@ -232,13 +304,17 @@ Status XmmInferer::Load(const std::string& model_path) {
         }
 
         ret = xmedia_cl_graph_set_inout(graph_, &cl_input_, &cl_output_);
-        if (ret != XMEDIA_CL_SUCCESS) { ALG_LOGE("set_inout=%d", ret); break; }
+        if (ret != XMEDIA_CL_SUCCESS) {
+            ALG_LOGE("set_inout=%d", ret);
+            break;
+        }
 
         initialized_ = true;
         status = BuildViews();
     } while (false);
 
-    if (status != ALG_OK) FreeAll();
+    if (status != ALG_OK)
+        FreeAll();
     return status;
 }
 
@@ -260,8 +336,10 @@ Status XmmInferer::BuildViews() {
     };
     input_views_.clear();
     output_views_.clear();
-    for (xmedia_cl_u32 i = 0; i < cl_input_.num; ++i)  input_views_.push_back(fill(cl_input_.tensor[i]));
-    for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) output_views_.push_back(fill(cl_output_.tensor[i]));
+    for (xmedia_cl_u32 i = 0; i < cl_input_.num; ++i)
+        input_views_.push_back(fill(cl_input_.tensor[i]));
+    for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i)
+        output_views_.push_back(fill(cl_output_.tensor[i]));
 
     /* —— 一次性诊断：板端检不出框时先确认 NPU tensor 元数据 ——
      * 重点看 output：
@@ -281,8 +359,8 @@ Status XmmInferer::BuildViews() {
                     pn += snprintf(pch + pn, sizeof(pch) - pn, "%u,", t.shape.pch[d]);
                 ALG_LOGD("[xmm-diag] %s[%u] tid=%u name=%s type=%d ndims=%u dims=[%s] pch=[%s] "
                          "scale=%g zp=%d size=%u addr=%p",
-                         tag, i, t.tensor_id, t.name ? (const char*)t.name : "", (int)t.shape.type,
-                         t.shape.ndims, dims, pch, t.quant.scale, (int)t.quant.zp, t.size, t.addr);
+                         tag, i, t.tensor_id, t.name ? (const char*)t.name : "", (int)t.shape.type, t.shape.ndims, dims,
+                         pch, t.quant.scale, (int)t.quant.zp, t.size, t.addr);
             }
         };
         dump("in", cl_input_);
@@ -292,7 +370,8 @@ Status XmmInferer::BuildViews() {
 }
 
 Status XmmInferer::Forward() {
-    if (!initialized_) return ALG_E_NOT_INITIALIZED;
+    if (!initialized_)
+        return ALG_E_NOT_INITIALIZED;
 
     xmedia_mmz_flush_cache(phy_input_, vir_input_, input_total_size_);
 
@@ -308,14 +387,15 @@ Status XmmInferer::Forward() {
             unsigned long sum = 0;
             for (xmedia_u32 i = 0; i < input_total_size_; ++i) {
                 int v = p[i];
-                if (v < mn) mn = v;
-                if (v > mx) mx = v;
+                if (v < mn)
+                    mn = v;
+                if (v > mx)
+                    mx = v;
                 sum += v;
             }
             ALG_LOGD("[in-diag] input bytes: size=%u min=%d max=%d mean=%.1f first8=%d,%d,%d,%d,%d,%d,%d,%d",
-                     input_total_size_, mn, mx,
-                     input_total_size_ ? (double)sum / input_total_size_ : 0.0,
-                     p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+                     input_total_size_, mn, mx, input_total_size_ ? (double)sum / input_total_size_ : 0.0, p[0], p[1],
+                     p[2], p[3], p[4], p[5], p[6], p[7]);
         }
     }
 
@@ -336,23 +416,22 @@ Status XmmInferer::Forward() {
      * 若 addr 跟 Load 时不同 → NPU 动态改了输出地址（非拷贝模式）。确认后删除。 */
     {
         static int dumped_out = 0;
-        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) &&
-            dumped_out < 3 && cl_output_.num > 1) {
+        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && dumped_out < 3 && cl_output_.num > 1) {
             ++dumped_out;
             for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
                 const xmedia_cl_tensor& t = cl_output_.tensor[i];
                 const uint8_t* b = static_cast<const uint8_t*>(t.addr);
-                ALG_LOGD("[out-diag] out[%u] tid=%u addr=%p size=%u raw8=%d,%d,%d,%d,%d,%d,%d,%d",
-                         i, t.tensor_id, t.addr, t.size,
-                         b ? b[0] : -1, b ? b[1] : -1, b ? b[2] : -1, b ? b[3] : -1,
-                         b ? b[4] : -1, b ? b[5] : -1, b ? b[6] : -1, b ? b[7] : -1);
+                ALG_LOGD("[out-diag] out[%u] tid=%u addr=%p size=%u raw8=%d,%d,%d,%d,%d,%d,%d,%d", i, t.tensor_id,
+                         t.addr, t.size, b ? b[0] : -1, b ? b[1] : -1, b ? b[2] : -1, b ? b[3] : -1, b ? b[4] : -1,
+                         b ? b[5] : -1, b ? b[6] : -1, b ? b[7] : -1);
             }
             /* dump out[0] 那一页开头 48 字节：若 head1/head2 的真实数据紧挨 head0
              * 之后 → NPU 从 base 连续写（SDK 可按偏移读）；若后面是 padding/常数
              * → NPU 只产出 head0（export 裁了另两路）。 */
             const uint8_t* p0 = static_cast<const uint8_t*>(cl_output_.tensor[0].addr);
             if (p0) {
-                char hex[256]; int n = 0;
+                char hex[256];
+                int n = 0;
                 for (int k = 0; k < 48; ++k)
                     n += snprintf(hex + n, sizeof(hex) - n, "%d,", p0[k]);
                 ALG_LOGD("[out-diag] out[0] page first48 = %s", hex);

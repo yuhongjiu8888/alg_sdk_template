@@ -34,6 +34,15 @@ ALG_API AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* res
  */
 ALG_API AlgStatus AlgSetLogLevel(AlgLogLevel level);
 
+/**
+ * 设置动态 AIPP 前处理里缩放的执行方，可在 AlgCreate 前或运行期间调用，
+ * 便于按实机 CPU 余量动态切换。非法枚举值返回 ALG_E_INVALID_ARG。
+ *
+ * 只对 Hi3519DV500 生效（见 alg_types.h 里 AlgAippScaleMode 的说明）；
+ * 其他后端与 cv610 后端忽略该设置，行为不受影响。
+ */
+ALG_API AlgStatus AlgSetAippScaleMode(AlgAippScaleMode mode);
+
 /** "alg_sdk.v3.0.0+<backend>"，方便日志/崩溃定位。 */
 ALG_API const char* AlgVersion(void);
 

@@ -12,7 +12,6 @@
 #define INCLUDE_LIBYUV_CONVERT_FROM_H_
 
 #include <stdint.h>
-
 #include "libyuv/basic_types.h"
 #include "libyuv/rotate.h"
 
@@ -93,12 +92,7 @@ int I420ToI444(const uint8_t* src_y,
 
 // Copy to I400. Source can be I420, I422, I444, I400, NV12 or NV21.
 LIBYUV_API
-int I400Copy(const uint8_t* src_y,
-             int src_stride_y,
-             uint8_t* dst_y,
-             int dst_stride_y,
-             int width,
-             int height);
+int I400Copy(const uint8_t* src_y, int src_stride_y, uint8_t* dst_y, int dst_stride_y, int width, int height);
 
 LIBYUV_API
 int I420ToNV12(const uint8_t* src_y,

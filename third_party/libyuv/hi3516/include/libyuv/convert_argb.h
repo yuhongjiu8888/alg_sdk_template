@@ -13,9 +13,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-
 #include "libyuv/basic_types.h"
-
 #include "libyuv/rotate.h"  // For enum RotationMode.
 #include "libyuv/scale.h"   // For enum FilterMode.
 
@@ -50,52 +48,37 @@ LIBYUV_API extern const struct YuvConstants kYvuV2020Constants;  // BT.2020 full
 #define kYuv2020ConstantsVU kYvu2020Constants
 #define kYuvV2020ConstantsVU kYvuV2020Constants
 
-#define NV12ToABGRMatrix(a, b, c, d, e, f, g, h, i) \
-  NV21ToARGBMatrix(a, b, c, d, e, f, g##VU, h, i)
-#define NV21ToABGRMatrix(a, b, c, d, e, f, g, h, i) \
-  NV12ToARGBMatrix(a, b, c, d, e, f, g##VU, h, i)
-#define NV12ToRAWMatrix(a, b, c, d, e, f, g, h, i) \
-  NV21ToRGB24Matrix(a, b, c, d, e, f, g##VU, h, i)
-#define NV21ToRAWMatrix(a, b, c, d, e, f, g, h, i) \
-  NV12ToRGB24Matrix(a, b, c, d, e, f, g##VU, h, i)
-#define I010ToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k) \
-  I010ToARGBMatrix(a, b, e, f, c, d, g, h, i##VU, j, k)
-#define I210ToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k) \
-  I210ToARGBMatrix(a, b, e, f, c, d, g, h, i##VU, j, k)
-#define I410ToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k) \
-  I410ToARGBMatrix(a, b, e, f, c, d, g, h, i##VU, j, k)
-#define I010ToAB30Matrix(a, b, c, d, e, f, g, h, i, j, k) \
-  I010ToAR30Matrix(a, b, e, f, c, d, g, h, i##VU, j, k)
-#define I210ToAB30Matrix(a, b, c, d, e, f, g, h, i, j, k) \
-  I210ToAR30Matrix(a, b, e, f, c, d, g, h, i##VU, j, k)
-#define I410ToAB30Matrix(a, b, c, d, e, f, g, h, i, j, k) \
-  I410ToAR30Matrix(a, b, e, f, c, d, g, h, i##VU, j, k)
-#define I012ToAB30Matrix(a, b, c, d, e, f, g, h, i, j, k) \
-  I012ToAR30Matrix(a, b, e, f, c, d, g, h, i##VU, j, k)
-#define I420AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n) \
-  I420AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
-#define I422AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n) \
-  I422AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
-#define I444AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n) \
-  I444AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
-#define I010AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n) \
-  I010AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
-#define I210AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n) \
-  I210AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
-#define I410AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n) \
-  I410AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
+#define NV12ToABGRMatrix(a, b, c, d, e, f, g, h, i) NV21ToARGBMatrix(a, b, c, d, e, f, g##VU, h, i)
+#define NV21ToABGRMatrix(a, b, c, d, e, f, g, h, i) NV12ToARGBMatrix(a, b, c, d, e, f, g##VU, h, i)
+#define NV12ToRAWMatrix(a, b, c, d, e, f, g, h, i) NV21ToRGB24Matrix(a, b, c, d, e, f, g##VU, h, i)
+#define NV21ToRAWMatrix(a, b, c, d, e, f, g, h, i) NV12ToRGB24Matrix(a, b, c, d, e, f, g##VU, h, i)
+#define I010ToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k) I010ToARGBMatrix(a, b, e, f, c, d, g, h, i##VU, j, k)
+#define I210ToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k) I210ToARGBMatrix(a, b, e, f, c, d, g, h, i##VU, j, k)
+#define I410ToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k) I410ToARGBMatrix(a, b, e, f, c, d, g, h, i##VU, j, k)
+#define I010ToAB30Matrix(a, b, c, d, e, f, g, h, i, j, k) I010ToAR30Matrix(a, b, e, f, c, d, g, h, i##VU, j, k)
+#define I210ToAB30Matrix(a, b, c, d, e, f, g, h, i, j, k) I210ToAR30Matrix(a, b, e, f, c, d, g, h, i##VU, j, k)
+#define I410ToAB30Matrix(a, b, c, d, e, f, g, h, i, j, k) I410ToAR30Matrix(a, b, e, f, c, d, g, h, i##VU, j, k)
+#define I012ToAB30Matrix(a, b, c, d, e, f, g, h, i, j, k) I012ToAR30Matrix(a, b, e, f, c, d, g, h, i##VU, j, k)
+#define I420AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n)                                                \
+    I420AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
+#define I422AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n)                                                \
+    I422AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
+#define I444AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n)                                                \
+    I444AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
+#define I010AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n)                                                \
+    I010AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
+#define I210AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n)                                                \
+    I210AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
+#define I410AlphaToABGRMatrix(a, b, c, d, e, f, g, h, i, j, k, l, m, n)                                                \
+    I410AlphaToARGBMatrix(a, b, e, f, c, d, g, h, i, j, k##VU, l, m, n)
 
 // Alias.
 #define ARGBToARGB ARGBCopy
 
 // Copy ARGB to ARGB.
 LIBYUV_API
-int ARGBCopy(const uint8_t* src_argb,
-             int src_stride_argb,
-             uint8_t* dst_argb,
-             int dst_stride_argb,
-             int width,
-             int height);
+int ARGBCopy(
+    const uint8_t* src_argb, int src_stride_argb, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // Convert I420 to ARGB.
 LIBYUV_API
@@ -689,21 +672,11 @@ int I444AlphaToABGR(const uint8_t* src_y,
 
 // Convert I400 (grey) to ARGB.  Reverse of ARGBToI400.
 LIBYUV_API
-int I400ToARGB(const uint8_t* src_y,
-               int src_stride_y,
-               uint8_t* dst_argb,
-               int dst_stride_argb,
-               int width,
-               int height);
+int I400ToARGB(const uint8_t* src_y, int src_stride_y, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // Convert J400 (jpeg grey) to ARGB.
 LIBYUV_API
-int J400ToARGB(const uint8_t* src_y,
-               int src_stride_y,
-               uint8_t* dst_argb,
-               int dst_stride_argb,
-               int width,
-               int height);
+int J400ToARGB(const uint8_t* src_y, int src_stride_y, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // Alias.
 #define YToARGB I400ToARGB
@@ -809,21 +782,13 @@ int NV21ToRAW(const uint8_t* src_y,
 
 // Convert YUY2 to ARGB.
 LIBYUV_API
-int YUY2ToARGB(const uint8_t* src_yuy2,
-               int src_stride_yuy2,
-               uint8_t* dst_argb,
-               int dst_stride_argb,
-               int width,
-               int height);
+int YUY2ToARGB(
+    const uint8_t* src_yuy2, int src_stride_yuy2, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // Convert UYVY to ARGB.
 LIBYUV_API
-int UYVYToARGB(const uint8_t* src_uyvy,
-               int src_stride_uyvy,
-               uint8_t* dst_argb,
-               int dst_stride_argb,
-               int width,
-               int height);
+int UYVYToARGB(
+    const uint8_t* src_uyvy, int src_stride_uyvy, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // Convert I010 to AR30.
 LIBYUV_API
@@ -983,69 +948,41 @@ int U210ToAB30(const uint16_t* src_y,
 
 // BGRA little endian (argb in memory) to ARGB.
 LIBYUV_API
-int BGRAToARGB(const uint8_t* src_bgra,
-               int src_stride_bgra,
-               uint8_t* dst_argb,
-               int dst_stride_argb,
-               int width,
-               int height);
+int BGRAToARGB(
+    const uint8_t* src_bgra, int src_stride_bgra, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // ABGR little endian (rgba in memory) to ARGB.
 LIBYUV_API
-int ABGRToARGB(const uint8_t* src_abgr,
-               int src_stride_abgr,
-               uint8_t* dst_argb,
-               int dst_stride_argb,
-               int width,
-               int height);
+int ABGRToARGB(
+    const uint8_t* src_abgr, int src_stride_abgr, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // RGBA little endian (abgr in memory) to ARGB.
 LIBYUV_API
-int RGBAToARGB(const uint8_t* src_rgba,
-               int src_stride_rgba,
-               uint8_t* dst_argb,
-               int dst_stride_argb,
-               int width,
-               int height);
+int RGBAToARGB(
+    const uint8_t* src_rgba, int src_stride_rgba, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // Deprecated function name.
 #define BG24ToARGB RGB24ToARGB
 
 // RGB little endian (bgr in memory) to ARGB.
 LIBYUV_API
-int RGB24ToARGB(const uint8_t* src_rgb24,
-                int src_stride_rgb24,
-                uint8_t* dst_argb,
-                int dst_stride_argb,
-                int width,
-                int height);
+int RGB24ToARGB(
+    const uint8_t* src_rgb24, int src_stride_rgb24, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // RGB big endian (rgb in memory) to ARGB.
 LIBYUV_API
-int RAWToARGB(const uint8_t* src_raw,
-              int src_stride_raw,
-              uint8_t* dst_argb,
-              int dst_stride_argb,
-              int width,
-              int height);
+int RAWToARGB(
+    const uint8_t* src_raw, int src_stride_raw, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // RGB big endian (rgb in memory) to RGBA.
 LIBYUV_API
-int RAWToRGBA(const uint8_t* src_raw,
-              int src_stride_raw,
-              uint8_t* dst_rgba,
-              int dst_stride_rgba,
-              int width,
-              int height);
+int RAWToRGBA(
+    const uint8_t* src_raw, int src_stride_raw, uint8_t* dst_rgba, int dst_stride_rgba, int width, int height);
 
 // RGB16 (RGBP fourcc) little endian to ARGB.
 LIBYUV_API
-int RGB565ToARGB(const uint8_t* src_rgb565,
-                 int src_stride_rgb565,
-                 uint8_t* dst_argb,
-                 int dst_stride_argb,
-                 int width,
-                 int height);
+int RGB565ToARGB(
+    const uint8_t* src_rgb565, int src_stride_rgb565, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // RGB15 (RGBO fourcc) little endian to ARGB.
 LIBYUV_API
@@ -1072,63 +1009,39 @@ int ARGB4444ToARGB(const uint8_t* src_argb4444,
 
 // Convert AR30 To ARGB.
 LIBYUV_API
-int AR30ToARGB(const uint8_t* src_ar30,
-               int src_stride_ar30,
-               uint8_t* dst_argb,
-               int dst_stride_argb,
-               int width,
-               int height);
+int AR30ToARGB(
+    const uint8_t* src_ar30, int src_stride_ar30, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // Convert AR30 To ABGR.
 LIBYUV_API
-int AR30ToABGR(const uint8_t* src_ar30,
-               int src_stride_ar30,
-               uint8_t* dst_abgr,
-               int dst_stride_abgr,
-               int width,
-               int height);
+int AR30ToABGR(
+    const uint8_t* src_ar30, int src_stride_ar30, uint8_t* dst_abgr, int dst_stride_abgr, int width, int height);
 
 // Convert AR30 To AB30.
 LIBYUV_API
-int AR30ToAB30(const uint8_t* src_ar30,
-               int src_stride_ar30,
-               uint8_t* dst_ab30,
-               int dst_stride_ab30,
-               int width,
-               int height);
+int AR30ToAB30(
+    const uint8_t* src_ar30, int src_stride_ar30, uint8_t* dst_ab30, int dst_stride_ab30, int width, int height);
 
 // Convert AR64 to ARGB.
 LIBYUV_API
-int AR64ToARGB(const uint16_t* src_ar64,
-               int src_stride_ar64,
-               uint8_t* dst_argb,
-               int dst_stride_argb,
-               int width,
-               int height);
+int AR64ToARGB(
+    const uint16_t* src_ar64, int src_stride_ar64, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // Convert AB64 to ABGR.
 #define AB64ToABGR AR64ToARGB
 
 // Convert AB64 to ARGB.
 LIBYUV_API
-int AB64ToARGB(const uint16_t* src_ab64,
-               int src_stride_ab64,
-               uint8_t* dst_argb,
-               int dst_stride_argb,
-               int width,
-               int height);
+int AB64ToARGB(
+    const uint16_t* src_ab64, int src_stride_ab64, uint8_t* dst_argb, int dst_stride_argb, int width, int height);
 
 // Convert AR64 to ABGR.
 #define AR64ToABGR AB64ToARGB
 
 // Convert AR64 To AB64.
 LIBYUV_API
-int AR64ToAB64(const uint16_t* src_ar64,
-               int src_stride_ar64,
-               uint16_t* dst_ab64,
-               int dst_stride_ab64,
-               int width,
-               int height);
+int AR64ToAB64(
+    const uint16_t* src_ar64, int src_stride_ar64, uint16_t* dst_ab64, int dst_stride_ab64, int width, int height);
 
 // Convert AB64 To AR64.
 #define AB64ToAR64 AR64ToAB64

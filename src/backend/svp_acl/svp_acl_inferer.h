@@ -6,14 +6,13 @@
 #ifndef ALG_BACKEND_SVP_ACL_SVP_ACL_INFERER_H
 #define ALG_BACKEND_SVP_ACL_SVP_ACL_INFERER_H
 
+#include <acl/svp_acl.h>
+#include <acl/svp_acl_mdl.h>
+#include <acl/svp_acl_rt.h>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
-
-#include <acl/svp_acl.h>
-#include <acl/svp_acl_mdl.h>
-#include <acl/svp_acl_rt.h>
 
 #ifdef ALG_SVP_IVE_PREPROCESS
 #include <ss_mpi_ive.h>
@@ -38,36 +37,37 @@ class SvpAclInferer : public IInferer {
 
   private:
     Status BuildViews();
-    void   FreeAll();
+    void FreeAll();
 
-    uint32_t             model_id_ = 0;
-    bool                 model_loaded_ = false;
-    bool                 runtime_acquired_ = false;
-    bool                 initialized_ = false;
-    void*                model_memory_ = nullptr;
-    size_t               model_size_ = 0;
-    svp_acl_mdl_desc*     model_desc_ = nullptr;
-    svp_acl_mdl_dataset*  input_dataset_ = nullptr;
-    svp_acl_mdl_dataset*  output_dataset_ = nullptr;
-    size_t                image_input_index_ = static_cast<size_t>(-1);
-    std::vector<size_t>   output_raw_indices_;
-    std::vector<void*>    input_allocations_;
-    std::vector<void*>    output_allocations_;
+    uint32_t model_id_ = 0;
+    bool model_loaded_ = false;
+    bool runtime_acquired_ = false;
+    bool initialized_ = false;
+    void* model_memory_ = nullptr;
+    size_t model_size_ = 0;
+    svp_acl_mdl_desc* model_desc_ = nullptr;
+    svp_acl_mdl_dataset* input_dataset_ = nullptr;
+    svp_acl_mdl_dataset* output_dataset_ = nullptr;
+    size_t image_input_index_ = static_cast<size_t>(-1);
+    std::vector<size_t> output_raw_indices_;
+    std::vector<void*> input_allocations_;
+    std::vector<void*> output_allocations_;
 #ifdef ALG_SVP_DYNAMIC_AIPP
-    svp_acl_mdl_aipp*     dynamic_aipp_ = nullptr;
-    size_t                dynamic_aipp_input_index_ = static_cast<size_t>(-1);
-    size_t                image_input_capacity_ = 0;
-    void*                 own_image_input_ = nullptr;
-    bool                  image_input_preflushed_ = false;
-    bool                  split_copy_path_reported_ = false;
+    svp_acl_mdl_aipp* dynamic_aipp_ = nullptr;
+    size_t dynamic_aipp_input_index_ = static_cast<size_t>(-1);
+    size_t image_input_capacity_ = 0;
+    void* own_image_input_ = nullptr;
+    bool image_input_preflushed_ = false;
+    bool split_copy_path_reported_ = false;
+    bool cpu_prescale_reported_ = false;
 #ifdef ALG_SVP_IVE_PREPROCESS
-    td_phys_addr_t        ive_output_phys_ = 0;
-    void*                 ive_output_virt_ = nullptr;
-    size_t                ive_output_capacity_ = 0;
-    td_phys_addr_t        ive_assist_phys_ = 0;
-    void*                 ive_assist_virt_ = nullptr;
-    size_t                ive_assist_capacity_ = 0;
-    bool                  ive_path_reported_ = false;
+    td_phys_addr_t ive_output_phys_ = 0;
+    void* ive_output_virt_ = nullptr;
+    size_t ive_output_capacity_ = 0;
+    td_phys_addr_t ive_assist_phys_ = 0;
+    void* ive_assist_virt_ = nullptr;
+    size_t ive_assist_capacity_ = 0;
+    bool ive_path_reported_ = false;
 
     Status EnsureIveBuffers(int width, int height, size_t stride);
     void FreeIveBuffers();

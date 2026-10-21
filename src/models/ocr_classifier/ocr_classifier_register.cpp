@@ -3,8 +3,6 @@
 
 namespace alg {
 
-REGISTER_ALG_POST("ocr_classifier", []{
-    return std::unique_ptr<IPostprocessor>(new OcrClassifierPostprocessor());
-});
+REGISTER_ALG_POST("ocr_classifier", [] { return std::unique_ptr<IPostprocessor>(new OcrClassifierPostprocessor()); });
 
 }  // namespace alg

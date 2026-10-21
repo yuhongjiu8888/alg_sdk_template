@@ -64,7 +64,6 @@
 
 #include <string>
 #include <vector>
-
 #include "core/postprocess/postprocessor.h"
 
 namespace alg {
@@ -72,39 +71,38 @@ namespace alg {
 class OcrClassifierPostprocessor : public IPostprocessor {
   public:
     Status Configure(const IInferer& inferer, const Json::Value& params) override;
-    Status Apply(const IInferer& inferer, const PreprocessState& state,
-                 std::vector<Object>* out) override;
+    Status Apply(const IInferer& inferer, const PreprocessState& state, std::vector<Object>* out) override;
 
   private:
-    int num_positions_ = 3;   /* 位数 = 头数（百/十/个） */
-    int num_chars_     = 11;  /* 每头类别数：'0'..'9' + blank */
-    int blank_index_   = 10;  /* 占位符下标 */
+    int num_positions_ = 3; /* 位数 = 头数（百/十/个） */
+    int num_chars_ = 11;    /* 每头类别数：'0'..'9' + blank */
+    int blank_index_ = 10;  /* 占位符下标 */
     float conf_threshold_ = 0.5f;
 
     /* 单输出模式：模型只出一个 (1, P*C) / (1,P,C) 张量（避开 XMM 多输出+CPU 切图
      * 的板端坑），各位在该张量内按 [p*num_chars, p*num_chars+num_chars) 连续切片。
      * NumOutputs==1 且 P>1 时自动启用；NumOutputs>=P 时仍走原多输出头逻辑。 */
     bool single_output_ = false;
-    std::vector<int>         resolved_head_idx_;  /* 各位对应的 output tensor 索引（高位→低位） */
+    std::vector<int> resolved_head_idx_; /* 各位对应的 output tensor 索引（高位→低位） */
     std::vector<std::string> class_names_;
-    std::vector<int>         value_lut_;          /* class idx → AlgSpeedLimitValue（km/h÷10） */
-    std::vector<int>         decode_lut_;         /* 扁平 (num_chars^P) → class idx；非法=-1 */
+    std::vector<int> value_lut_;  /* class idx → AlgSpeedLimitValue（km/h÷10） */
+    std::vector<int> decode_lut_; /* 扁平 (num_chars^P) → class idx；非法=-1 */
 
     std::string category_;
 
     /* v3.5 门控（3 路 other/speed/no_parking）。gate_channels_==0 → 无门控（纯 OCR，向后兼容）。
      * 单输出模式：门控在 output[0] 内，偏移 gate_base_=P*num_chars；
      * 多输出模式：门控是独立头（gate_head_name/gate_head_index），gate_base_=0。 */
-    int   gate_channels_    = 0;
-    int   gate_speed_index_ = 1;   /* P(限速) 在门控向量里的下标 */
-    int   gate_nopark_index_ = 2;  /* P(禁停) 在门控向量里的下标 */
-    float gate_threshold_   = 0.5f;
-    int   gate_view_idx_    = -1;  /* 门控所在 output tensor 索引；<0 = 未解析/无门控 */
-    int   gate_base_        = 0;   /* 门控在该 tensor 内的起始元素偏移 */
-    std::string nopark_category_;  /* no_parking 正类产出的 category（FillAlgResult 据此分桶到 signs[]） */
-    int         nopark_sign_value_ = 0;  /* AlgSignType（SIGN_NO_PARKING=1） */
+    int gate_channels_ = 0;
+    int gate_speed_index_ = 1;  /* P(限速) 在门控向量里的下标 */
+    int gate_nopark_index_ = 2; /* P(禁停) 在门控向量里的下标 */
+    float gate_threshold_ = 0.5f;
+    int gate_view_idx_ = -1;      /* 门控所在 output tensor 索引；<0 = 未解析/无门控 */
+    int gate_base_ = 0;           /* 门控在该 tensor 内的起始元素偏移 */
+    std::string nopark_category_; /* no_parking 正类产出的 category（FillAlgResult 据此分桶到 signs[]） */
+    int nopark_sign_value_ = 0;   /* AlgSignType（SIGN_NO_PARKING=1） */
 
-    bool        configured_ = false;
+    bool configured_ = false;
 };
 
 }  // namespace alg

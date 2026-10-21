@@ -13,7 +13,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-
 #include "libyuv/cpu_support.h"
 
 #ifdef __cplusplus
@@ -22,39 +21,33 @@ extern "C" {
 #endif
 
 // The following are available for Visual C and GCC:
-#if !defined(LIBYUV_DISABLE_X86) &&                             \
-    ((defined(__x86_64__) && !defined(LIBYUV_ENABLE_ROWWIN)) || \
-     defined(__i386__) || defined(_M_IX86))
+#if !defined(LIBYUV_DISABLE_X86) &&                                                                                    \
+    ((defined(__x86_64__) && !defined(LIBYUV_ENABLE_ROWWIN)) || defined(__i386__) || defined(_M_IX86))
 #define HAS_HASHDJB2_SSE41
 #define HAS_SUMSQUAREERROR_SSE2
 #define HAS_HAMMINGDISTANCE_SSE42
 #endif
 
 // The following are available for Visual C and clangcl 32 bit:
-#if !defined(LIBYUV_DISABLE_X86) && defined(_M_IX86) && defined(_MSC_VER) && \
-    !defined(__clang__) &&                                                   \
+#if !defined(LIBYUV_DISABLE_X86) && defined(_M_IX86) && defined(_MSC_VER) && !defined(__clang__) &&                    \
     (defined(VISUALC_HAS_AVX2) || defined(CLANG_HAS_AVX2))
 #define HAS_HASHDJB2_AVX2
 #define HAS_SUMSQUAREERROR_AVX2
 #endif
 
 // The following are available for GCC and clangcl:
-#if !defined(LIBYUV_DISABLE_X86) &&               \
-    (defined(__x86_64__) || defined(__i386__)) && \
-    !defined(LIBYUV_ENABLE_ROWWIN)
+#if !defined(LIBYUV_DISABLE_X86) && (defined(__x86_64__) || defined(__i386__)) && !defined(LIBYUV_ENABLE_ROWWIN)
 #define HAS_HAMMINGDISTANCE_SSSE3
 #endif
 
 // The following are available for GCC and clangcl:
-#if !defined(LIBYUV_DISABLE_X86) && defined(CLANG_HAS_AVX2) && \
-    (defined(__x86_64__) || defined(__i386__)) &&              \
+#if !defined(LIBYUV_DISABLE_X86) && defined(CLANG_HAS_AVX2) && (defined(__x86_64__) || defined(__i386__)) &&           \
     !defined(LIBYUV_ENABLE_ROWWIN)
 #define HAS_HAMMINGDISTANCE_AVX2
 #endif
 
 // The following are available for Neon:
-#if !defined(LIBYUV_DISABLE_NEON) && \
-    (defined(__ARM_NEON__) || defined(LIBYUV_NEON) || defined(__aarch64__))
+#if !defined(LIBYUV_DISABLE_NEON) && (defined(__ARM_NEON__) || defined(LIBYUV_NEON) || defined(__aarch64__))
 #define HAS_HAMMINGDISTANCE_NEON
 #define HAS_SUMSQUAREERROR_NEON
 #endif
@@ -67,39 +60,17 @@ extern "C" {
 #define HAS_SUMSQUAREERROR_NEON_DOTPROD
 #endif
 
-uint32_t HammingDistance_C(const uint8_t* src_a,
-                           const uint8_t* src_b,
-                           int count);
-uint32_t HammingDistance_SSE42(const uint8_t* src_a,
-                               const uint8_t* src_b,
-                               int count);
-uint32_t HammingDistance_SSSE3(const uint8_t* src_a,
-                               const uint8_t* src_b,
-                               int count);
-uint32_t HammingDistance_AVX2(const uint8_t* src_a,
-                              const uint8_t* src_b,
-                              int count);
-uint32_t HammingDistance_NEON(const uint8_t* src_a,
-                              const uint8_t* src_b,
-                              int count);
-uint32_t HammingDistance_NEON_DotProd(const uint8_t* src_a,
-                                      const uint8_t* src_b,
-                                      int count);
-uint32_t SumSquareError_C(const uint8_t* src_a,
-                          const uint8_t* src_b,
-                          int count);
-uint32_t SumSquareError_SSE2(const uint8_t* src_a,
-                             const uint8_t* src_b,
-                             int count);
-uint32_t SumSquareError_AVX2(const uint8_t* src_a,
-                             const uint8_t* src_b,
-                             int count);
-uint32_t SumSquareError_NEON(const uint8_t* src_a,
-                             const uint8_t* src_b,
-                             int count);
-uint32_t SumSquareError_NEON_DotProd(const uint8_t* src_a,
-                                     const uint8_t* src_b,
-                                     int count);
+uint32_t HammingDistance_C(const uint8_t* src_a, const uint8_t* src_b, int count);
+uint32_t HammingDistance_SSE42(const uint8_t* src_a, const uint8_t* src_b, int count);
+uint32_t HammingDistance_SSSE3(const uint8_t* src_a, const uint8_t* src_b, int count);
+uint32_t HammingDistance_AVX2(const uint8_t* src_a, const uint8_t* src_b, int count);
+uint32_t HammingDistance_NEON(const uint8_t* src_a, const uint8_t* src_b, int count);
+uint32_t HammingDistance_NEON_DotProd(const uint8_t* src_a, const uint8_t* src_b, int count);
+uint32_t SumSquareError_C(const uint8_t* src_a, const uint8_t* src_b, int count);
+uint32_t SumSquareError_SSE2(const uint8_t* src_a, const uint8_t* src_b, int count);
+uint32_t SumSquareError_AVX2(const uint8_t* src_a, const uint8_t* src_b, int count);
+uint32_t SumSquareError_NEON(const uint8_t* src_a, const uint8_t* src_b, int count);
+uint32_t SumSquareError_NEON_DotProd(const uint8_t* src_a, const uint8_t* src_b, int count);
 
 uint32_t HashDjb2_C(const uint8_t* src, int count, uint32_t seed);
 uint32_t HashDjb2_SSE41(const uint8_t* src, int count, uint32_t seed);

@@ -22,54 +22,54 @@
  * 运行期还可用 alg::log::init(Config{...}) 覆盖路径等（部署时路径常常只有运行期才知道）。
  */
 
-#include <cstddef>
 #include <cstdarg>
+#include <cstddef>
 
 // ---------------------------------------------------------------------------
 // 编译期默认值（用 -D... 覆盖；CMake 选项 ALG_LOG_FILE 会注入这些）
 // ---------------------------------------------------------------------------
 #ifndef ALG_LOG_FILE_PATH
-#  define ALG_LOG_FILE_PATH "alg_sdk.log"        // 文件基路径
+#define ALG_LOG_FILE_PATH "alg_sdk.log"  // 文件基路径
 #endif
 #ifndef ALG_LOG_FILE_MAX_SIZE
-#  define ALG_LOG_FILE_MAX_SIZE (10u * 1024u * 1024u)  // 单文件上限：10MB
+#define ALG_LOG_FILE_MAX_SIZE (10u * 1024u * 1024u)  // 单文件上限：10MB
 #endif
 #ifndef ALG_LOG_FILE_MAX_FILES
-#  define ALG_LOG_FILE_MAX_FILES 5                // 滚动保留份数（循环覆盖）
+#define ALG_LOG_FILE_MAX_FILES 5  // 滚动保留份数（循环覆盖）
 #endif
 #ifndef ALG_LOG_QUEUE_SIZE
-#  define ALG_LOG_QUEUE_SIZE 1024                 // 环形缓冲槽位数
+#define ALG_LOG_QUEUE_SIZE 1024  // 环形缓冲槽位数
 #endif
 #ifndef ALG_LOG_MSG_MAX
-#  define ALG_LOG_MSG_MAX 1024                    // 单行字节上限（超长截断，防 IO 阻塞）
+#define ALG_LOG_MSG_MAX 1024  // 单行字节上限（超长截断，防 IO 阻塞）
 #endif
 #ifndef ALG_LOG_ANDROID_DEFAULT
-#  if defined(__ANDROID__)
-#    define ALG_LOG_ANDROID_DEFAULT true
-#  else
-#    define ALG_LOG_ANDROID_DEFAULT false
-#  endif
+#if defined(__ANDROID__)
+#define ALG_LOG_ANDROID_DEFAULT true
+#else
+#define ALG_LOG_ANDROID_DEFAULT false
+#endif
 #endif
 
 // 默认仅输出 Error/Warn。兼容原构建选项：INFO/DEBUG 选项改为选择默认等级，
 // 不再编译删除日志代码，确保集成方可在运行期动态开启诊断。
 #ifndef ALG_LOG_DEFAULT_LEVEL
-#  if defined(ALG_ENABLE_LOG_DEBUG)
-#    define ALG_LOG_DEFAULT_LEVEL 3
-#  elif defined(ALG_ENABLE_LOG_INFO)
-#    define ALG_LOG_DEFAULT_LEVEL 2
-#  else
-#    define ALG_LOG_DEFAULT_LEVEL 1
-#  endif
+#if defined(ALG_ENABLE_LOG_DEBUG)
+#define ALG_LOG_DEFAULT_LEVEL 3
+#elif defined(ALG_ENABLE_LOG_INFO)
+#define ALG_LOG_DEFAULT_LEVEL 2
+#else
+#define ALG_LOG_DEFAULT_LEVEL 1
+#endif
 #endif
 
 // SDK 以 -fvisibility=hidden 构建；导出这几个入口，便于集成方运行期配置。
 #ifndef ALG_LOG_API
-#  if defined(_WIN32)
-#    define ALG_LOG_API
-#  else
-#    define ALG_LOG_API __attribute__((visibility("default")))
-#  endif
+#if defined(_WIN32)
+#define ALG_LOG_API
+#else
+#define ALG_LOG_API __attribute__((visibility("default")))
+#endif
 #endif
 
 namespace alg {
@@ -77,19 +77,19 @@ namespace log {
 
 // 数值越大越啰嗦（与 level 过滤一致：lvl > Config.level 的消息被丢弃）。
 enum class Level : int {
-    Off   = -1,
+    Off = -1,
     Error = 0,
-    Warn  = 1,
-    Info  = 2,
+    Warn = 1,
+    Info = 2,
     Debug = 3,
 };
 
 struct Config {
     // ---- 滚动文件 sink ----
-    bool        to_file       = true;
-    const char* file_path     = ALG_LOG_FILE_PATH;       // 基路径，如 /data/log/alg.log
-    std::size_t max_file_size = ALG_LOG_FILE_MAX_SIZE;   // 单文件字节上限，写满即滚动
-    int         max_files     = ALG_LOG_FILE_MAX_FILES;  // 滚动保留份数（含当前），循环覆盖
+    bool to_file = true;
+    const char* file_path = ALG_LOG_FILE_PATH;          // 基路径，如 /data/log/alg.log
+    std::size_t max_file_size = ALG_LOG_FILE_MAX_SIZE;  // 单文件字节上限，写满即滚动
+    int max_files = ALG_LOG_FILE_MAX_FILES;             // 滚动保留份数（含当前），循环覆盖
 
     // ---- 控制台 sink ----
     // 沿用旧行为：Error/Warn → stderr，Info/Debug → stdout。
@@ -97,12 +97,12 @@ struct Config {
 
     // ---- Android logcat sink ----
     // 仅在 __ANDROID__ 下生效；用 __android_log_print 输出，tag 见 android_tag。
-    bool        to_android  = ALG_LOG_ANDROID_DEFAULT;
+    bool to_android = ALG_LOG_ANDROID_DEFAULT;
     const char* android_tag = "alg";
 
     // ---- 异步 worker ----
-    bool        async      = true;                 // true：调用方只入队，后台线程落盘
-    std::size_t queue_size = ALG_LOG_QUEUE_SIZE;   // 环形槽位数；满了丢弃并计数（不阻塞推理）
+    bool async = true;                            // true：调用方只入队，后台线程落盘
+    std::size_t queue_size = ALG_LOG_QUEUE_SIZE;  // 环形槽位数；满了丢弃并计数（不阻塞推理）
 
     // ---- 运行期 level 过滤 ----
     Level level = static_cast<Level>(ALG_LOG_DEFAULT_LEVEL);  // 比该级别更啰嗦的消息直接丢弃
@@ -125,8 +125,7 @@ ALG_LOG_API bool is_enabled(Level lvl);
 ALG_LOG_API void flush();
 
 // printf 风格入口（ALG_LOG* 宏最终调到这里）。fmt 必须是字面量以便编译器做格式校验。
-ALG_LOG_API void writef(Level lvl, const char* fmt, ...)
-    __attribute__((format(printf, 2, 3)));
+ALG_LOG_API void writef(Level lvl, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
 
 // va_list 版本，供需要转发可变参的场景使用。
 ALG_LOG_API void vwritef(Level lvl, const char* fmt, va_list ap);

@@ -33,7 +33,6 @@
 #define ALG_MODELS_YOLOV5_ANCHOR_DET_YOLOV5_ANCHOR_DET_POSTPROCESSOR_H
 
 #include <vector>
-
 #include "core/postprocess/nms.h"
 #include "core/postprocess/postprocessor.h"
 
@@ -42,26 +41,25 @@ namespace alg {
 class Yolov5AnchorDetPostprocessor : public IPostprocessor {
   public:
     Status Configure(const IInferer& inferer, const Json::Value& params) override;
-    Status Apply(const IInferer& inferer, const PreprocessState& state,
-                 std::vector<Object>* out) override;
+    Status Apply(const IInferer& inferer, const PreprocessState& state, std::vector<Object>* out) override;
 
   private:
-    int   num_classes_    = 1;
-    int   bbox_channels_  = 4;
-    int   obj_channels_   = 1;
-    int   cls_offset_     = 5;    /* bbox_channels_ + obj_channels_ */
-    int   stride_         = 8;
-    float anchor_w_       = 36.0f;
-    float anchor_h_       = 36.0f;
+    int num_classes_ = 1;
+    int bbox_channels_ = 4;
+    int obj_channels_ = 1;
+    int cls_offset_ = 5; /* bbox_channels_ + obj_channels_ */
+    int stride_ = 8;
+    float anchor_w_ = 36.0f;
+    float anchor_h_ = 36.0f;
     float conf_threshold_ = 0.25f;
-    float nms_threshold_  = 0.45f;
-    int   max_det_        = 5;
-    float obj_prefilter_  = 0.05f;
+    float nms_threshold_ = 0.45f;
+    int max_det_ = 5;
+    float obj_prefilter_ = 0.05f;
     float obj_logit_threshold_ = 0.0f;
-    bool  configured_     = false;
+    bool configured_ = false;
 
     std::vector<Proposal> props_;
-    NmsScratch            nms_scratch_;
+    NmsScratch nms_scratch_;
 };
 
 }  // namespace alg

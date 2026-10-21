@@ -12,7 +12,6 @@
 #define ALG_CORE_SOLUTION_CROP_UTIL_H
 
 #include <opencv2/core/mat.hpp>
-
 #include "alg_types.h"
 #include "core/config/config.h"
 
@@ -22,8 +21,8 @@ namespace alg {
 struct CropTransform {
     int offset_x = 0;
     int offset_y = 0;
-    int crop_w   = 0;
-    int crop_h   = 0;
+    int crop_w = 0;
+    int crop_h = 0;
 };
 
 /**
@@ -42,9 +41,12 @@ void DecodeSourceToBgrInto(const AlgImage& src, cv::Mat* out);
  * `holder` 接收**非拷贝**的 ROI Mat（共享 decoded 的像素），`out` 是携带
  * stride 的 AlgImage 视图。
  */
-bool CropFromDecoded(const cv::Mat& decoded_bgr, const AlgBox& box,
+bool CropFromDecoded(const cv::Mat& decoded_bgr,
+                     const AlgBox& box,
                      const CropConfig& cfg,
-                     cv::Mat* holder, AlgImage* out, CropTransform* xf);
+                     cv::Mat* holder,
+                     AlgImage* out,
+                     CropTransform* xf);
 
 /**
  * 直接从 NV12/NV21 原图抠 ROI 子图转成 BGR（替代"全帧解码 + CropFromDecoded"）。
@@ -57,9 +59,8 @@ bool CropFromDecoded(const cv::Mat& decoded_bgr, const AlgBox& box,
  * 拷贝（padded 分支，对齐偏移由 pad 填充兜底），与 CropFromDecoded 输出语义一致
  * （BGR + stride + xf 偏移映射回原图）。
  */
-bool CropFromNV12(const AlgImage& src, const AlgBox& box,
-                  const CropConfig& cfg,
-                  cv::Mat* holder, AlgImage* out, CropTransform* xf);
+bool CropFromNV12(
+    const AlgImage& src, const AlgBox& box, const CropConfig& cfg, cv::Mat* holder, AlgImage* out, CropTransform* xf);
 
 }  // namespace alg
 

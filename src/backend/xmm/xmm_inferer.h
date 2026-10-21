@@ -10,7 +10,6 @@
 #define ALG_BACKEND_XMM_XMM_INFERER_H
 
 #include "core/infer/inferer.h"
-
 #include "xmedia_cl.h"
 #include "xmedia_cl_common.h"
 #include "xmedia_mmz.h"
@@ -28,19 +27,19 @@ class XmmInferer : public IInferer {
 
   private:
     Status AllocateTensorMem(xmedia_cl_tensor_info_inout* inout);
-    void   FreeAll();
+    void FreeAll();
     Status BuildViews();
 
     /* context / device 枚举 / sys|cl init 都在进程级共享单例里（见 .cpp 的
      * XmmRuntime），这里只持有本模型独占的 graph + I/O 内存。 */
-    xmedia_cl_graph       graph_ = nullptr;
-    bool                  acquired_ = false;  /* 是否已 g_rt.Acquire()，析构时配对 Release() */
+    xmedia_cl_graph graph_ = nullptr;
+    bool acquired_ = false; /* 是否已 g_rt.Acquire()，析构时配对 Release() */
 
     xmedia_u64 phy_workspace_ = 0, phy_weight_ = 0, phy_input_ = 0, phy_output_ = 0;
-    void*      vir_workspace_ = nullptr;
-    void*      vir_weight_ = nullptr;
-    void*      vir_input_ = nullptr;
-    void*      vir_output_ = nullptr;
+    void* vir_workspace_ = nullptr;
+    void* vir_weight_ = nullptr;
+    void* vir_input_ = nullptr;
+    void* vir_output_ = nullptr;
     xmedia_u32 input_total_size_ = 0;
     xmedia_u32 output_total_size_ = 0;
 

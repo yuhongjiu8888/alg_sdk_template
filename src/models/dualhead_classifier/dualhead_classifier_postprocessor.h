@@ -40,7 +40,6 @@
 
 #include <string>
 #include <vector>
-
 #include "core/postprocess/postprocessor.h"
 
 namespace alg {
@@ -48,21 +47,20 @@ namespace alg {
 class DualheadClassifierPostprocessor : public IPostprocessor {
   public:
     Status Configure(const IInferer& inferer, const Json::Value& params) override;
-    Status Apply(const IInferer& inferer, const PreprocessState& state,
-                 std::vector<Object>* out) override;
+    Status Apply(const IInferer& inferer, const PreprocessState& state, std::vector<Object>* out) override;
 
   private:
-    int                      head_a_index_       = 0;
-    int                      head_b_index_       = 1;
-    int                      head_a_classes_     = 8;
-    int                      head_b_classes_     = 2;
-    int                      is_3digit_class_    = 1;
-    int                      three_digit_idx_    = 8;
-    float                    conf_threshold_     = 0.7f;
+    int head_a_index_ = 0;
+    int head_b_index_ = 1;
+    int head_a_classes_ = 8;
+    int head_b_classes_ = 2;
+    int is_3digit_class_ = 1;
+    int three_digit_idx_ = 8;
+    float conf_threshold_ = 0.7f;
     std::vector<std::string> class_names_;
     /* category 可选；同 yolox_det 用法，便于多检测器并行 solution 里区分本框是哪个检测器产物。 */
-    std::string              category_;
-    bool                     configured_         = false;
+    std::string category_;
+    bool configured_ = false;
 };
 
 }  // namespace alg

@@ -12,7 +12,6 @@
 #define INCLUDE_LIBYUV_SCALE_H_
 
 #include <stdint.h>
-
 #include "libyuv/basic_types.h"
 
 #ifdef __cplusplus
@@ -22,10 +21,10 @@ extern "C" {
 
 // Supported filtering.
 typedef enum FilterMode {
-  kFilterNone = 0,      // Point sample; Fastest.
-  kFilterLinear = 1,    // Filter horizontally only.
-  kFilterBilinear = 2,  // Faster than box, but lower quality scaling down.
-  kFilterBox = 3        // Highest quality.
+    kFilterNone = 0,      // Point sample; Fastest.
+    kFilterLinear = 1,    // Filter horizontally only.
+    kFilterBilinear = 2,  // Faster than box, but lower quality scaling down.
+    kFilterBox = 3        // Highest quality.
 } FilterModeEnum;
 
 // Scale a YUV plane.

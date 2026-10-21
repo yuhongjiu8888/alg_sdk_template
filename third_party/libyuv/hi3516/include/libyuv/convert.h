@@ -13,9 +13,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-
 #include "libyuv/basic_types.h"
-
 #include "libyuv/rotate.h"  // For enum RotationMode.
 
 // TODO(fbarchard): fix WebRTC source to include following libyuv headers:
@@ -1062,21 +1060,12 @@ int ARGB4444ToI420(const uint8_t* src_argb4444,
 
 // RGB little endian (bgr in memory) to J400.
 LIBYUV_API
-int RGB24ToJ400(const uint8_t* src_rgb24,
-                int src_stride_rgb24,
-                uint8_t* dst_yj,
-                int dst_stride_yj,
-                int width,
-                int height);
+int RGB24ToJ400(
+    const uint8_t* src_rgb24, int src_stride_rgb24, uint8_t* dst_yj, int dst_stride_yj, int width, int height);
 
 // RGB big endian (rgb in memory) to J400.
 LIBYUV_API
-int RAWToJ400(const uint8_t* src_raw,
-              int src_stride_raw,
-              uint8_t* dst_yj,
-              int dst_stride_yj,
-              int width,
-              int height);
+int RAWToJ400(const uint8_t* src_raw, int src_stride_raw, uint8_t* dst_yj, int dst_stride_yj, int width, int height);
 
 // src_width/height provided by capture.
 // dst_width/height for clipping determine final size.
@@ -1122,10 +1111,7 @@ int MJPGToNV12(const uint8_t* sample,
 
 // Query size of MJPG in pixels.
 LIBYUV_API
-int MJPGSize(const uint8_t* sample,
-             size_t sample_size,
-             int* width,
-             int* height);
+int MJPGSize(const uint8_t* sample, size_t sample_size, int* width, int* height);
 
 // Convert camera sample to I420 with cropping, rotation and vertical flip.
 // "src_size" is needed to parse MJPG.

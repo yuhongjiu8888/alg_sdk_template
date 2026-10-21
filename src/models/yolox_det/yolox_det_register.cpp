@@ -3,8 +3,6 @@
 
 namespace alg {
 
-REGISTER_ALG_POST("yolox_det", []{
-    return std::unique_ptr<IPostprocessor>(new YoloxDetPostprocessor());
-});
+REGISTER_ALG_POST("yolox_det", [] { return std::unique_ptr<IPostprocessor>(new YoloxDetPostprocessor()); });
 
 }  // namespace alg

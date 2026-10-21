@@ -4,12 +4,15 @@
 # 用法：
 #   ./builddeploy.sh                                    # 编译全部目标并打包
 #   ./builddeploy.sh aarch64 xmm                        # 仅编译打包 aarch64-xmm
-#   ./builddeploy.sh aarch64 svp_acl                    # 仅编译打包 v610 SVP ACL
+#   ./builddeploy.sh aarch64 svp_acl_cv610              # 仅编译打包 Hi3516CV610
+#   ./builddeploy.sh aarch64 svp_acl_dv500              # 仅编译打包 Hi3519DV500
 #   ./builddeploy.sh x86_64 mnn                         # 仅编译打包 x86_64-mnn
 #
-# 输出在 deploy/ 下，每个目标两个 zip：
-#   alg_sdk_<VERSION>_<TARGET>.zip           # SDK 发布包
-#   TEST_alg_sdk_<VERSION>_<TARGET>.zip      # 测试包
+# （`svp_acl` 仍可用，等价于 `svp_acl_cv610`）
+#
+# 输出在 deploy/ 下，每个目标两个 zip（后缀带打包时间戳，便于区分新旧）：
+#   alg_sdk_<VERSION>_<TARGET>_<YYYYmmdd_HHMMSS>.zip        # SDK 发布包
+#   TEST_alg_sdk_<VERSION>_<TARGET>_<YYYYmmdd_HHMMSS>.zip   # 测试包
 
 set -e
 
@@ -20,6 +23,13 @@ set -e
 DEPLOY_DIR="deploy"
 BUILD_SCRIPT="./build.sh"
 
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "${REPO_ROOT}"
+
+# backend token -> 工具链 / 资源子目录的唯一映射表（与 build.sh 共用）
+# shellcheck source=targets.sh
+source "${REPO_ROOT}/targets.sh"
+
 # 从源码中提取版本号
 function get_sdk_version() {
     grep '#define ALG_VERSION_STRING' src/interface/alg_interface.cpp \
@@ -29,19 +39,24 @@ function get_sdk_version() {
 SDK_VERSION=$(get_sdk_version | sed 's/^alg_sdk\.//')
 echo "SDK version: ${SDK_VERSION}"
 
+# 本次打包的时间戳（多目标构建共用同一个，便于归档识别）
+BUILD_TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+echo "Build timestamp: ${BUILD_TIMESTAMP}"
+
 # ==============================================================
 # 校验后端是否有对应的配置/模型目录
 # ==============================================================
 function check_backend_resources() {
     local backend="$1"
-    if [[ ! -d "resources/config/${backend}" ]]; then
+    local res_subdir="$2"
+    if [[ ! -d "resources/config/${res_subdir}" ]]; then
         echo "ERROR: backend '${backend}' has no corresponding config directory"
-        echo "       resources/config/${backend}/ does not exist"
+        echo "       resources/config/${res_subdir}/ does not exist"
         exit 1
     fi
-    if [[ ! -d "resources/model/${backend}" ]]; then
+    if [[ ! -d "resources/model/${res_subdir}" ]]; then
         echo "ERROR: backend '${backend}' has no corresponding model directory"
-        echo "       resources/model/${backend}/ does not exist"
+        echo "       resources/model/${res_subdir}/ does not exist"
         exit 1
     fi
 }
@@ -51,14 +66,19 @@ function check_backend_resources() {
 #
 # 参数:
 #   $1 = arch       (如 aarch64, x86_64)
-#   $2 = backend    (如 xmm, mnn, rk)
+#   $2 = backend    (如 xmm, mnn, svp_acl_dv500)
 #   $3 = is_test    (true=测试包, false=发布包)
+#
+# 资源目录按芯片分：resources/config/svp_acl/dv500/、resources/model/svp_acl/dv500/，
+# 打包时保持同样的相对层级，JSON 里的 ../resources/model/... 才能解析到。
 # ==============================================================
 function package_artifacts() {
     local arch="$1"
     local backend="$2"
     local is_test="$3"
     local target_id="${arch}_${backend}"
+    local res_subdir
+    res_subdir=$(alg_resource_subdir "${backend}")
 
     if [[ "$is_test" == "true" ]]; then
         local folder_name="TEST_alg_sdk_${SDK_VERSION}_${target_id}"
@@ -98,32 +118,33 @@ function package_artifacts() {
     fi
 
     # ---- 业务 JSON 配置（speed_limit / license_plate / ...）----
-    # 保持 resources/config/<backend>/ 目录结构，与 JSON 内相对路径一致
-    mkdir -p "${pkg_dir}/resources/config/${backend}"
-    cp resources/config/${backend}/*.json \
-       "${pkg_dir}/resources/config/${backend}/" 2>/dev/null || {
-        echo "ERROR: no config json under resources/config/${backend}/"
+    # 保持 resources/config/<res_subdir>/ 目录结构，与 JSON 内相对路径一致
+    mkdir -p "${pkg_dir}/resources/config/${res_subdir}"
+    cp resources/config/${res_subdir}/*.json \
+       "${pkg_dir}/resources/config/${res_subdir}/" 2>/dev/null || {
+        echo "ERROR: no config json under resources/config/${res_subdir}/"
         exit 1
     }
-    if [[ -d "resources/config/${backend}/aipp" ]]; then
-        cp -R "resources/config/${backend}/aipp" \
-              "${pkg_dir}/resources/config/${backend}/"
+    if [[ -d "resources/config/${res_subdir}/aipp" ]]; then
+        cp -R "resources/config/${res_subdir}/aipp" \
+              "${pkg_dir}/resources/config/${res_subdir}/"
     fi
 
     # ---- 模型文件（排除红绿灯模型）----
-    mkdir -p "${pkg_dir}/resources/model/${backend}"
-    for f in "resources/model/${backend}/"*; do
+    mkdir -p "${pkg_dir}/resources/model/${res_subdir}"
+    for f in "resources/model/${res_subdir}/"*; do
         name=$(basename "$f")
         [[ "$name" == traffic_light.* ]] && continue
-        cp "$f" "${pkg_dir}/resources/model/${backend}/"
+        cp "$f" "${pkg_dir}/resources/model/${res_subdir}/"
     done
 
     echo "Package ready: ${pkg_dir}/"
 
-    # 压缩
+    # 压缩（包名带时间戳，目录名保持不变，解压后的目录结构不受影响）
+    local zip_name="${folder_name}_${BUILD_TIMESTAMP}.zip"
     cd "${DEPLOY_DIR}"
-    zip -r "${folder_name}.zip" "${folder_name}" > /dev/null
-    echo "  -> ${DEPLOY_DIR}/${folder_name}.zip  ($(du -sh "${folder_name}.zip" | cut -f1))"
+    zip -r "${zip_name}" "${folder_name}" > /dev/null
+    echo "  -> ${DEPLOY_DIR}/${zip_name}  ($(du -sh "${zip_name}" | cut -f1))"
     cd ..
 }
 
@@ -132,11 +153,12 @@ function package_artifacts() {
 # ==============================================================
 function build_and_pack() {
     local arch="$1"
-    local backend="$2"
+    local backend
+    backend=$(alg_normalize_backend "$2")
     local target_id="${arch}_${backend}"
 
     # 编译前先校验后端资源存在
-    check_backend_resources "${backend}"
+    check_backend_resources "${backend}" "$(alg_resource_subdir "${backend}")"
 
     echo ""
     echo "=========================================="

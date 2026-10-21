@@ -9,7 +9,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-
 #include "alg_types.h"
 #include "core/status.h"
 
@@ -28,9 +27,9 @@ inline bool IsYuv420Sp(AlgPixelFormat format) {
 }
 
 inline bool CheckedPlaneByteSize(int stride, int rows, size_t* bytes) {
-    if (!bytes || stride < 0 || rows < 0) return false;
-    if (rows > 0 && static_cast<size_t>(stride) >
-                        std::numeric_limits<size_t>::max() / static_cast<size_t>(rows)) {
+    if (!bytes || stride < 0 || rows < 0)
+        return false;
+    if (rows > 0 && static_cast<size_t>(stride) > std::numeric_limits<size_t>::max() / static_cast<size_t>(rows)) {
         return false;
     }
     *bytes = static_cast<size_t>(stride) * static_cast<size_t>(rows);
@@ -38,8 +37,7 @@ inline bool CheckedPlaneByteSize(int stride, int rows, size_t* bytes) {
 }
 
 inline Status ResolveImageView(const AlgImage& image, ImageView* view) {
-    if (!view || image.width <= 0 || image.height <= 0 || image.stride < 0 ||
-        image.data_len < 0) {
+    if (!view || image.width <= 0 || image.height <= 0 || image.stride < 0 || image.data_len < 0) {
         return ALG_E_INVALID_ARG;
     }
 
@@ -56,7 +54,8 @@ inline Status ResolveImageView(const AlgImage& image, ImageView* view) {
             break;
         case ALG_PIX_NV12:
         case ALG_PIX_NV21:
-            if ((image.width & 1) || (image.height & 1)) return ALG_E_INVALID_ARG;
+            if ((image.width & 1) || (image.height & 1))
+                return ALG_E_INVALID_ARG;
             packed_row_bytes = image.width;
             break;
         default:
@@ -66,7 +65,8 @@ inline Status ResolveImageView(const AlgImage& image, ImageView* view) {
     *view = ImageView{};
     if (image.data) {
         const int stride = image.stride > 0 ? image.stride : packed_row_bytes;
-        if (stride < packed_row_bytes) return ALG_E_INVALID_ARG;
+        if (stride < packed_row_bytes)
+            return ALG_E_INVALID_ARG;
 
         view->plane[0] = static_cast<const uint8_t*>(image.data);
         view->stride[0] = stride;
@@ -86,15 +86,15 @@ inline Status ResolveImageView(const AlgImage& image, ImageView* view) {
                 return ALG_E_INVALID_ARG;
             view->plane[1] = view->plane[0] + y_or_packed_bytes;
             view->stride[1] = stride;
-        } else if (image.data_len > 0 &&
-                   static_cast<size_t>(image.data_len) < y_or_packed_bytes) {
+        } else if (image.data_len > 0 && static_cast<size_t>(image.data_len) < y_or_packed_bytes) {
             return ALG_E_INVALID_ARG;
         }
         return ALG_OK;
     }
 
     view->uses_separate_planes = true;
-    if (!image.plane_data[0]) return ALG_E_INVALID_ARG;
+    if (!image.plane_data[0])
+        return ALG_E_INVALID_ARG;
     for (int i = 0; i < ALG_MAX_IMAGE_PLANES; ++i) {
         if (image.plane_stride[i] < 0 || image.plane_data_len[i] < 0)
             return ALG_E_INVALID_ARG;
@@ -104,29 +104,26 @@ inline Status ResolveImageView(const AlgImage& image, ImageView* view) {
         view->data_len[i] = image.plane_data_len[i];
     }
 
-    view->stride[0] = view->stride[0] > 0
-        ? view->stride[0]
-        : (image.stride > 0 ? image.stride : packed_row_bytes);
-    if (view->stride[0] < packed_row_bytes) return ALG_E_INVALID_ARG;
+    view->stride[0] = view->stride[0] > 0 ? view->stride[0] : (image.stride > 0 ? image.stride : packed_row_bytes);
+    if (view->stride[0] < packed_row_bytes)
+        return ALG_E_INVALID_ARG;
     size_t plane0_bytes = 0;
     if (!CheckedPlaneByteSize(view->stride[0], image.height, &plane0_bytes))
         return ALG_E_INVALID_ARG;
-    if (view->data_len[0] > 0 &&
-        static_cast<size_t>(view->data_len[0]) < plane0_bytes) {
+    if (view->data_len[0] > 0 && static_cast<size_t>(view->data_len[0]) < plane0_bytes) {
         return ALG_E_INVALID_ARG;
     }
 
     if (IsYuv420Sp(image.format)) {
-        if (!view->plane[1]) return ALG_E_INVALID_ARG;
-        view->stride[1] = view->stride[1] > 0
-            ? view->stride[1]
-            : (image.stride > 0 ? image.stride : image.width);
-        if (view->stride[1] < image.width) return ALG_E_INVALID_ARG;
+        if (!view->plane[1])
+            return ALG_E_INVALID_ARG;
+        view->stride[1] = view->stride[1] > 0 ? view->stride[1] : (image.stride > 0 ? image.stride : image.width);
+        if (view->stride[1] < image.width)
+            return ALG_E_INVALID_ARG;
         size_t plane1_bytes = 0;
         if (!CheckedPlaneByteSize(view->stride[1], image.height / 2, &plane1_bytes))
             return ALG_E_INVALID_ARG;
-        if (view->data_len[1] > 0 &&
-            static_cast<size_t>(view->data_len[1]) < plane1_bytes) {
+        if (view->data_len[1] > 0 && static_cast<size_t>(view->data_len[1]) < plane1_bytes) {
             return ALG_E_INVALID_ARG;
         }
     }

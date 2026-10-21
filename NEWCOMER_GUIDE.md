@@ -6,7 +6,7 @@
 
 SDK 通过六个 C 函数完成实例管理、同步推理和日志控制，公共结果包含限速牌、禁令 / 停车牌和车牌。红绿灯模型及处理流程保留在工程内部，未纳入公共结果结构。
 
-应用接入需要准备目标架构、后端运行库、配套模型和业务配置。XMM、SVP ACL 和 MNN 提供推理实现；RK 保留接口桩，不用于业务验证。
+应用接入需要准备目标架构、后端运行库、配套模型和业务配置。XMM、SVP ACL（Hi3516CV610 / Hi3519DV500）和 MNN 提供推理实现；RK 保留接口桩，不用于业务验证。
 
 ## 2. 构建和验证
 
@@ -14,20 +14,26 @@ SDK 通过六个 C 函数完成实例管理、同步推理和日志控制，公�
 
 ```bash
 ./build.sh linux aarch64 xmm
-./build.sh linux aarch64 svp_acl
+./build.sh linux aarch64 svp_acl_cv610   # 旧写法 svp_acl 等价
+./build.sh linux aarch64 svp_acl_dv500
 ./build.sh linux x86_64 mnn
 ```
 
-构建目录默认为 `build_linux_<arch>_<backend>/`。脚本会清理对应目录后重新构建，测试数据及交付文件应保存在目录之外。海思构建参数沿用 `aarch64` 名称，实际工具链为 ARM 32 位 `arm-linux-musleabi`。
+构建目录默认为 `build_linux_<arch>_<backend>/`。脚本会清理对应目录后重新构建，测试数据及交付文件应保存在目录之外。海思构建参数沿用 `aarch64` 名称：`svp_acl_cv610` 实际工具链为 ARM 32 位 `arm-linux-musleabi`，`svp_acl_dv500` 为 aarch64。
 
-程序在匹配的运行环境中执行。以海思构建目录为例：
+各后端的配置与模型分目录存放（`resources/config/svp_acl/<chip>/`、`resources/model/svp_acl/<chip>/`），
+`<chip>` 为 `cv610`（CV610）或 `dv500`（DV500）。
+
+程序在匹配的运行环境中执行。以 DV500 构建目录为例：
 
 ```bash
-cd build_linux_aarch64_svp_acl
-./test_runner ../resources/config/svp_acl/speed_limit.json /data/test.jpg out
-./test_runner ../resources/config/svp_acl/license_plate.json /data/plate.jpg out
-./loop_runner ../resources/config/svp_acl/all.json /data/test.jpg -n 1000
+cd build_linux_aarch64_svp_acl_dv500
+./test_runner ../resources/config/svp_acl/dv500/speed_limit.json /data/test.jpg out
+./test_runner ../resources/config/svp_acl/dv500/license_plate.json /data/plate.jpg out
+./loop_runner ../resources/config/svp_acl/dv500/all.json /data/test.jpg -n 1000
 ```
+
+CV610 把上述路径中的 `dv500` 换成 `cv610`、构建目录换成 `build_linux_aarch64_svp_acl_cv610`。
 
 `test_runner` 支持图片或图片目录，输出结果明细和标注图片。`loop_runner` 用于连续推理验证，可使用 `-n` 指定循环次数，使用 `-size`、`-fmt` 指定原始 YUV 帧的尺寸和格式。
 
@@ -117,6 +123,11 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 图片文件应先解码为像素再传入。JSON 的 `preprocess.color` 定义模型输入颜色顺序，`AlgImage.format` 定义源图像格式，两者不要求相同。
 
 海思 VPSS 实时流使用 `AlgRun`：连续 NV12/NV21 的 `data` 直接绑定动态 AIPP；Y 与 UV/VU 地址分离时，同时传入两个物理地址，由 IVE 缩放并写入 SDK 复用的连续 MMZ，随后零拷贝绑定 ACL。普通内存测试数据没有物理地址时才走 libyuv 回退。IVE/AIPP/模型图分别承担缩放、CSC/归一化和 padding，不需要额外创建模型尺寸的 VPSS 通道。调用方输入在 `AlgRun` 返回前须保持有效。
+
+DV500 目标没有 IVE，且它的 AIPP 不能负责缩放（大图缩放会固定多出约 128ms/帧）。
+送进 `AlgRun` 的帧需要已经是配置里的 `aipp_output_size`：默认由 SDK 内部用 libyuv 预缩放
+（`ALG_AIPP_SCALE_AUTO`），也可以由 VPSS 直接出这个尺寸的通道并切到
+`ALG_AIPP_SCALE_EXTERNAL` 把 CPU 开销降到零。
 
 ## 5. 配置与执行关系
 

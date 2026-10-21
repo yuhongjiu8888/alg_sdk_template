@@ -3,8 +3,7 @@
 
 namespace alg {
 
-REGISTER_ALG_POST("dualhead_classifier", []{
-    return std::unique_ptr<IPostprocessor>(new DualheadClassifierPostprocessor());
-});
+REGISTER_ALG_POST("dualhead_classifier",
+                  [] { return std::unique_ptr<IPostprocessor>(new DualheadClassifierPostprocessor()); });
 
 }  // namespace alg

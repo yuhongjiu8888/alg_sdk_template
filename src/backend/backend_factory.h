@@ -7,14 +7,13 @@
 #define ALG_BACKEND_BACKEND_FACTORY_H
 
 #include <memory>
-
 #include "core/infer/inferer.h"
 
 namespace alg {
 
 /* Implemented in src/backend/<chip>/<chip>_backend.cpp. CMake links exactly one. */
 std::unique_ptr<IInferer> MakeInferer();
-const char*               BackendName();
+const char* BackendName();
 
 }  // namespace alg
 

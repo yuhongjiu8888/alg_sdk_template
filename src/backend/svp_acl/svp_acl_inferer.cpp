@@ -1,5 +1,5 @@
 #include "backend/svp_acl/svp_acl_inferer.h"
-
+#include <sys/time.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -7,17 +7,20 @@
 #include <limits>
 #include <vector>
 
-#include <sys/time.h>
-
 #ifdef ALG_SVP_IVE_PREPROCESS
 #include <unistd.h>
 #endif
 
 #include "core/image_view.h"
+#include "core/infer/aipp_scale.h"
 #include "core/logger.h"
 
-#ifdef ALG_SVP_DYNAMIC_AIPP
+#ifdef ALG_SVP_LIBYUV_FALLBACK
+/* libyuv 服务于 AIPP staging 的准备：分平面合并（NV12Copy/NV21Copy），
+ * 以及 DV500 上替代 AIPP 缩放的 CPU 预缩放（NV12Scale + kFilterBox）。
+ * 预编译库按架构放在 third_party/libyuv/ 下，由 CMake 按芯片选择。 */
 #include "libyuv/planar_functions.h"
+#include "libyuv/scale.h"
 #endif
 
 #ifdef ALG_SVP_IVE_PREPROCESS
@@ -25,8 +28,8 @@
  * ss_mpi_sys_mmz_* 接口是同一实现的兼容命名。随附 SVP 头文件不包含
  * ss_mpi_sys.h，因此在此按官方原型作私有声明。 */
 extern "C" {
-td_s32 ot_mpi_sys_mmz_alloc(td_phys_addr_t* phys_addr, td_void** virt_addr,
-                            const td_char* mmb, const td_char* zone, td_u32 len);
+td_s32 ot_mpi_sys_mmz_alloc(
+    td_phys_addr_t* phys_addr, td_void** virt_addr, const td_char* mmb, const td_char* zone, td_u32 len);
 td_s32 ot_mpi_sys_mmz_free(td_phys_addr_t phys_addr, td_void* virt_addr);
 }
 #endif
@@ -35,14 +38,13 @@ namespace alg {
 namespace {
 
 inline double ElapsedMs(const timeval& begin, const timeval& end) {
-    return (end.tv_sec - begin.tv_sec) * 1000.0 +
-           (end.tv_usec - begin.tv_usec) / 1000.0;
+    return (end.tv_sec - begin.tv_sec) * 1000.0 + (end.tv_usec - begin.tv_usec) / 1000.0;
 }
 
 struct SvpAclRuntime {
-    int                refcount = 0;
+    int refcount = 0;
     svp_acl_rt_context context = nullptr;
-    bool               device_set = false;
+    bool device_set = false;
 
     svp_acl_error Acquire() {
         if (refcount > 0) {
@@ -74,7 +76,8 @@ struct SvpAclRuntime {
     }
 
     void Release() {
-        if (refcount <= 0 || --refcount > 0) return;
+        if (refcount <= 0 || --refcount > 0)
+            return;
         if (context) {
             (void)svp_acl_rt_destroy_context(context);
             context = nullptr;
@@ -91,25 +94,33 @@ SvpAclRuntime g_runtime;
 
 bool ReadFile(const std::string& path, std::vector<uint8_t>* bytes) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) return false;
+    if (!file)
+        return false;
     const std::streamsize size = file.tellg();
-    if (size <= 0) return false;
+    if (size <= 0)
+        return false;
     bytes->resize(static_cast<size_t>(size));
     file.seekg(0);
-    return static_cast<bool>(
-        file.read(reinterpret_cast<char*>(bytes->data()), size));
+    return static_cast<bool>(file.read(reinterpret_cast<char*>(bytes->data()), size));
 }
 
 DataType MapDtype(svp_acl_data_type type, bool* supported) {
     *supported = true;
     switch (type) {
-        case SVP_ACL_UINT8:  return DataType::kU8;
-        case SVP_ACL_INT8:   return DataType::kI8;
-        case SVP_ACL_UINT16: return DataType::kU16;
-        case SVP_ACL_INT16:  return DataType::kI16;
-        case SVP_ACL_FLOAT16:return DataType::kF16;
-        case SVP_ACL_FLOAT:  return DataType::kF32;
-        case SVP_ACL_INT32:  return DataType::kI32;
+        case SVP_ACL_UINT8:
+            return DataType::kU8;
+        case SVP_ACL_INT8:
+            return DataType::kI8;
+        case SVP_ACL_UINT16:
+            return DataType::kU16;
+        case SVP_ACL_INT16:
+            return DataType::kI16;
+        case SVP_ACL_FLOAT16:
+            return DataType::kF16;
+        case SVP_ACL_FLOAT:
+            return DataType::kF32;
+        case SVP_ACL_INT32:
+            return DataType::kI32;
         default:
             *supported = false;
             return DataType::kU8;
@@ -117,18 +128,19 @@ DataType MapDtype(svp_acl_data_type type, bool* supported) {
 }
 
 bool IsAuxiliaryInput(const char* name) {
-    if (!name) return false;
-    return std::strcmp(name, "task_buf") == 0 ||
-           std::strcmp(name, "work_buf") == 0;
+    if (!name)
+        return false;
+    return std::strcmp(name, "task_buf") == 0 || std::strcmp(name, "work_buf") == 0;
 }
 
 void DestroyDataset(svp_acl_mdl_dataset*& dataset) {
-    if (!dataset) return;
+    if (!dataset)
+        return;
     const size_t count = svp_acl_mdl_get_dataset_num_buffers(dataset);
     for (size_t i = 0; i < count; ++i) {
-        svp_acl_data_buffer* buffer =
-            svp_acl_mdl_get_dataset_buffer(dataset, i);
-        if (!buffer) continue;
+        svp_acl_data_buffer* buffer = svp_acl_mdl_get_dataset_buffer(dataset, i);
+        if (!buffer)
+            continue;
         (void)svp_acl_destroy_data_buffer(buffer);
     }
     (void)svp_acl_mdl_destroy_dataset(dataset);
@@ -138,7 +150,8 @@ void DestroyDataset(svp_acl_mdl_dataset*& dataset) {
 std::string DimsString(const svp_acl_mdl_io_dims& dims) {
     std::string text;
     for (size_t i = 0; i < dims.dim_count; ++i) {
-        if (i) text += "x";
+        if (i)
+            text += "x";
         text += std::to_string(dims.dims[i]);
     }
     return text;
@@ -163,8 +176,7 @@ Status MakeTensorView(const svp_acl_mdl_io_dims& dims,
         return ALG_E_BACKEND;
     }
     if (dims.dim_count > static_cast<size_t>(Shape::kMaxDims)) {
-        ALG_LOGE("svp_acl: tensor '%s' has too many dims=%zu",
-                 dims.name, dims.dim_count);
+        ALG_LOGE("svp_acl: tensor '%s' has too many dims=%zu", dims.name, dims.dim_count);
         return ALG_E_BACKEND;
     }
     const int bytes = BytesPerElement(dtype);
@@ -173,12 +185,10 @@ Status MakeTensorView(const svp_acl_mdl_io_dims& dims,
      * 由按行读取的后处理器（lprnet_rec 等）负责按 row_stride 定位。 */
     size_t row_stride = 0;
     if (dims.dim_count > 0) {
-        const size_t dense_row =
-            static_cast<size_t>(dims.dims[dims.dim_count - 1]) * bytes;
+        const size_t dense_row = static_cast<size_t>(dims.dims[dims.dim_count - 1]) * bytes;
         if (stride != dense_row) {
             row_stride = stride;
-            ALG_LOGI("svp_acl: tensor '%s' has padded row stride %zu (dense %zu)",
-                     dims.name, stride, dense_row);
+            ALG_LOGI("svp_acl: tensor '%s' has padded row stride %zu (dense %zu)", dims.name, stride, dense_row);
         }
     }
     view->name = dims.name;
@@ -198,7 +208,9 @@ Status MakeTensorView(const svp_acl_mdl_io_dims& dims,
 
 }  // namespace
 
-SvpAclInferer::~SvpAclInferer() { FreeAll(); }
+SvpAclInferer::~SvpAclInferer() {
+    FreeAll();
+}
 
 void SvpAclInferer::FreeAll() {
 #ifdef ALG_SVP_DYNAMIC_AIPP
@@ -211,6 +223,7 @@ void SvpAclInferer::FreeAll() {
     own_image_input_ = nullptr;
     image_input_preflushed_ = false;
     split_copy_path_reported_ = false;
+    cpu_prescale_reported_ = false;
 #ifdef ALG_SVP_IVE_PREPROCESS
     ive_path_reported_ = false;
 #endif
@@ -224,9 +237,11 @@ void SvpAclInferer::FreeAll() {
     FreeIveBuffers();
 #endif
     for (void* memory : input_allocations_)
-        if (memory) (void)svp_acl_rt_free(memory);
+        if (memory)
+            (void)svp_acl_rt_free(memory);
     for (void* memory : output_allocations_)
-        if (memory) (void)svp_acl_rt_free(memory);
+        if (memory)
+            (void)svp_acl_rt_free(memory);
     input_allocations_.clear();
     output_allocations_.clear();
     if (model_desc_) {
@@ -251,8 +266,10 @@ void SvpAclInferer::FreeAll() {
 }
 
 Status SvpAclInferer::Load(const std::string& model_path) {
-    if (initialized_) return ALG_E_INVALID_ARG;
-    if (g_runtime.Acquire() != SVP_ACL_SUCCESS) return ALG_E_BACKEND;
+    if (initialized_)
+        return ALG_E_INVALID_ARG;
+    if (g_runtime.Acquire() != SVP_ACL_SUCCESS)
+        return ALG_E_BACKEND;
     runtime_acquired_ = true;
 
     Status status = ALG_E_BACKEND;
@@ -263,8 +280,7 @@ Status SvpAclInferer::Load(const std::string& model_path) {
             break;
         }
         model_size_ = model_file.size();
-        svp_acl_error ret = svp_acl_rt_malloc_cached(
-            &model_memory_, model_size_, SVP_ACL_MEM_MALLOC_HUGE_FIRST);
+        svp_acl_error ret = svp_acl_rt_malloc_cached(&model_memory_, model_size_, SVP_ACL_MEM_MALLOC_HUGE_FIRST);
         if (ret != SVP_ACL_SUCCESS) {
             ALG_LOGE("svp_acl: alloc model memory failed, ret=%d", ret);
             break;
@@ -275,8 +291,7 @@ Status SvpAclInferer::Load(const std::string& model_path) {
             ALG_LOGE("svp_acl: flush model memory failed, ret=%d", ret);
             break;
         }
-        ret = svp_acl_mdl_load_from_mem(
-            model_memory_, model_size_, &model_id_);
+        ret = svp_acl_mdl_load_from_mem(model_memory_, model_size_, &model_id_);
         if (ret != SVP_ACL_SUCCESS) {
             ALG_LOGE("svp_acl: load model failed, ret=%d", ret);
             break;
@@ -302,9 +317,14 @@ Status SvpAclInferer::Load(const std::string& model_path) {
 
         const size_t input_count = svp_acl_mdl_get_num_inputs(model_desc_);
         const size_t output_count = svp_acl_mdl_get_num_outputs(model_desc_);
-        ALG_LOGI("svp_acl: model='%s' inputs=%zu outputs=%zu",
-                 model_path.c_str(), input_count, output_count);
-        if (input_count == 0 || output_count == 0) break;
+#ifdef ALG_SVP_CHIP
+        ALG_LOGI("svp_acl: chip=%s model='%s' inputs=%zu outputs=%zu", ALG_SVP_CHIP, model_path.c_str(), input_count,
+                 output_count);
+#else
+        ALG_LOGI("svp_acl: model='%s' inputs=%zu outputs=%zu", model_path.c_str(), input_count, output_count);
+#endif
+        if (input_count == 0 || output_count == 0)
+            break;
         input_allocations_.assign(input_count, nullptr);
         output_allocations_.assign(output_count, nullptr);
 
@@ -314,10 +334,8 @@ Status SvpAclInferer::Load(const std::string& model_path) {
         for (size_t i = 0; i < input_count; ++i) {
             svp_acl_mdl_aipp_type aipp_type{};
             size_t attached_index = static_cast<size_t>(-1);
-            ret = svp_acl_mdl_get_input_aipp_type(
-                model_id_, i, &aipp_type, &attached_index);
-            if (ret == SVP_ACL_SUCCESS &&
-                aipp_type == SVP_ACL_DATA_WITH_DYNAMIC_AIPP) {
+            ret = svp_acl_mdl_get_input_aipp_type(model_id_, i, &aipp_type, &attached_index);
+            if (ret == SVP_ACL_SUCCESS && aipp_type == SVP_ACL_DATA_WITH_DYNAMIC_AIPP) {
                 image_input_index_ = i;
                 dynamic_aipp_input_index_ = attached_index;
                 break;
@@ -329,32 +347,33 @@ Status SvpAclInferer::Load(const std::string& model_path) {
         for (size_t i = 0; i < input_count; ++i) {
             svp_acl_mdl_io_dims dims{};
             ret = svp_acl_mdl_get_input_dims(model_desc_, i, &dims);
-            if (ret != SVP_ACL_SUCCESS) { io_ok = false; break; }
-            const size_t size =
-                svp_acl_mdl_get_input_size_by_index(model_desc_, i);
-            const size_t stride =
-                svp_acl_mdl_get_input_default_stride(model_desc_, i);
+            if (ret != SVP_ACL_SUCCESS) {
+                io_ok = false;
+                break;
+            }
+            const size_t size = svp_acl_mdl_get_input_size_by_index(model_desc_, i);
+            const size_t stride = svp_acl_mdl_get_input_default_stride(model_desc_, i);
             void* memory = nullptr;
-            ret = svp_acl_rt_malloc_cached(
-                &memory, size, SVP_ACL_MEM_MALLOC_NORMAL_ONLY);
-            if (ret != SVP_ACL_SUCCESS) { io_ok = false; break; }
+            ret = svp_acl_rt_malloc_cached(&memory, size, SVP_ACL_MEM_MALLOC_NORMAL_ONLY);
+            if (ret != SVP_ACL_SUCCESS) {
+                io_ok = false;
+                break;
+            }
             bool runtime_filled_aipp = false;
 #ifdef ALG_SVP_DYNAMIC_AIPP
             runtime_filled_aipp = i == dynamic_aipp_input_index_;
 #endif
-            if (!runtime_filled_aipp) std::memset(memory, 0, size);
-            if (!runtime_filled_aipp &&
-                svp_acl_rt_mem_flush(memory, size) != SVP_ACL_SUCCESS) {
+            if (!runtime_filled_aipp)
+                std::memset(memory, 0, size);
+            if (!runtime_filled_aipp && svp_acl_rt_mem_flush(memory, size) != SVP_ACL_SUCCESS) {
                 (void)svp_acl_rt_free(memory);
                 io_ok = false;
                 break;
             }
-            svp_acl_data_buffer* buffer =
-                svp_acl_create_data_buffer(memory, size, stride);
-            if (!buffer ||
-                svp_acl_mdl_add_dataset_buffer(input_dataset_, buffer) !=
-                    SVP_ACL_SUCCESS) {
-                if (buffer) (void)svp_acl_destroy_data_buffer(buffer);
+            svp_acl_data_buffer* buffer = svp_acl_create_data_buffer(memory, size, stride);
+            if (!buffer || svp_acl_mdl_add_dataset_buffer(input_dataset_, buffer) != SVP_ACL_SUCCESS) {
+                if (buffer)
+                    (void)svp_acl_destroy_data_buffer(buffer);
                 (void)svp_acl_rt_free(memory);
                 io_ok = false;
                 break;
@@ -371,9 +390,8 @@ Status SvpAclInferer::Load(const std::string& model_path) {
             ALG_LOGI("svp_acl: input[%zu] name='%s' shape=%s dtype=%d "
                      "size=%zu stride=%zu%s",
                      i, dims.name, DimsString(dims).c_str(),
-                     static_cast<int>(
-                         svp_acl_mdl_get_input_data_type(model_desc_, i)),
-                     size, stride, auxiliary ? " auxiliary" : "");
+                     static_cast<int>(svp_acl_mdl_get_input_data_type(model_desc_, i)), size, stride,
+                     auxiliary ? " auxiliary" : "");
             if (!auxiliary && i != image_input_index_) {
                 if (image_input_index_ != static_cast<size_t>(-1)) {
                     ALG_LOGE("svp_acl: multiple business inputs are not supported");
@@ -383,7 +401,8 @@ Status SvpAclInferer::Load(const std::string& model_path) {
                 image_input_index_ = i;
             }
         }
-        if (!io_ok || image_input_index_ == static_cast<size_t>(-1)) break;
+        if (!io_ok || image_input_index_ == static_cast<size_t>(-1))
+            break;
 
 #ifdef ALG_SVP_DYNAMIC_AIPP
         if (dynamic_aipp_input_index_ != static_cast<size_t>(-1)) {
@@ -398,21 +417,22 @@ Status SvpAclInferer::Load(const std::string& model_path) {
         for (size_t i = 0; i < output_count; ++i) {
             svp_acl_mdl_io_dims dims{};
             ret = svp_acl_mdl_get_output_dims(model_desc_, i, &dims);
-            if (ret != SVP_ACL_SUCCESS) { io_ok = false; break; }
-            const size_t size =
-                svp_acl_mdl_get_output_size_by_index(model_desc_, i);
-            const size_t stride =
-                svp_acl_mdl_get_output_default_stride(model_desc_, i);
+            if (ret != SVP_ACL_SUCCESS) {
+                io_ok = false;
+                break;
+            }
+            const size_t size = svp_acl_mdl_get_output_size_by_index(model_desc_, i);
+            const size_t stride = svp_acl_mdl_get_output_default_stride(model_desc_, i);
             void* memory = nullptr;
-            ret = svp_acl_rt_malloc_cached(
-                &memory, size, SVP_ACL_MEM_MALLOC_NORMAL_ONLY);
-            if (ret != SVP_ACL_SUCCESS) { io_ok = false; break; }
-            svp_acl_data_buffer* buffer =
-                svp_acl_create_data_buffer(memory, size, stride);
-            if (!buffer ||
-                svp_acl_mdl_add_dataset_buffer(output_dataset_, buffer) !=
-                    SVP_ACL_SUCCESS) {
-                if (buffer) (void)svp_acl_destroy_data_buffer(buffer);
+            ret = svp_acl_rt_malloc_cached(&memory, size, SVP_ACL_MEM_MALLOC_NORMAL_ONLY);
+            if (ret != SVP_ACL_SUCCESS) {
+                io_ok = false;
+                break;
+            }
+            svp_acl_data_buffer* buffer = svp_acl_create_data_buffer(memory, size, stride);
+            if (!buffer || svp_acl_mdl_add_dataset_buffer(output_dataset_, buffer) != SVP_ACL_SUCCESS) {
+                if (buffer)
+                    (void)svp_acl_destroy_data_buffer(buffer);
                 (void)svp_acl_rt_free(memory);
                 io_ok = false;
                 break;
@@ -421,19 +441,20 @@ Status SvpAclInferer::Load(const std::string& model_path) {
             ALG_LOGI("svp_acl: output[%zu] name='%s' shape=%s dtype=%d "
                      "size=%zu stride=%zu",
                      i, dims.name, DimsString(dims).c_str(),
-                     static_cast<int>(
-                         svp_acl_mdl_get_output_data_type(model_desc_, i)),
-                     size, stride);
+                     static_cast<int>(svp_acl_mdl_get_output_data_type(model_desc_, i)), size, stride);
         }
-        if (!io_ok) break;
+        if (!io_ok)
+            break;
 
         status = BuildViews();
-        if (status != ALG_OK) break;
+        if (status != ALG_OK)
+            break;
         initialized_ = true;
         status = ALG_OK;
     } while (false);
 
-    if (status != ALG_OK) FreeAll();
+    if (status != ALG_OK)
+        FreeAll();
     return status;
 }
 
@@ -443,38 +464,32 @@ Status SvpAclInferer::BuildViews() {
     output_raw_indices_.clear();
 
     svp_acl_mdl_io_dims input_dims{};
-    svp_acl_error ret = svp_acl_mdl_get_input_dims(
-        model_desc_, image_input_index_, &input_dims);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_BACKEND;
-    svp_acl_data_buffer* input_buffer =
-        svp_acl_mdl_get_dataset_buffer(input_dataset_, image_input_index_);
+    svp_acl_error ret = svp_acl_mdl_get_input_dims(model_desc_, image_input_index_, &input_dims);
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_BACKEND;
+    svp_acl_data_buffer* input_buffer = svp_acl_mdl_get_dataset_buffer(input_dataset_, image_input_index_);
     TensorView input;
-    Status status = MakeTensorView(
-        input_dims,
-        svp_acl_mdl_get_input_data_type(model_desc_, image_input_index_),
-        svp_acl_get_data_buffer_addr(input_buffer),
-        svp_acl_get_data_buffer_size(input_buffer),
-        svp_acl_mdl_get_input_default_stride(
-            model_desc_, image_input_index_),
-        &input);
-    if (status != ALG_OK) return status;
+    Status status =
+        MakeTensorView(input_dims, svp_acl_mdl_get_input_data_type(model_desc_, image_input_index_),
+                       svp_acl_get_data_buffer_addr(input_buffer), svp_acl_get_data_buffer_size(input_buffer),
+                       svp_acl_mdl_get_input_default_stride(model_desc_, image_input_index_), &input);
+    if (status != ALG_OK)
+        return status;
     input_views_.push_back(std::move(input));
 
     const size_t output_count = svp_acl_mdl_get_num_outputs(model_desc_);
     for (size_t i = 0; i < output_count; ++i) {
         svp_acl_mdl_io_dims dims{};
         ret = svp_acl_mdl_get_output_dims(model_desc_, i, &dims);
-        if (ret != SVP_ACL_SUCCESS) return ALG_E_BACKEND;
-        svp_acl_data_buffer* buffer =
-            svp_acl_mdl_get_dataset_buffer(output_dataset_, i);
+        if (ret != SVP_ACL_SUCCESS)
+            return ALG_E_BACKEND;
+        svp_acl_data_buffer* buffer = svp_acl_mdl_get_dataset_buffer(output_dataset_, i);
         TensorView output;
-        status = MakeTensorView(
-            dims, svp_acl_mdl_get_output_data_type(model_desc_, i),
-            svp_acl_get_data_buffer_addr(buffer),
-            svp_acl_get_data_buffer_size(buffer),
-            svp_acl_mdl_get_output_default_stride(model_desc_, i),
-            &output);
-        if (status != ALG_OK) return status;
+        status = MakeTensorView(dims, svp_acl_mdl_get_output_data_type(model_desc_, i),
+                                svp_acl_get_data_buffer_addr(buffer), svp_acl_get_data_buffer_size(buffer),
+                                svp_acl_mdl_get_output_default_stride(model_desc_, i), &output);
+        if (status != ALG_OK)
+            return status;
         output_views_.push_back(std::move(output));
         output_raw_indices_.push_back(i);
     }
@@ -482,18 +497,17 @@ Status SvpAclInferer::BuildViews() {
 }
 
 Status SvpAclInferer::Forward() {
-    if (!initialized_) return ALG_E_NOT_INITIALIZED;
+    if (!initialized_)
+        return ALG_E_NOT_INITIALIZED;
 
-    svp_acl_data_buffer* image_buffer =
-        svp_acl_mdl_get_dataset_buffer(input_dataset_, image_input_index_);
+    svp_acl_data_buffer* image_buffer = svp_acl_mdl_get_dataset_buffer(input_dataset_, image_input_index_);
     svp_acl_error ret = SVP_ACL_SUCCESS;
 #ifdef ALG_SVP_DYNAMIC_AIPP
     if (!image_input_preflushed_)
 #endif
     {
-        ret = svp_acl_rt_mem_flush(
-            svp_acl_get_data_buffer_addr(image_buffer),
-            svp_acl_get_data_buffer_size(image_buffer));
+        ret = svp_acl_rt_mem_flush(svp_acl_get_data_buffer_addr(image_buffer),
+                                   svp_acl_get_data_buffer_size(image_buffer));
         if (ret != SVP_ACL_SUCCESS) {
             ALG_LOGE("svp_acl: input flush failed, ret=%d", ret);
             return ALG_E_BACKEND;
@@ -510,11 +524,8 @@ Status SvpAclInferer::Forward() {
     }
 
     for (size_t raw_index : output_raw_indices_) {
-        svp_acl_data_buffer* buffer =
-            svp_acl_mdl_get_dataset_buffer(output_dataset_, raw_index);
-        ret = svp_acl_rt_mem_invalidate(
-            svp_acl_get_data_buffer_addr(buffer),
-            svp_acl_get_data_buffer_size(buffer));
+        svp_acl_data_buffer* buffer = svp_acl_mdl_get_dataset_buffer(output_dataset_, raw_index);
+        ret = svp_acl_rt_mem_invalidate(svp_acl_get_data_buffer_addr(buffer), svp_acl_get_data_buffer_size(buffer));
         if (ret != SVP_ACL_SUCCESS) {
             ALG_LOGE("svp_acl: output invalidate failed, ret=%d", ret);
             return ALG_E_BACKEND;
@@ -533,16 +544,15 @@ bool SvpAclInferer::SupportsDynamicAipp() const {
 
 #ifdef ALG_SVP_DYNAMIC_AIPP
 Status SvpAclInferer::EnsureOwnImageInput() {
-    if (own_image_input_) return ALG_OK;
-    if (image_input_index_ == static_cast<size_t>(-1) ||
-        image_input_capacity_ == 0 ||
+    if (own_image_input_)
+        return ALG_OK;
+    if (image_input_index_ == static_cast<size_t>(-1) || image_input_capacity_ == 0 ||
         image_input_index_ >= input_allocations_.size()) {
         return ALG_E_BACKEND;
     }
 
     void* memory = nullptr;
-    svp_acl_error ret = svp_acl_rt_malloc_cached(
-        &memory, image_input_capacity_, SVP_ACL_MEM_MALLOC_NORMAL_ONLY);
+    svp_acl_error ret = svp_acl_rt_malloc_cached(&memory, image_input_capacity_, SVP_ACL_MEM_MALLOC_NORMAL_ONLY);
     if (ret != SVP_ACL_SUCCESS) {
         ALG_LOGE("svp_acl: allocate private AIPP input failed, ret=%d", ret);
         return ALG_E_OOM;
@@ -581,8 +591,7 @@ void SvpAclInferer::FreeIveBuffers() {
 Status SvpAclInferer::EnsureIveBuffers(int width, int height, size_t stride) {
     size_t y_bytes = 0;
     size_t uv_bytes = 0;
-    if (width <= 0 || height <= 0 || (width & 1) || (height & 1) ||
-        stride < static_cast<size_t>(width) ||
+    if (width <= 0 || height <= 0 || (width & 1) || (height & 1) || stride < static_cast<size_t>(width) ||
         stride > static_cast<size_t>(std::numeric_limits<int>::max()) ||
         !CheckedPlaneByteSize(static_cast<int>(stride), height, &y_bytes) ||
         !CheckedPlaneByteSize(static_cast<int>(stride), height / 2, &uv_bytes) ||
@@ -601,12 +610,10 @@ Status SvpAclInferer::EnsureIveBuffers(int width, int height, size_t stride) {
             ive_output_capacity_ = 0;
         }
         td_void* virt = nullptr;
-        const td_s32 ret = ot_mpi_sys_mmz_alloc(
-            &ive_output_phys_, &virt, "alg_ive_aipp", nullptr,
-            static_cast<td_u32>(output_bytes));
+        const td_s32 ret =
+            ot_mpi_sys_mmz_alloc(&ive_output_phys_, &virt, "alg_ive_aipp", nullptr, static_cast<td_u32>(output_bytes));
         if (ret != TD_SUCCESS || !virt) {
-            ALG_LOGE("svp_acl: allocate IVE output MMZ (%zu bytes) failed, ret=%d",
-                     output_bytes, ret);
+            ALG_LOGE("svp_acl: allocate IVE output MMZ (%zu bytes) failed, ret=%d", output_bytes, ret);
             ive_output_phys_ = 0;
             return ALG_E_OOM;
         }
@@ -620,9 +627,8 @@ Status SvpAclInferer::EnsureIveBuffers(int width, int height, size_t stride) {
     const size_t assist_bytes = kResizeAssistBytes;
     if (!ive_assist_virt_) {
         td_void* virt = nullptr;
-        const td_s32 ret = ot_mpi_sys_mmz_alloc(
-            &ive_assist_phys_, &virt, "alg_ive_resize", nullptr,
-            static_cast<td_u32>(assist_bytes));
+        const td_s32 ret = ot_mpi_sys_mmz_alloc(&ive_assist_phys_, &virt, "alg_ive_resize", nullptr,
+                                                static_cast<td_u32>(assist_bytes));
         if (ret != TD_SUCCESS || !virt) {
             ALG_LOGE("svp_acl: allocate IVE resize assist MMZ failed, ret=%d", ret);
             ive_assist_phys_ = 0;
@@ -641,25 +647,29 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
                                          PreprocessState& state,
                                          SharedInputStaging* shared_staging) {
 #ifndef ALG_SVP_DYNAMIC_AIPP
-    (void)image; (void)cfg; (void)state; (void)shared_staging;
+    (void)image;
+    (void)cfg;
+    (void)state;
+    (void)shared_staging;
     return ALG_E_BACKEND;
 #else
-    if (!initialized_ || !dynamic_aipp_) return ALG_E_NOT_INITIALIZED;
-    if (image.width <= 0 || image.height <= 0 ||
-        (image.width & 1) || (image.height & 1) ||
+    if (!initialized_ || !dynamic_aipp_)
+        return ALG_E_NOT_INITIALIZED;
+    if (image.width <= 0 || image.height <= 0 || (image.width & 1) || (image.height & 1) ||
         (image.format != ALG_PIX_NV12 && image.format != ALG_PIX_NV21)) {
         return ALG_E_INVALID_ARG;
     }
     ImageView source;
     Status resolve_status = ResolveImageView(image, &source);
-    if (resolve_status != ALG_OK) return resolve_status;
+    if (resolve_status != ALG_OK)
+        return resolve_status;
     if ((cfg.input_format == InputFormatPolicy::kNV12 && image.format != ALG_PIX_NV12) ||
         (cfg.input_format == InputFormatPolicy::kNV21 && image.format != ALG_PIX_NV21)) {
         return ALG_E_INVALID_ARG;
     }
     if (image.width > cfg.max_input_width || image.height > cfg.max_input_height) {
-        ALG_LOGE("svp_acl: AIPP source %dx%d exceeds configured maximum %dx%d",
-                 image.width, image.height, cfg.max_input_width, cfg.max_input_height);
+        ALG_LOGE("svp_acl: AIPP source %dx%d exceeds configured maximum %dx%d", image.width, image.height,
+                 cfg.max_input_width, cfg.max_input_height);
         return ALG_E_PREPROCESS;
     }
     if (cfg.color == ColorOrder::kGray) {
@@ -685,14 +695,12 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     if (cfg.resize != ResizeMode::kStretch) {
         switch (cfg.resize) {
             case ResizeMode::kLetterboxTL:
-                scale_ratio = static_cast<float>(cfg.net_width) /
-                              std::max(image.width, image.height);
+                scale_ratio = static_cast<float>(cfg.net_width) / std::max(image.width, image.height);
                 break;
             case ResizeMode::kLetterboxTLFit:
             case ResizeMode::kLetterboxCenter:
-                scale_ratio = std::min(
-                    static_cast<float>(cfg.net_width) / image.width,
-                    static_cast<float>(cfg.net_height) / image.height);
+                scale_ratio = std::min(static_cast<float>(cfg.net_width) / image.width,
+                                       static_cast<float>(cfg.net_height) / image.height);
                 break;
             case ResizeMode::kStretch:
                 break;
@@ -705,16 +713,13 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         }
         const int pad_right = cfg.net_width - output_width - pad_left;
         const int pad_bottom = cfg.net_height - output_height - pad_top;
-        if (output_width != cfg.aipp_output_width ||
-            output_height != cfg.aipp_output_height ||
-            pad_left != cfg.graph_pad_left || pad_top != cfg.graph_pad_top ||
-            pad_right != cfg.graph_pad_right || pad_bottom != cfg.graph_pad_bottom) {
+        if (output_width != cfg.aipp_output_width || output_height != cfg.aipp_output_height ||
+            pad_left != cfg.graph_pad_left || pad_top != cfg.graph_pad_top || pad_right != cfg.graph_pad_right ||
+            pad_bottom != cfg.graph_pad_bottom) {
             ALG_LOGE("svp_acl: source %dx%d produces AIPP %dx%d + pad [%d,%d,%d,%d], "
                      "but OM expects %dx%d + pad [%d,%d,%d,%d]",
-                     image.width, image.height, output_width, output_height,
-                     pad_left, pad_top, pad_right, pad_bottom,
-                     cfg.aipp_output_width, cfg.aipp_output_height,
-                     cfg.graph_pad_left, cfg.graph_pad_top,
+                     image.width, image.height, output_width, output_height, pad_left, pad_top, pad_right, pad_bottom,
+                     cfg.aipp_output_width, cfg.aipp_output_height, cfg.graph_pad_left, cfg.graph_pad_top,
                      cfg.graph_pad_right, cfg.graph_pad_bottom);
             return ALG_E_PREPROCESS;
         }
@@ -731,8 +736,7 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     const bool copy_split_planes = source.uses_separate_planes;
     const bool profile = ALG_LOG_IS_ENABLED(alg::log::Level::Info);
     const bool has_any_phys = source.phys_addr[0] != 0 || source.phys_addr[1] != 0;
-    if (copy_split_planes && has_any_phys &&
-        (source.phys_addr[0] == 0 || source.phys_addr[1] == 0)) {
+    if (copy_split_planes && has_any_phys && (source.phys_addr[0] == 0 || source.phys_addr[1] == 0)) {
         ALG_LOGE("svp_acl: split-plane IVE input requires both Y and UV/VU physical addresses");
         return ALG_E_INVALID_ARG;
     }
@@ -741,40 +745,72 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
 #else
     const bool use_ive_resize = false;
 #endif
-    const int aipp_src_width = use_ive_resize ? output_width : image.width;
-    const int aipp_src_height = use_ive_resize ? output_height : image.height;
-    if (aipp_src_width <= 0 || aipp_src_height <= 0 ||
-        (aipp_src_width & 1) || (aipp_src_height & 1)) {
-        ALG_LOGE("svp_acl: AIPP YUV size must be positive and even, got %dx%d",
-                 aipp_src_width, aipp_src_height);
+
+    /* DV500 没有 IVE，而它的 AIPP 只要参与缩放（scf_switch=2 BILINEAR）就固定多出
+     * ~128ms/帧（与源尺寸和缩放比无关）。所以这里改由 SDK 用 libyuv 先把整帧缩到
+     * aipp_output_size，让 AIPP 只做色域转换（scf_switch=0）。
+     *
+     * 两条路：
+     *   ALG_AIPP_SCALE_AUTO     —— 源尺寸不符时 SDK 内部预缩放；
+     *   ALG_AIPP_SCALE_EXTERNAL —— 缩放由调用方（VPSS 通道）完成，尺寸不符直接报错，
+     *                              不降级，避免静默掉回那 128ms 的路径。
+     * cv610 不参与：它的 IVE 路径照旧，新逻辑被 ALG_SVP_CHIP_DV500 隔离。 */
+    bool cpu_prescale = false;
+#ifdef ALG_SVP_CHIP_DV500
+    if (!use_ive_resize && (image.width != output_width || image.height != output_height)) {
+        if (alg::aipp_scale::mode() == alg::aipp_scale::Mode::kExternal) {
+            ALG_LOGE("svp_acl: aipp_scale=external but source is %dx%d, expected %dx%d "
+                     "(VPSS channel not configured for aipp_output_size?)",
+                     image.width, image.height, output_width, output_height);
+            return ALG_E_PREPROCESS;
+        }
+#ifndef ALG_SVP_LIBYUV_FALLBACK
+        ALG_LOGE("svp_acl: dv500 needs CPU pre-scale but this build has no libyuv "
+                 "(ALG_SVP_LIBYUV_FALLBACK=OFF); rebuild with libyuv or use "
+                 "AlgSetAippScaleMode(ALG_AIPP_SCALE_EXTERNAL)");
+        return ALG_E_PREPROCESS;
+#else
+        cpu_prescale = true;
+#endif
+    }
+#endif
+
+    const int aipp_src_width = (use_ive_resize || cpu_prescale) ? output_width : image.width;
+    const int aipp_src_height = (use_ive_resize || cpu_prescale) ? output_height : image.height;
+    if (aipp_src_width <= 0 || aipp_src_height <= 0 || (aipp_src_width & 1) || (aipp_src_height & 1)) {
+        ALG_LOGE("svp_acl: AIPP YUV size must be positive and even, got %dx%d", aipp_src_width, aipp_src_height);
         return ALG_E_PREPROCESS;
     }
-    if (copy_split_planes && !use_ive_resize && !split_copy_path_reported_ &&
+    if (copy_split_planes && !use_ive_resize && !cpu_prescale && !split_copy_path_reported_ &&
         ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
         ALG_LOGI("svp_acl: split-plane %s %dx%d -> libyuv copy -> shared AIPP staging",
-                 image.format == ALG_PIX_NV21 ? "NV21" : "NV12",
-                 image.width, image.height);
+                 image.format == ALG_PIX_NV21 ? "NV21" : "NV12", image.width, image.height);
         split_copy_path_reported_ = true;
     }
+    if (cpu_prescale && !cpu_prescale_reported_ && ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
+        ALG_LOGI("svp_acl: CPU pre-scale %s %dx%d -> %dx%d (libyuv kFilterBox) -> AIPP scf=0",
+                 image.format == ALG_PIX_NV21 ? "NV21" : "NV12", image.width, image.height, aipp_src_width,
+                 aipp_src_height);
+        cpu_prescale_reported_ = true;
+    }
 #ifdef ALG_SVP_IVE_PREPROCESS
-    if (use_ive_resize && !ive_path_reported_ &&
-        ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
+    if (use_ive_resize && !ive_path_reported_ && ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
         ALG_LOGI("svp_acl: split-plane %s %dx%d -> IVE resize %dx%d -> contiguous MMZ -> AIPP",
-                 image.format == ALG_PIX_NV21 ? "NV21" : "NV12",
-                 image.width, image.height, aipp_src_width, aipp_src_height);
+                 image.format == ALG_PIX_NV21 ? "NV21" : "NV12", image.width, image.height, aipp_src_width,
+                 aipp_src_height);
         ive_path_reported_ = true;
     }
 #endif
 
     timeval setup_begin{}, setup_end{};
-    if (profile) gettimeofday(&setup_begin, nullptr);
-    svp_acl_error ret = svp_acl_mdl_set_aipp_src_image_size(
-        dynamic_aipp_, aipp_src_width, aipp_src_height);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    if (profile)
+        gettimeofday(&setup_begin, nullptr);
+    svp_acl_error ret = svp_acl_mdl_set_aipp_src_image_size(dynamic_aipp_, aipp_src_width, aipp_src_height);
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
 
     int8_t uv_swap = 0;
-    const svp_acl_aipp_input_format format = image.format == ALG_PIX_NV21
-        ? SVP_ACL_YVU420SP_U8 : SVP_ACL_YUV420SP_U8;
+    const svp_acl_aipp_input_format format = image.format == ALG_PIX_NV21 ? SVP_ACL_YVU420SP_U8 : SVP_ACL_YUV420SP_U8;
     ret = svp_acl_mdl_set_aipp_input_format(dynamic_aipp_, format);
     if (ret != SVP_ACL_SUCCESS && image.format == ALG_PIX_NV21) {
         /* 部分 CV610 工具链只接受 OM 声明的 YUV420SP 枚举。保持同一套 OM，
@@ -782,46 +818,46 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         ret = svp_acl_mdl_set_aipp_input_format(dynamic_aipp_, SVP_ACL_YUV420SP_U8);
         uv_swap = 1;
     }
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
 
     /* OpenCV NV12/NV21 默认的 BT.601 limited-range YUV -> full-range RGB。 */
-    ret = svp_acl_mdl_set_aipp_csc_params(
-        dynamic_aipp_, 1,
-        1192, 0, 1634,
-        1192, -400, -833,
-        1192, 2066, 0,
-        0, 0, 0, 16, 128, 128);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    ret = svp_acl_mdl_set_aipp_csc_params(dynamic_aipp_, 1, 1192, 0, 1634, 1192, -400, -833, 1192, 2066, 0, 0, 0, 0, 16,
+                                          128, 128);
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
     ret = svp_acl_mdl_set_aipp_rbuv_swap_switch(dynamic_aipp_, uv_swap);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
     ret = svp_acl_mdl_set_aipp_ax_swap_switch(dynamic_aipp_, 0);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
 
     ret = svp_acl_mdl_set_aipp_crop_params(dynamic_aipp_, 0, 0, 0, 0, 0, 0);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
     ret = svp_acl_mdl_set_aipp_padding_params(dynamic_aipp_, 0, 0, 0, 0, 0, 0);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
 
-    const bool resize = aipp_src_width != output_width ||
-                        aipp_src_height != output_height;
-    ret = svp_acl_mdl_set_aipp_scf_params(
-        dynamic_aipp_, resize ? 2 : 0,
-        aipp_src_width, aipp_src_height, output_width, output_height, 0);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    const bool resize = aipp_src_width != output_width || aipp_src_height != output_height;
+    ret = svp_acl_mdl_set_aipp_scf_params(dynamic_aipp_, resize ? 2 : 0, aipp_src_width, aipp_src_height, output_width,
+                                          output_height, 0);
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
 
-    ret = svp_acl_mdl_set_aipp_dtc_pixel_mean(
-        dynamic_aipp_, cfg.mean[0], cfg.mean[1], cfg.mean[2], 0.0f, 0);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
-    ret = svp_acl_mdl_set_aipp_dtc_pixel_min(
-        dynamic_aipp_, 0.0f, 0.0f, 0.0f, 0.0f, 0);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
-    ret = svp_acl_mdl_set_aipp_pixel_var_reci(
-        dynamic_aipp_, cfg.scale / cfg.std[0], cfg.scale / cfg.std[1],
-        cfg.scale / cfg.std[2], 1.0f, 0);
-    if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+    ret = svp_acl_mdl_set_aipp_dtc_pixel_mean(dynamic_aipp_, cfg.mean[0], cfg.mean[1], cfg.mean[2], 0.0f, 0);
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
+    ret = svp_acl_mdl_set_aipp_dtc_pixel_min(dynamic_aipp_, 0.0f, 0.0f, 0.0f, 0.0f, 0);
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
+    ret = svp_acl_mdl_set_aipp_pixel_var_reci(dynamic_aipp_, cfg.scale / cfg.std[0], cfg.scale / cfg.std[1],
+                                              cfg.scale / cfg.std[2], 1.0f, 0);
+    if (ret != SVP_ACL_SUCCESS)
+        return ALG_E_PREPROCESS;
 
-    ret = svp_acl_mdl_set_aipp_by_input_index(
-        model_id_, input_dataset_, image_input_index_, dynamic_aipp_);
+    ret = svp_acl_mdl_set_aipp_by_input_index(model_id_, input_dataset_, image_input_index_, dynamic_aipp_);
     if (ret != SVP_ACL_SUCCESS) {
         ALG_LOGE("svp_acl: attach dynamic AIPP failed, ret=%d", ret);
         return ALG_E_PREPROCESS;
@@ -831,34 +867,30 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         state.aipp_setup_ms = ElapsedMs(setup_begin, setup_end);
     }
 
-    const size_t dst_size = svp_acl_mdl_get_input_size_by_index(
-        model_desc_, image_input_index_);
-    const size_t dst_stride = svp_acl_mdl_get_input_default_stride(
-        model_desc_, image_input_index_);
-    if (dst_size == 0 || dst_size > image_input_capacity_ ||
-        dst_stride < static_cast<size_t>(aipp_src_width) ||
+    const size_t dst_size = svp_acl_mdl_get_input_size_by_index(model_desc_, image_input_index_);
+    const size_t dst_stride = svp_acl_mdl_get_input_default_stride(model_desc_, image_input_index_);
+    if (dst_size == 0 || dst_size > image_input_capacity_ || dst_stride < static_cast<size_t>(aipp_src_width) ||
         dst_stride > static_cast<size_t>(std::numeric_limits<int>::max())) {
-        ALG_LOGE("svp_acl: invalid AIPP input buffer size=%zu stride=%zu capacity=%zu",
-                 dst_size, dst_stride, image_input_capacity_);
+        ALG_LOGE("svp_acl: invalid AIPP input buffer size=%zu stride=%zu capacity=%zu", dst_size, dst_stride,
+                 image_input_capacity_);
         return ALG_E_PREPROCESS;
     }
 
-    svp_acl_data_buffer* image_buffer =
-        svp_acl_mdl_get_dataset_buffer(input_dataset_, image_input_index_);
+    svp_acl_data_buffer* image_buffer = svp_acl_mdl_get_dataset_buffer(input_dataset_, image_input_index_);
 
 #ifdef ALG_SVP_IVE_PREPROCESS
     if (use_ive_resize) {
-        if ((source.stride[0] & 15) || (source.stride[1] & 15) ||
-            image.width > aipp_src_width * 16 || image.height > aipp_src_height * 16 ||
-            aipp_src_width > image.width * 16 || aipp_src_height > image.height * 16) {
+        if ((source.stride[0] & 15) || (source.stride[1] & 15) || image.width > aipp_src_width * 16 ||
+            image.height > aipp_src_height * 16 || aipp_src_width > image.width * 16 ||
+            aipp_src_height > image.height * 16) {
             ALG_LOGE("svp_acl: IVE resize requires 16-byte strides and scale <= 16x");
             return ALG_E_PREPROCESS;
         }
 
         const size_t ive_stride = AlignUp(static_cast<size_t>(aipp_src_width), 16);
-        Status ive_status = EnsureIveBuffers(aipp_src_width, aipp_src_height,
-                                             ive_stride);
-        if (ive_status != ALG_OK) return ive_status;
+        Status ive_status = EnsureIveBuffers(aipp_src_width, aipp_src_height, ive_stride);
+        if (ive_status != ALG_OK)
+            return ive_status;
 
         ot_svp_src_img ive_src{};
         ive_src.type = OT_SVP_IMG_TYPE_YUV420SP;
@@ -868,17 +900,14 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         ive_src.stride[1] = static_cast<td_u32>(source.stride[1]);
         ive_src.phys_addr[0] = source.phys_addr[0];
         ive_src.phys_addr[1] = source.phys_addr[1];
-        ive_src.virt_addr[0] = static_cast<td_u64>(
-            reinterpret_cast<uintptr_t>(source.plane[0]));
-        ive_src.virt_addr[1] = static_cast<td_u64>(
-            reinterpret_cast<uintptr_t>(source.plane[1]));
+        ive_src.virt_addr[0] = static_cast<td_u64>(reinterpret_cast<uintptr_t>(source.plane[0]));
+        ive_src.virt_addr[1] = static_cast<td_u64>(reinterpret_cast<uintptr_t>(source.plane[1]));
 
         const size_t ive_y_bytes = ive_stride * static_cast<size_t>(aipp_src_height);
-        const size_t ive_bytes = ive_y_bytes +
-            ive_stride * static_cast<size_t>(aipp_src_height / 2);
+        const size_t ive_bytes = ive_y_bytes + ive_stride * static_cast<size_t>(aipp_src_height / 2);
         if (ive_bytes > ive_output_capacity_ || ive_bytes > dst_size) {
-            ALG_LOGE("svp_acl: IVE output size=%zu exceeds buffer/model input=%zu/%zu",
-                     ive_bytes, ive_output_capacity_, dst_size);
+            ALG_LOGE("svp_acl: IVE output size=%zu exceeds buffer/model input=%zu/%zu", ive_bytes, ive_output_capacity_,
+                     dst_size);
             return ALG_E_PREPROCESS;
         }
 
@@ -890,23 +919,21 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         ive_dst.stride[1] = static_cast<td_u32>(ive_stride);
         ive_dst.phys_addr[0] = static_cast<td_u64>(ive_output_phys_);
         ive_dst.phys_addr[1] = static_cast<td_u64>(ive_output_phys_) + ive_y_bytes;
-        ive_dst.virt_addr[0] = static_cast<td_u64>(
-            reinterpret_cast<uintptr_t>(ive_output_virt_));
+        ive_dst.virt_addr[0] = static_cast<td_u64>(reinterpret_cast<uintptr_t>(ive_output_virt_));
         ive_dst.virt_addr[1] = ive_dst.virt_addr[0] + ive_y_bytes;
 
         ot_ive_resize_ctrl ive_ctrl{};
         ive_ctrl.mode = OT_IVE_RESIZE_MODE_LINEAR;
         ive_ctrl.num = 1;
         ive_ctrl.mem.phys_addr = static_cast<td_u64>(ive_assist_phys_);
-        ive_ctrl.mem.virt_addr = static_cast<td_u64>(
-            reinterpret_cast<uintptr_t>(ive_assist_virt_));
+        ive_ctrl.mem.virt_addr = static_cast<td_u64>(reinterpret_cast<uintptr_t>(ive_assist_virt_));
         ive_ctrl.mem.size = static_cast<td_u32>(ive_assist_capacity_);
 
         timeval ive_begin{}, ive_end{};
-        if (profile) gettimeofday(&ive_begin, nullptr);
+        if (profile)
+            gettimeofday(&ive_begin, nullptr);
         ot_ive_handle ive_handle = 0;
-        td_s32 ive_ret = ss_mpi_ive_resize(
-            &ive_handle, &ive_src, &ive_dst, &ive_ctrl, TD_TRUE);
+        td_s32 ive_ret = ss_mpi_ive_resize(&ive_handle, &ive_src, &ive_dst, &ive_ctrl, TD_TRUE);
         if (ive_ret != TD_SUCCESS) {
             ALG_LOGE("svp_acl: ss_mpi_ive_resize failed, ret=%d", ive_ret);
             return ALG_E_PREPROCESS;
@@ -914,11 +941,11 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         td_bool ive_finished = TD_FALSE;
         do {
             ive_ret = ss_mpi_ive_query(ive_handle, &ive_finished, TD_TRUE);
-            if (ive_ret == OT_ERR_IVE_QUERY_TIMEOUT) usleep(100);
+            if (ive_ret == OT_ERR_IVE_QUERY_TIMEOUT)
+                usleep(100);
         } while (ive_ret == OT_ERR_IVE_QUERY_TIMEOUT);
         if (ive_ret != TD_SUCCESS || ive_finished != TD_TRUE) {
-            ALG_LOGE("svp_acl: wait IVE resize failed, ret=%d finished=%d",
-                     ive_ret, static_cast<int>(ive_finished));
+            ALG_LOGE("svp_acl: wait IVE resize failed, ret=%d finished=%d", ive_ret, static_cast<int>(ive_finished));
             return ALG_E_PREPROCESS;
         }
         if (profile) {
@@ -927,9 +954,9 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         }
 
         timeval bind_begin{}, bind_end{};
-        if (profile) gettimeofday(&bind_begin, nullptr);
-        ret = svp_acl_update_data_buffer(image_buffer, ive_output_virt_,
-                                         ive_bytes, ive_stride);
+        if (profile)
+            gettimeofday(&bind_begin, nullptr);
+        ret = svp_acl_update_data_buffer(image_buffer, ive_output_virt_, ive_bytes, ive_stride);
         if (ret != SVP_ACL_SUCCESS) {
             ALG_LOGE("svp_acl: bind IVE output to AIPP failed, ret=%d", ret);
             return ALG_E_PREPROCESS;
@@ -963,38 +990,37 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     }
 #endif
 
+#ifdef ALG_SVP_LIBYUV_FALLBACK
+    /* 只有 libyuv 合并路径往这里写；can_share 分支直接绑定 shared_staging->data。 */
     uint8_t* dst = static_cast<uint8_t*>(svp_acl_get_data_buffer_addr(image_buffer));
+#endif
     size_t dst_y_bytes = 0;
     size_t dst_uv_bytes = 0;
-    if (!CheckedPlaneByteSize(static_cast<int>(dst_stride), aipp_src_height,
-                              &dst_y_bytes) ||
-        !CheckedPlaneByteSize(static_cast<int>(dst_stride), aipp_src_height / 2,
-                              &dst_uv_bytes) ||
+    if (!CheckedPlaneByteSize(static_cast<int>(dst_stride), aipp_src_height, &dst_y_bytes) ||
+        !CheckedPlaneByteSize(static_cast<int>(dst_stride), aipp_src_height / 2, &dst_uv_bytes) ||
         dst_y_bytes > std::numeric_limits<size_t>::max() - dst_uv_bytes) {
         return ALG_E_PREPROCESS;
     }
     const size_t needed_dst = dst_y_bytes + dst_uv_bytes;
-    if (needed_dst > dst_size) return ALG_E_PREPROCESS;
+    if (needed_dst > dst_size)
+        return ALG_E_PREPROCESS;
 
     /* 连续 NV12/NV21 由调用方通过 SYS mmap 提供非 cached MMZ/VB 映射。
-     * data buffer 只借用该地址；像素由 VPSS 写入，SDK 不复制、不 flush、也不释放。 */
-    if (!copy_split_planes) {
+     * data buffer 只借用该地址；像素由 VPSS 写入，SDK 不复制、不 flush、也不释放。
+     * 需要 CPU 预缩放时不能走零拷贝：必须读源、缩放后写入 staging，见下方。 */
+    if (!copy_split_planes && !cpu_prescale) {
         size_t external_y_bytes = 0;
         size_t external_uv_bytes = 0;
         if (source.stride[0] != source.stride[1] ||
-            !CheckedPlaneByteSize(source.stride[0], image.height,
-                                  &external_y_bytes) ||
-            !CheckedPlaneByteSize(source.stride[1], image.height / 2,
-                                  &external_uv_bytes) ||
-            external_y_bytes > std::numeric_limits<size_t>::max() -
-                                   external_uv_bytes) {
+            !CheckedPlaneByteSize(source.stride[0], image.height, &external_y_bytes) ||
+            !CheckedPlaneByteSize(source.stride[1], image.height / 2, &external_uv_bytes) ||
+            external_y_bytes > std::numeric_limits<size_t>::max() - external_uv_bytes) {
             ALG_LOGE("svp_acl: external YUV mapping has incompatible plane strides");
             return ALG_E_PREPROCESS;
         }
         const size_t external_bytes = external_y_bytes + external_uv_bytes;
         if (external_bytes > dst_size) {
-            ALG_LOGE("svp_acl: external YUV mapping size=%zu exceeds model input=%zu",
-                     external_bytes, dst_size);
+            ALG_LOGE("svp_acl: external YUV mapping size=%zu exceeds model input=%zu", external_bytes, dst_size);
             return ALG_E_PREPROCESS;
         }
 
@@ -1006,11 +1032,11 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         state.aipp_staging_stride = static_cast<size_t>(source.stride[0]);
 
         timeval bind_begin{}, bind_end{};
-        if (profile) gettimeofday(&bind_begin, nullptr);
+        if (profile)
+            gettimeofday(&bind_begin, nullptr);
         void* external_data = const_cast<uint8_t*>(source.plane[0]);
-        ret = svp_acl_update_data_buffer(
-            image_buffer, external_data, external_bytes,
-            static_cast<size_t>(source.stride[0]));
+        ret = svp_acl_update_data_buffer(image_buffer, external_data, external_bytes,
+                                         static_cast<size_t>(source.stride[0]));
         if (ret != SVP_ACL_SUCCESS) {
             ALG_LOGE("svp_acl: bind external YUV mapping failed, ret=%d", ret);
             return ALG_E_PREPROCESS;
@@ -1039,21 +1065,17 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         return ALG_OK;
     }
 
-    const bool can_share = shared_staging && shared_staging->flushed &&
-        shared_staging->source_plane[0] == source.plane[0] &&
-        shared_staging->source_plane[1] == source.plane[1] &&
-        shared_staging->source_width == image.width &&
-        shared_staging->source_height == image.height &&
-        shared_staging->source_stride[0] == source.stride[0] &&
-        shared_staging->source_stride[1] == source.stride[1] &&
-        shared_staging->source_format == image.format &&
-        shared_staging->source_data_len[0] == source.data_len[0] &&
+    /* 预缩放时 staging 里装的是缩放后的帧，尺寸与源不同，跨模型共享的前提不再成立；
+     * 各模型用自己的私有 staging，避免把别的模型的尺寸当作可复用条件。 */
+    const bool can_share = !cpu_prescale && shared_staging && shared_staging->flushed &&
+        shared_staging->source_plane[0] == source.plane[0] && shared_staging->source_plane[1] == source.plane[1] &&
+        shared_staging->source_width == image.width && shared_staging->source_height == image.height &&
+        shared_staging->source_stride[0] == source.stride[0] && shared_staging->source_stride[1] == source.stride[1] &&
+        shared_staging->source_format == image.format && shared_staging->source_data_len[0] == source.data_len[0] &&
         shared_staging->source_data_len[1] == source.data_len[1] &&
         shared_staging->source_uses_separate_planes == source.uses_separate_planes &&
-        shared_staging->staged_width == aipp_src_width &&
-        shared_staging->staged_height == aipp_src_height &&
-        shared_staging->data && shared_staging->capacity >= dst_size &&
-        shared_staging->data_size == needed_dst &&
+        shared_staging->staged_width == aipp_src_width && shared_staging->staged_height == aipp_src_height &&
+        shared_staging->data && shared_staging->capacity >= dst_size && shared_staging->data_size == needed_dst &&
         shared_staging->row_stride == dst_stride;
 
     state.aipp_profile_valid = profile;
@@ -1064,12 +1086,13 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     state.aipp_staging_stride = dst_stride;
 
     timeval bind_begin{}, bind_end{};
-    if (profile) gettimeofday(&bind_begin, nullptr);
+    if (profile)
+        gettimeofday(&bind_begin, nullptr);
 
     if (can_share) {
-        ret = svp_acl_update_data_buffer(image_buffer, shared_staging->data,
-                                         dst_size, dst_stride);
-        if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+        ret = svp_acl_update_data_buffer(image_buffer, shared_staging->data, dst_size, dst_stride);
+        if (ret != SVP_ACL_SUCCESS)
+            return ALG_E_PREPROCESS;
         input_views_[0].data = shared_staging->data;
         input_views_[0].size_bytes = dst_size;
         image_input_preflushed_ = true;
@@ -1091,11 +1114,14 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
             ALG_LOGI("svp_acl: switched to shared AIPP staging, released private input");
         }
     } else {
+#ifdef ALG_SVP_LIBYUV_FALLBACK
         Status own_status = EnsureOwnImageInput();
-        if (own_status != ALG_OK) return own_status;
+        if (own_status != ALG_OK)
+            return own_status;
         dst = static_cast<uint8_t*>(own_image_input_);
         ret = svp_acl_update_data_buffer(image_buffer, dst, dst_size, dst_stride);
-        if (ret != SVP_ACL_SUCCESS) return ALG_E_PREPROCESS;
+        if (ret != SVP_ACL_SUCCESS)
+            return ALG_E_PREPROCESS;
         input_views_[0].data = dst;
         input_views_[0].size_bytes = dst_size;
         if (profile) {
@@ -1104,23 +1130,30 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         }
 
         timeval copy_begin{}, copy_end{};
-        if (profile) gettimeofday(&copy_begin, nullptr);
+        if (profile)
+            gettimeofday(&copy_begin, nullptr);
         uint8_t* dst_uv = dst + dst_y_bytes;
-        const int libyuv_status = image.format == ALG_PIX_NV21
-            ? libyuv::NV21Copy(
-                  source.plane[0], source.stride[0],
-                  source.plane[1], source.stride[1],
-                  dst, static_cast<int>(dst_stride),
-                  dst_uv, static_cast<int>(dst_stride),
-                  image.width, image.height)
-            : libyuv::NV12Copy(
-                  source.plane[0], source.stride[0],
-                  source.plane[1], source.stride[1],
-                  dst, static_cast<int>(dst_stride),
-                  dst_uv, static_cast<int>(dst_stride),
-                  image.width, image.height);
+        int libyuv_status = 0;
+        if (cpu_prescale) {
+            /* NV12Scale 内部对 UV 平面调用 UVScale(..., width/2, ...)，按「UV 对」
+             * 缩放、不解释 U/V 字节语义，所以 NV12 与 NV21 通用。一次调用同时完成
+             * 「分平面合并」与「缩放到 aipp_output_size」；ResolveImageView 已保证
+             * 连续帧与分平面两种输入下 plane[0]/plane[1]/stride 都成立。 */
+            libyuv_status =
+                libyuv::NV12Scale(source.plane[0], source.stride[0], source.plane[1], source.stride[1], image.width,
+                                  image.height, dst, static_cast<int>(dst_stride), dst_uv, static_cast<int>(dst_stride),
+                                  aipp_src_width, aipp_src_height, libyuv::kFilterBox);
+        } else {
+            libyuv_status = image.format == ALG_PIX_NV21
+                ? libyuv::NV21Copy(source.plane[0], source.stride[0], source.plane[1], source.stride[1], dst,
+                                   static_cast<int>(dst_stride), dst_uv, static_cast<int>(dst_stride), image.width,
+                                   image.height)
+                : libyuv::NV12Copy(source.plane[0], source.stride[0], source.plane[1], source.stride[1], dst,
+                                   static_cast<int>(dst_stride), dst_uv, static_cast<int>(dst_stride), image.width,
+                                   image.height);
+        }
         if (libyuv_status != 0) {
-            ALG_LOGE("svp_acl: libyuv plane copy failed, ret=%d", libyuv_status);
+            ALG_LOGE("svp_acl: libyuv %s failed, ret=%d", cpu_prescale ? "pre-scale" : "plane copy", libyuv_status);
             return ALG_E_PREPROCESS;
         }
         if (profile) {
@@ -1130,7 +1163,8 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
 
         /* 只同步当前原图对应的 YUV 区域，不 flush 按最大输入预留的剩余空间。 */
         timeval flush_begin{}, flush_end{};
-        if (profile) gettimeofday(&flush_begin, nullptr);
+        if (profile)
+            gettimeofday(&flush_begin, nullptr);
         ret = svp_acl_rt_mem_flush(dst, needed_dst);
         if (ret != SVP_ACL_SUCCESS) {
             ALG_LOGE("svp_acl: staged AIPP input flush failed, ret=%d", ret);
@@ -1161,6 +1195,15 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
             shared_staging->row_stride = dst_stride;
             shared_staging->flushed = true;
         }
+#else
+        /* 本目标未编入 libyuv（ALG_SVP_LIBYUV_FALLBACK=OFF，或该架构没有可用的
+         * 预编译库）：Y/UV 分平面输入无法合并成 AIPP 要求的连续 NV12/NV21。
+         * 请由调用方传入连续帧（走上面的共享 staging 零拷贝路径），或改用
+         * -DALG_SVP_LIBYUV_FALLBACK=ON 并提供对应架构的 libyuv。 */
+        ALG_LOGE("svp_acl: split-plane AIPP staging is not compiled in "
+                 "(ALG_SVP_LIBYUV_FALLBACK=OFF); pass a contiguous NV12/NV21 frame");
+        return ALG_E_PREPROCESS;
+#endif
     }
 
     state.scale_ratio = scale_ratio;

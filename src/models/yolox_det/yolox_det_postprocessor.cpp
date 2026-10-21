@@ -1,10 +1,8 @@
 #include "models/yolox_det/yolox_det_postprocessor.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
-
 #include "core/logger.h"
 #include "core/postprocess/nms.h"
 
@@ -12,11 +10,15 @@ namespace alg {
 
 namespace {
 
-inline float Sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
+inline float Sigmoid(float x) {
+    return 1.0f / (1.0f + std::exp(-x));
+}
 
 inline float Logit(float p) {
-    if (p <= 0.0f) return -std::numeric_limits<float>::infinity();
-    if (p >= 1.0f) return std::numeric_limits<float>::infinity();
+    if (p <= 0.0f)
+        return -std::numeric_limits<float>::infinity();
+    if (p >= 1.0f)
+        return std::numeric_limits<float>::infinity();
     /* 略向低侧放宽，避免 log/sigmoid 浮点舍入在阈值边界误剪。 */
     return std::log(p / (1.0f - p)) - 1e-6f;
 }
@@ -24,7 +26,8 @@ inline float Logit(float p) {
 /* 反量化辅助：与 alg_traffic_light_detection/src/deploy_src/pre_post.cpp::dequant 等价。 */
 inline float ReadElem(const TensorView& t, int idx) {
     switch (t.dtype) {
-        case DataType::kF32: return static_cast<const float*>(t.data)[idx];
+        case DataType::kF32:
+            return static_cast<const float*>(t.data)[idx];
         case DataType::kI8: {
             int raw = static_cast<int>(static_cast<const int8_t*>(t.data)[idx]);
             return (raw - t.quant.zero_point) * t.quant.scale;
@@ -48,14 +51,18 @@ inline float ReadElem(const TensorView& t, int idx) {
         case DataType::kF16: {
             uint16_t h = static_cast<const uint16_t*>(t.data)[idx];
             uint32_t sign = (h & 0x8000u) << 16;
-            uint32_t exp  = (h & 0x7C00u) >> 10;
+            uint32_t exp = (h & 0x7C00u) >> 10;
             uint32_t mant = (h & 0x03FFu);
             uint32_t f;
             if (exp == 0) {
-                if (mant == 0) { f = sign; }
-                else {
+                if (mant == 0) {
+                    f = sign;
+                } else {
                     exp = 1;
-                    while ((mant & 0x0400u) == 0) { mant <<= 1; exp--; }
+                    while ((mant & 0x0400u) == 0) {
+                        mant <<= 1;
+                        exp--;
+                    }
                     mant &= 0x03FFu;
                     f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
                 }
@@ -74,20 +81,19 @@ inline float ReadElem(const TensorView& t, int idx) {
 
 struct LevelView {
     const TensorView* t;
-    int   stride;
-    int   H, W;
-    int   channels;
-    bool  is_nchw;
+    int stride;
+    int H, W;
+    int channels;
+    bool is_nchw;
 };
 
 int BuildLevelView(const TensorView& t, int stride, int channels, LevelView* v) {
-    v->t        = &t;
-    v->stride   = stride;
+    v->t = &t;
+    v->stride = stride;
     v->channels = channels;
 
     if (t.shape.ndims != 4 || t.shape.dims[0] != 1) {
-        ALG_LOGE("yolox_det: %s ndims=%d dims[0]=%d, expect 4D batch=1",
-                 t.name.c_str(), t.shape.ndims,
+        ALG_LOGE("yolox_det: %s ndims=%d dims[0]=%d, expect 4D batch=1", t.name.c_str(), t.shape.ndims,
                  t.shape.ndims > 0 ? t.shape.dims[0] : 0);
         return -1;
     }
@@ -101,44 +107,54 @@ int BuildLevelView(const TensorView& t, int stride, int channels, LevelView* v) 
         v->H = t.shape.dims[1];
         v->W = t.shape.dims[2];
     } else {
-        ALG_LOGE("yolox_det: %s no axis equals C=%d in (%d,%d,%d,%d)",
-                 t.name.c_str(), channels,
-                 t.shape.dims[0], t.shape.dims[1],
-                 t.shape.dims[2], t.shape.dims[3]);
+        ALG_LOGE("yolox_det: %s no axis equals C=%d in (%d,%d,%d,%d)", t.name.c_str(), channels, t.shape.dims[0],
+                 t.shape.dims[1], t.shape.dims[2], t.shape.dims[3]);
         return -1;
     }
     return 0;
 }
 
 inline int FlatIndex(const LevelView& v, int c, int y, int x) {
-    if (v.is_nchw) return c * v.H * v.W + y * v.W + x;
+    if (v.is_nchw)
+        return c * v.H * v.W + y * v.W + x;
     return (y * v.W + x) * v.channels + c;
 }
 
-void DecodeLevel(const LevelView& v, int num_classes, int obj_offset, int cls_offset,
-                 float obj_prefilter, float obj_logit_threshold,
-                 float score_thresh, std::vector<Proposal>* out) {
+void DecodeLevel(const LevelView& v,
+                 int num_classes,
+                 int obj_offset,
+                 int cls_offset,
+                 float obj_prefilter,
+                 float obj_logit_threshold,
+                 float score_thresh,
+                 std::vector<Proposal>* out) {
     const float stride = static_cast<float>(v.stride);
     for (int y = 0; y < v.H; ++y) {
         for (int x = 0; x < v.W; ++x) {
             const float obj_logit = ReadElem(*v.t, FlatIndex(v, obj_offset, y, x));
-            if (obj_logit < obj_logit_threshold) continue;
+            if (obj_logit < obj_logit_threshold)
+                continue;
             float obj = Sigmoid(obj_logit);
-            if (obj < obj_prefilter) continue;
+            if (obj < obj_prefilter)
+                continue;
 
             float best_cls = -1.f;
-            int   best_idx = 0;
+            int best_idx = 0;
             for (int c = 0; c < num_classes; ++c) {
                 float s = Sigmoid(ReadElem(*v.t, FlatIndex(v, cls_offset + c, y, x)));
-                if (s > best_cls) { best_cls = s; best_idx = c; }
+                if (s > best_cls) {
+                    best_cls = s;
+                    best_idx = c;
+                }
             }
             float score = obj * best_cls;
-            if (score < score_thresh) continue;
+            if (score < score_thresh)
+                continue;
 
             float cx_off = ReadElem(*v.t, FlatIndex(v, 0, y, x));
             float cy_off = ReadElem(*v.t, FlatIndex(v, 1, y, x));
-            float w_log  = ReadElem(*v.t, FlatIndex(v, 2, y, x));
-            float h_log  = ReadElem(*v.t, FlatIndex(v, 3, y, x));
+            float w_log = ReadElem(*v.t, FlatIndex(v, 2, y, x));
+            float h_log = ReadElem(*v.t, FlatIndex(v, 3, y, x));
 
             /* offset = 0：基准点是 grid 左上角。mmdet YOLOXHead 默认即此。 */
             float cx = cx_off * stride + static_cast<float>(x) * stride;
@@ -161,13 +177,13 @@ void DecodeLevel(const LevelView& v, int num_classes, int obj_offset, int cls_of
 }  // namespace
 
 Status YoloxDetPostprocessor::Configure(const IInferer& inferer, const Json::Value& params) {
-    num_classes_    = params.get("num_classes", 1).asInt();
-    bbox_channels_  = params.get("bbox_channels", 4).asInt();
-    obj_channels_   = params.get("obj_channels", 1).asInt();
+    num_classes_ = params.get("num_classes", 1).asInt();
+    bbox_channels_ = params.get("bbox_channels", 4).asInt();
+    obj_channels_ = params.get("obj_channels", 1).asInt();
     conf_threshold_ = params.get("conf_threshold", 0.4f).asFloat();
-    nms_threshold_  = params.get("nms_threshold", 0.5f).asFloat();
-    max_det_        = params.get("max_det", 100).asInt();
-    obj_prefilter_  = params.get("obj_prefilter", 0.05f).asFloat();
+    nms_threshold_ = params.get("nms_threshold", 0.5f).asFloat();
+    max_det_ = params.get("max_det", 100).asInt();
+    obj_prefilter_ = params.get("obj_prefilter", 0.05f).asFloat();
     obj_logit_threshold_ = Logit(std::max(obj_prefilter_, conf_threshold_));
 
     if (params.isMember("strides") && params["strides"].isArray()) {
@@ -185,11 +201,16 @@ Status YoloxDetPostprocessor::Configure(const IInferer& inferer, const Json::Val
     /* traffic_light 类别：从 class_names 推导颜色 enum 值 */
     if (category_ == "traffic_light") {
         for (const auto& name : class_names_) {
-            if (name == "red" || name == "red_light")         class_values_.push_back(1);
-            else if (name == "yellow" || name == "yellow_light") class_values_.push_back(2);
-            else if (name == "green" || name == "green_light")   class_values_.push_back(3);
-            else if (name == "off" || name == "off_light")       class_values_.push_back(4);
-            else                                                  class_values_.push_back(0);
+            if (name == "red" || name == "red_light")
+                class_values_.push_back(1);
+            else if (name == "yellow" || name == "yellow_light")
+                class_values_.push_back(2);
+            else if (name == "green" || name == "green_light")
+                class_values_.push_back(3);
+            else if (name == "off" || name == "off_light")
+                class_values_.push_back(4);
+            else
+                class_values_.push_back(0);
         }
     }
     if (strides_.empty()) {
@@ -210,39 +231,39 @@ Status YoloxDetPostprocessor::Configure(const IInferer& inferer, const Json::Val
     }
     cls_offset_ = bbox_channels_ + obj_channels_;
     if (inferer.NumOutputs() < static_cast<int>(strides_.size())) {
-        ALG_LOGE("yolox_det: need %zu outputs, got %d",
-                 strides_.size(), inferer.NumOutputs());
+        ALG_LOGE("yolox_det: need %zu outputs, got %d", strides_.size(), inferer.NumOutputs());
         return ALG_E_POSTPROCESS;
     }
     configured_ = true;
     return ALG_OK;
 }
 
-Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessState& state,
-                                    std::vector<Object>* out) {
-    if (!configured_) return ALG_E_NOT_INITIALIZED;
-    if (!out) return ALG_E_INVALID_ARG;
+Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessState& state, std::vector<Object>* out) {
+    if (!configured_)
+        return ALG_E_NOT_INITIALIZED;
+    if (!out)
+        return ALG_E_INVALID_ARG;
     out->clear();
 
     const int channels = cls_offset_ + num_classes_;
     props_.clear();
-    if (props_.capacity() < 256) props_.reserve(256);
+    if (props_.capacity() < 256)
+        props_.reserve(256);
 
     /* 单尺度按 stride 解码到统一候选池；NMS 在最后一次性做（class-aware）。 */
     for (size_t i = 0; i < strides_.size(); ++i) {
         LevelView v;
-        if (BuildLevelView(inferer.OutputView(static_cast<int>(i)),
-                           strides_[i], channels, &v) != 0)
+        if (BuildLevelView(inferer.OutputView(static_cast<int>(i)), strides_[i], channels, &v) != 0)
             return ALG_E_POSTPROCESS;
-        DecodeLevel(v, num_classes_, bbox_channels_, cls_offset_,
-                    obj_prefilter_, obj_logit_threshold_, conf_threshold_, &props_);
+        DecodeLevel(v, num_classes_, bbox_channels_, cls_offset_, obj_prefilter_, obj_logit_threshold_, conf_threshold_,
+                    &props_);
     }
 
     Nms(props_, nms_threshold_, &nms_scratch_, max_det_);
 
     /* letterbox 反映射回原图。 */
     const float inv_s = state.scale_ratio > 0 ? 1.0f / state.scale_ratio : 1.0f;
-    const int max_x = state.original_width  - 1;
+    const int max_x = state.original_width - 1;
     const int max_y = state.original_height - 1;
 
     const bool emit_class_attr = !class_names_.empty();
@@ -253,13 +274,13 @@ Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSta
         Object o;
         o.field_mask = ALG_FIELD_BOX;
         o.box.score = p.score;
-        o.label     = p.label;
+        o.label = p.label;
         if (p.label >= 0 && p.label < static_cast<int>(class_values_.size()))
             o.value = class_values_[p.label];
         int x1 = static_cast<int>((p.x1 - state.pad_left) * inv_s + 0.5f);
-        int y1 = static_cast<int>((p.y1 - state.pad_top)  * inv_s + 0.5f);
+        int y1 = static_cast<int>((p.y1 - state.pad_top) * inv_s + 0.5f);
         int x2 = static_cast<int>((p.x2 - state.pad_left) * inv_s + 0.5f);
-        int y2 = static_cast<int>((p.y2 - state.pad_top)  * inv_s + 0.5f);
+        int y2 = static_cast<int>((p.y2 - state.pad_top) * inv_s + 0.5f);
         o.box.xmin = x1 < 0 ? 0 : (x1 > max_x ? max_x : x1);
         o.box.ymin = y1 < 0 ? 0 : (y1 > max_y ? max_y : y1);
         o.box.xmax = x2 < 0 ? 0 : (x2 > max_x ? max_x : x2);

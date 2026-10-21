@@ -3,7 +3,11 @@
 
 namespace alg {
 
-std::unique_ptr<IInferer> MakeInferer() { return std::unique_ptr<IInferer>(new MnnInferer()); }
-const char*               BackendName() { return "mnn"; }
+std::unique_ptr<IInferer> MakeInferer() {
+    return std::unique_ptr<IInferer>(new MnnInferer());
+}
+const char* BackendName() {
+    return "mnn";
+}
 
 }  // namespace alg

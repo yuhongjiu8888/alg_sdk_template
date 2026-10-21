@@ -19,9 +19,16 @@
         },
         "score_threshold": 0.6,
         "passthrough": [
-          { "label": 1, "category": "pare", "sign_value": 2, "min_score": 0.0 }
+          {
+            "label": 1,
+            "category": "pare",
+            "sign_value": 2,
+            "min_score": 0.0
+          }
         ],
-        "min_box_short": { "no_parking": 40 },
+        "min_box_short": {
+          "no_parking": 40
+        },
         "produces": "classify_into:ssn_det"
       },
       {
@@ -45,14 +52,28 @@
   },
   "models": {
     "ssn_cfg": {
-      "model_path": "../resources/model/svp_acl/speedsignnet_aipp.om",
+      "model_path": "../resources/model/svp_acl/cv610/speedsignnet_aipp.om",
       "preprocess": {
-        "input_size": [576, 320],
+        "input_size": [
+          576,
+          320
+        ],
         "engine": "aipp",
         "input_format": "auto",
-        "max_input_size": [1920, 1080],
-        "aipp_output_size": [568, 320],
-        "aipp_graph_padding": [4, 0, 4, 0],
+        "max_input_size": [
+          1920,
+          1080
+        ],
+        "aipp_output_size": [
+          568,
+          320
+        ],
+        "aipp_graph_padding": [
+          4,
+          0,
+          4,
+          0
+        ],
         "color": "RGB",
         "resize": "letterbox_center",
         "layout": "NCHW",
@@ -64,7 +85,10 @@
         "bbox_channels": 4,
         "obj_channels": 1,
         "stride": 8,
-        "anchor": [36, 36],
+        "anchor": [
+          36,
+          36
+        ],
         "conf_threshold": 0.25,
         "nms_threshold": 0.45,
         "max_det": 5,
@@ -72,9 +96,12 @@
       }
     },
     "cls_cfg": {
-      "model_path": "../resources/model/svp_acl/classifier.om",
+      "model_path": "../resources/model/svp_acl/cv610/classifier.om",
       "preprocess": {
-        "input_size": [96, 96],
+        "input_size": [
+          96,
+          96
+        ],
         "engine": "auto",
         "color": "RGB",
         "resize": "stretch",
@@ -95,20 +122,44 @@
         "nopark_category": "no_parking",
         "nopark_sign_value": 1,
         "class_names": [
-          "10", "20", "30", "40", "50", "60", "70",
-          "80", "100", "90", "110", "120"
+          "10",
+          "20",
+          "30",
+          "40",
+          "50",
+          "60",
+          "70",
+          "80",
+          "100",
+          "90",
+          "110",
+          "120"
         ]
       }
     },
     "license_det_cfg": {
-      "model_path": "../resources/model/svp_acl/license_detection_aipp.om",
+      "model_path": "../resources/model/svp_acl/cv610/license_detection_aipp.om",
       "preprocess": {
-        "input_size": [640, 448],
+        "input_size": [
+          640,
+          448
+        ],
         "engine": "aipp",
         "input_format": "auto",
-        "max_input_size": [1920, 1080],
-        "aipp_output_size": [640, 360],
-        "aipp_graph_padding": [0, 0, 0, 88],
+        "max_input_size": [
+          1920,
+          1080
+        ],
+        "aipp_output_size": [
+          640,
+          360
+        ],
+        "aipp_graph_padding": [
+          0,
+          0,
+          0,
+          88
+        ],
         "color": "RGB",
         "resize": "letterbox_tl_fit",
         "layout": "NCHW",
@@ -118,8 +169,15 @@
         "type": "rtmdet_det",
         "num_classes": 1,
         "bbox_channels": 4,
-        "strides": [8, 16, 32],
-        "input_size": [640, 448],
+        "strides": [
+          8,
+          16,
+          32
+        ],
+        "input_size": [
+          640,
+          448
+        ],
         "conf_threshold": 0.25,
         "nms_threshold": 0.45,
         "min_bbox_size": 4.0,
@@ -127,9 +185,12 @@
       }
     },
     "license_rec_cfg": {
-      "model_path": "../resources/model/svp_acl/license_recognizer.om",
+      "model_path": "../resources/model/svp_acl/cv610/license_recognizer.om",
       "preprocess": {
-        "input_size": [256, 64],
+        "input_size": [
+          256,
+          64
+        ],
         "engine": "auto",
         "color": "RGB",
         "resize": "letterbox_center",

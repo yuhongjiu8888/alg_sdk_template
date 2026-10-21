@@ -33,7 +33,6 @@
 
 #include <string>
 #include <vector>
-
 #include "core/postprocess/postprocessor.h"
 
 namespace alg {
@@ -41,17 +40,16 @@ namespace alg {
 class LprnetRecPostprocessor : public IPostprocessor {
   public:
     Status Configure(const IInferer& inferer, const Json::Value& params) override;
-    Status Apply(const IInferer& inferer, const PreprocessState& state,
-                 std::vector<Object>* out) override;
+    Status Apply(const IInferer& inferer, const PreprocessState& state, std::vector<Object>* out) override;
 
   private:
-    std::string characters_;     /* 字符表（不含 blank），如 "0..9A..Z" */
-    int   blank_index_ = 36;
-    int   timesteps_   = 32;
-    int   channels_    = 37;     /* 类别数（含 blank） */
+    std::string characters_; /* 字符表（不含 blank），如 "0..9A..Z" */
+    int blank_index_ = 36;
+    int timesteps_ = 32;
+    int channels_ = 37; /* 类别数（含 blank） */
     float conf_threshold_ = 0.0f;
     std::string category_;
-    bool  configured_  = false;
+    bool configured_ = false;
 };
 
 }  // namespace alg

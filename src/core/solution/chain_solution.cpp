@@ -1,9 +1,7 @@
 #include "core/solution/chain_solution.h"
-
 #include <algorithm>
 #include <map>
 #include <unordered_map>
-
 #include "core/logger.h"
 #include "core/solution/crop_util.h"
 
@@ -35,8 +33,7 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
         rs.cfg = sc;
         auto it = by_name.find(sc.model_ref);
         if (it == by_name.end()) {
-            ALG_LOGE("stage '%s' references unknown model '%s'",
-                     sc.name.c_str(), sc.model_ref.c_str());
+            ALG_LOGE("stage '%s' references unknown model '%s'", sc.name.c_str(), sc.model_ref.c_str());
             return ALG_E_MODEL_NOT_FOUND;
         }
         rs.model = it->second;
@@ -45,8 +42,7 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
         if (sc.input_kind == StageInputKind::kObjectsFromStage) {
             auto jt = stage_idx.find(sc.input_stage);
             if (jt == stage_idx.end()) {
-                ALG_LOGE("stage '%s' input_stage '%s' not found",
-                         sc.name.c_str(), sc.input_stage.c_str());
+                ALG_LOGE("stage '%s' input_stage '%s' not found", sc.name.c_str(), sc.input_stage.c_str());
                 return ALG_E_CONFIG;
             }
             rs.input_idx = jt->second;
@@ -54,8 +50,7 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
         if (sc.output_kind != StageOutputKind::kCreateObjects) {
             auto jt = stage_idx.find(sc.output_target);
             if (jt == stage_idx.end()) {
-                ALG_LOGE("stage '%s' output_target '%s' not found",
-                         sc.name.c_str(), sc.output_target.c_str());
+                ALG_LOGE("stage '%s' output_target '%s' not found", sc.name.c_str(), sc.output_target.c_str());
                 return ALG_E_CONFIG;
             }
             rs.output_target = jt->second;
@@ -75,8 +70,8 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
         }
     }
     initialized_ = true;
-    ALG_LOGI("ChainSolution: ready, %zu models, %zu stages (decode_bgr=%d)",
-             model_storage_.size(), stages_.size(), needs_decoded_bgr_ ? 1 : 0);
+    ALG_LOGI("ChainSolution: ready, %zu models, %zu stages (decode_bgr=%d)", model_storage_.size(), stages_.size(),
+             needs_decoded_bgr_ ? 1 : 0);
     return ALG_OK;
 }
 
@@ -111,8 +106,8 @@ void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
             /* 分类器：用 sub 的 label 覆盖 src，把 sub.box.score 当分类置信度乘到
              * src.box.score（detector_score × classifier_conf = 联合置信度）；
              * attributes 全量并过来给 C API 透出。 */
-            dst->label     = src.label;
-            dst->value     = src.value;
+            dst->label = src.label;
+            dst->value = src.value;
             dst->box.score = dst->box.score * src.box.score;
             if (!src.attributes.empty()) {
                 dst->attributes = std::move(src.attributes);
@@ -127,8 +122,12 @@ void MergeFields(Object* dst, Object&& src, StageOutputKind kind) {
 /* 给 object 打上 category 属性 + value（透传终端类用）；已有 category 则覆盖。 */
 void TagCategory(Object* o, const std::string& category, int value) {
     for (auto& a : o->attributes) {
-        if (a.name == "category") { a.value_str = category; o->value = value;
-                                    o->field_mask |= ALG_FIELD_ATTRIBUTES; return; }
+        if (a.name == "category") {
+            a.value_str = category;
+            o->value = value;
+            o->field_mask |= ALG_FIELD_ATTRIBUTES;
+            return;
+        }
     }
     Attribute c;
     c.name = "category";
@@ -140,12 +139,19 @@ void TagCategory(Object* o, const std::string& category, int value) {
 
 /* 命中 min_box_short（按 category）→ true 表示该丢弃（框短边 < 阈值）。 */
 bool BelowMinBoxShort(const Object& o, const std::map<std::string, int>& m) {
-    if (m.empty() || !o.has_attributes()) return false;
+    if (m.empty() || !o.has_attributes())
+        return false;
     const Attribute* cat = nullptr;
-    for (const auto& a : o.attributes) if (a.name == "category") { cat = &a; break; }
-    if (!cat) return false;
+    for (const auto& a : o.attributes)
+        if (a.name == "category") {
+            cat = &a;
+            break;
+        }
+    if (!cat)
+        return false;
     auto it = m.find(cat->value_str);
-    if (it == m.end()) return false;
+    if (it == m.end())
+        return false;
     const int w = o.box.xmax - o.box.xmin;
     const int h = o.box.ymax - o.box.ymin;
     return (w < h ? w : h) < it->second;
@@ -153,8 +159,7 @@ bool BelowMinBoxShort(const Object& o, const std::map<std::string, int>& m) {
 
 }  // namespace
 
-Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
-                               const cv::Mat& decoded_bgr) {
+Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::Mat& decoded_bgr) {
     RuntimeStage& rs = stages_[stage_idx];
     ModelInstance* mi = rs.model;
 
@@ -164,8 +169,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
     /* 按源格式选裁剪路径：NV12/NV21 直接抠原图小区域（省全帧解码）；其余走已解码的
      * BGR Mat（BGR 零拷贝 / RGB/GRAY 在解码时已转 BGR）。 */
     const bool nv_source = (image.format == ALG_PIX_NV12 || image.format == ALG_PIX_NV21);
-    auto Crop = [&](const AlgBox& box, const CropConfig& cfg,
-                    cv::Mat* holder, AlgImage* out, CropTransform* xf) {
+    auto Crop = [&](const AlgBox& box, const CropConfig& cfg, cv::Mat* holder, AlgImage* out, CropTransform* xf) {
         return nv_source ? CropFromNV12(image, box, cfg, holder, out, xf)
                          : CropFromDecoded(decoded_bgr, box, cfg, holder, out, xf);
     };
@@ -176,8 +180,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
         if (rs.cfg.roi.enabled) {
             /* 固定 ROI 裁剪：在原图上裁出指定区域再送模型。 */
             if (!nv_source && decoded_bgr.empty()) {
-                ALG_LOGE("ChainSolution: stage '%s' needs roi but decoded_bgr is empty",
-                         rs.cfg.name.c_str());
+                ALG_LOGE("ChainSolution: stage '%s' needs roi but decoded_bgr is empty", rs.cfg.name.c_str());
                 return ALG_E_PREPROCESS;
             }
             AlgImage cropped{};
@@ -187,13 +190,14 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
             roi_box.ymin = rs.cfg.roi.y;
             roi_box.xmax = rs.cfg.roi.x + rs.cfg.roi.width;
             roi_box.ymax = rs.cfg.roi.y + rs.cfg.roi.height;
-            CropConfig crop_cfg;  /* expand_ratio=1, square=false：不做扩展 */
+            CropConfig crop_cfg; /* expand_ratio=1, square=false：不做扩展 */
             if (!Crop(roi_box, crop_cfg, &rs.roi_holder, &cropped, &xf)) {
                 ALG_LOGE("ChainSolution: stage '%s' roi crop failed", rs.cfg.name.c_str());
                 return ALG_E_PREPROCESS;
             }
             Status r = mi->Run(cropped, &out_bucket);
-            if (r != ALG_OK) return r;
+            if (r != ALG_OK)
+                return r;
             /* 后处理输出的是裁剪图坐标，映射回原图。 */
             MapBackToOriginal(&out_bucket, xf);
             return ALG_OK;
@@ -212,42 +216,54 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image,
     cv::Mat& roi_holder = rs.roi_holder;
     AlgImage cropped{};
     CropTransform xf;
-    std::vector<Object>& sub = rs.sub_objects;  /* 跨帧保留 capacity */
+    std::vector<Object>& sub = rs.sub_objects; /* 跨帧保留 capacity */
 
     for (auto& src : src_objs) {
-        if (src.drop) continue;
-        if (!src.has_box()) continue;
+        if (src.drop)
+            continue;
+        if (!src.has_box())
+            continue;
 
         /* v3.5 终端类透传：上游某 label（如 pare）不进子模型，直接打 category/牌种透出。
          * 命中即跳过裁剪+分类；min_score/min_box_short 作精度兜底。 */
         {
             const PassthroughRule* pt = nullptr;
             for (const auto& r : rs.cfg.passthrough)
-                if (r.label == src.label) { pt = &r; break; }
+                if (r.label == src.label) {
+                    pt = &r;
+                    break;
+                }
             if (pt) {
-                if (pt->min_score > 0.0f && src.box.score < pt->min_score) { src.drop = true; continue; }
+                if (pt->min_score > 0.0f && src.box.score < pt->min_score) {
+                    src.drop = true;
+                    continue;
+                }
                 TagCategory(&src, pt->category, pt->sign_value);
-                if (BelowMinBoxShort(src, rs.cfg.min_box_short)) src.drop = true;
+                if (BelowMinBoxShort(src, rs.cfg.min_box_short))
+                    src.drop = true;
                 continue;
             }
         }
 
         if (!Crop(src.box, rs.cfg.crop, &roi_holder, &cropped, &xf)) {
             /* 框完全在画外或裁出空 ROI；classify_into 视为分类失败 → drop。 */
-            if (rs.cfg.output_kind == StageOutputKind::kClassifyInto) src.drop = true;
+            if (rs.cfg.output_kind == StageOutputKind::kClassifyInto)
+                src.drop = true;
             continue;
         }
 
         sub.clear();
         Status r = mi->Run(cropped, &sub);
-        if (r != ALG_OK) return r;
+        if (r != ALG_OK)
+            return r;
         /* classify_into 用的是 label / box.score 覆盖语义，sub.box 是 ROI 内坐标
          * （分类器一般不输出真实 box），跳过坐标反映射避免污染 src.box。 */
         if (rs.cfg.output_kind != StageOutputKind::kClassifyInto)
             MapBackToOriginal(&sub, xf);
 
         if (rs.cfg.output_kind == StageOutputKind::kCreateObjects) {
-            for (auto& o : sub) out_bucket.push_back(std::move(o));
+            for (auto& o : sub)
+                out_bucket.push_back(std::move(o));
         } else if (rs.cfg.output_kind == StageOutputKind::kClassifyInto) {
             if (sub.empty()) {
                 src.drop = true;
@@ -274,10 +290,11 @@ Status ChainSolution::Run(const AlgImage& image, std::vector<Object>* out_object
     return RunInternal(image, out_objects);
 }
 
-Status ChainSolution::RunInternal(const AlgImage& image,
-                                  std::vector<Object>* out_objects) {
-    if (!initialized_) return ALG_E_NOT_INITIALIZED;
-    if (!out_objects) return ALG_E_INVALID_ARG;
+Status ChainSolution::RunInternal(const AlgImage& image, std::vector<Object>* out_objects) {
+    if (!initialized_)
+        return ALG_E_NOT_INITIALIZED;
+    if (!out_objects)
+        return ALG_E_INVALID_ARG;
 
     /* 本帧尚无分平面 AIPP staging；连续映射不使用该缓存，分平面输入由
      * 第一个动态 AIPP stage 填充，兼容的后续 stage 复用。 */
@@ -300,14 +317,17 @@ Status ChainSolution::RunInternal(const AlgImage& image,
 
     for (size_t i = 0; i < stages_.size(); ++i) {
         Status r = RunStage(static_cast<int>(i), image, decoded_bgr_);
-        if (r != ALG_OK) return r;
+        if (r != ALG_OK)
+            return r;
     }
 
     out_objects->clear();
     for (size_t i = 0; i < stages_.size(); ++i) {
-        if (stages_[i].cfg.output_kind != StageOutputKind::kCreateObjects) continue;
+        if (stages_[i].cfg.output_kind != StageOutputKind::kCreateObjects)
+            continue;
         for (auto& o : stage_produces_[i].objects) {
-            if (o.drop) continue;  /* classify_into 已标记应丢弃的框 */
+            if (o.drop)
+                continue; /* classify_into 已标记应丢弃的框 */
             out_objects->push_back(std::move(o));
         }
     }

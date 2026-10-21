@@ -18,9 +18,13 @@ alg_sdk 是面向车载及嵌入式设备的视觉推理 SDK，负责将检测�
 | 后端 | 使用环境 | 模型格式 | 实现状态 |
 |------|----------|----------|----------|
 | `xmm` | XMM 板端运行环境 | `.xmm` | 提供模型加载、推理和内存管理实现 |
-| `svp_acl` | 海思 v610 / SVP ACL | `.om` | 提供模型加载、推理及辅助缓冲管理实现 |
+| `svp_acl_cv610` | 海思 Hi3516CV610（32 位 arm-musleabi） | `.om` | 提供模型加载、推理及辅助缓冲管理实现 |
+| `svp_acl_dv500` | 海思 Hi3519DV500（aarch64） | `.om` | 同上；无 IVE，且 **AIPP 不可做大图缩放**（见下） |
 | `mnn` | x86_64 / MNN | `.mnn` | 提供本地推理实现 |
 | `rk` | Rockchip RKNN | — | 保留接口桩，模型加载返回 `ALG_E_BACKEND` |
+
+> 旧的 `svp_acl` 仍可用，等价于 `svp_acl_cv610`。两个海思变体运行时的 `AlgBackendName()`
+> 都返回 `svp_acl`，靠包名和资源目录区分。
 
 一份动态库在编译时选择一个后端。模型文件、运行依赖和目标架构须与动态库配套。SVP ACL 后端管理模型所需的 `task_buf`、`work_buf`，这些辅助缓冲不作为业务图像输入暴露给上层。
 
@@ -77,9 +81,12 @@ backup/                   历史接口归档
 |------|----------|
 | [xmm/speed_limit.json](resources/config/xmm/speed_limit.json) | 限速牌及禁令 / 停车牌 |
 | [mnn/speed_limit.json](resources/config/mnn/speed_limit.json) | 限速牌及禁令 / 停车牌，本地推理 |
-| [svp_acl/speed_limit.json](resources/config/svp_acl/speed_limit.json) | 限速牌及禁令 / 停车牌，海思平台 |
-| [svp_acl/license_plate.json](resources/config/svp_acl/license_plate.json) | 车牌检测与识别 |
-| [svp_acl/all.json](resources/config/svp_acl/all.json) | 限速牌、禁令 / 停车牌与车牌组合流程 |
+| [svp_acl/cv610/speed_limit.json](resources/config/svp_acl/cv610/speed_limit.json) | 限速牌及禁令 / 停车牌，Hi3516CV610 |
+| [svp_acl/cv610/license_plate.json](resources/config/svp_acl/cv610/license_plate.json) | 车牌检测与识别，Hi3516CV610 |
+| [svp_acl/cv610/all.json](resources/config/svp_acl/cv610/all.json) | 限速牌、禁令 / 停车牌与车牌组合流程，Hi3516CV610 |
+| [svp_acl/dv500/speed_limit.json](resources/config/svp_acl/dv500/speed_limit.json) | 同上，Hi3519DV500（模型文件名不同，见 [dv500/README.md](resources/config/svp_acl/dv500/README.md)） |
+| [svp_acl/dv500/license_plate.json](resources/config/svp_acl/dv500/license_plate.json) | 同上，Hi3519DV500 |
+| [svp_acl/dv500/all.json](resources/config/svp_acl/dv500/all.json) | 同上，Hi3519DV500 |
 | [xmm/all.json](resources/config/xmm/all.json)、[mnn/all.json](resources/config/mnn/all.json) | 内部红绿灯与限速牌组合流程；公共输出为限速牌及禁令 / 停车牌 |
 
 限速牌检测输入为 576×320，识别输入为 96×96，均采用 RGB。OCR 支持单输出及多输出布局；三位数字加三路门控的单输出共 36 个元素。多输出模型通过张量名称和索引配置识别各输出头。
@@ -96,29 +103,46 @@ backup/                   历史接口归档
 
 ```bash
 ./build.sh linux aarch64 xmm
-./build.sh linux aarch64 svp_acl
+./build.sh linux aarch64 svp_acl_cv610
+./build.sh linux aarch64 svp_acl_dv500
 ./build.sh linux x86_64 mnn
 ```
 
 默认产物位于 `build_linux_<arch>_<backend>/`，包含动态库、`test_runner` 和 `loop_runner`。构建脚本会清理并重建对应目录，交付资料和测试数据应存放在构建目录之外。
 
-海思构建沿用脚本中的 `aarch64` 入口名称，实际采用 ARM 32 位 `arm-linux-musleabi` 工具链。平台依赖见 [板端构建配置](cmake/CMakeLists_linux_aarch64.cmake)、[本地构建配置](cmake/CMakeLists_linux_x86_64.cmake) 和 [海思工具链](toolchain/hisi_v610_linux.toolchain.cmake)。JSONCPP 源码随工程编入。
+海思构建沿用脚本中的 `aarch64` 入口名称：`svp_acl_cv610` 实际采用 ARM 32 位 `arm-linux-musleabi` 工具链，`svp_acl_dv500` 使用 aarch64 工具链。平台依赖见 [板端构建配置](cmake/CMakeLists_linux_aarch64.cmake)、[本地构建配置](cmake/CMakeLists_linux_x86_64.cmake) 和 [海思工具链](toolchain/)。JSONCPP 源码随工程编入。
 
-海思环境的工具链及依赖路径可通过 CMake 参数 `HISI_TOOLCHAIN_ROOT`、`SVP_ACL_ROOT`、`SVP_ACL_LIB_DIR`、`HISI_SECUREC_LIB_DIR` 和 `SVP_OPENCV_ROOT` 配置。
+海思环境的工具链及依赖路径可通过 CMake 参数 `HISI_TOOLCHAIN_ROOT`、`SVP_ACL_ROOT`、`SVP_ACL_LIB_DIR`、`HISI_SECUREC_LIB_DIR` 和 `SVP_OPENCV_ROOT` 配置，各芯片有各自的默认值。
 动态 AIPP 默认通过 `ALG_SVP_DYNAMIC_AIPP=ON` 编译；需要兼容不含动态 AIPP API 的旧版 ACL 头文件时可显式关闭。
-物理双平面 NV12/NV21 默认通过 `ALG_SVP_IVE_PREPROCESS=ON` 启用 IVE，可通过 `HISI_SVP_ROOT` 指定 IVE 头文件和静态库目录；未提供物理地址的测试输入回退到 `third_party/libyuv/hi3516`，可通过 `LIBYUV_ROOT` 覆盖。
+物理双平面 NV12/NV21 默认通过 `ALG_SVP_IVE_PREPROCESS=ON` 启用 IVE，可通过 `HISI_SVP_ROOT` 指定 IVE 头文件和静态库目录；未提供物理地址的测试输入回退到 libyuv（`ALG_SVP_LIBYUV_FALLBACK=ON`），可通过 `LIBYUV_ROOT` 覆盖。
+
+libyuv 预编译库按芯片分目录：`libyuv/hi3516`（ARM32，CV610）与 `libyuv/3519dv500`（aarch64，DV500），
+CMake 自动按芯片选择。`svp_acl_dv500` 的 DV500 acllib 不含 SVP/IVE，因此该目标
+`ALG_SVP_IVE_PREPROCESS` 默认为 `OFF`，分平面输入一律由 libyuv 合并（无 IVE 硬件缩放）。
+
+> **DV500 上 AIPP 不能负责缩放。** 只要 AIPP 参与缩放（`scf_switch=2`，BILINEAR），
+> 每帧会多出**固定约 128ms**，与源尺寸和缩放比无关（1920×1080 / 1280×720 / 960×540
+> 都是 128.4ms；源不缩放时 4.8ms）。因此送进 `AlgRun` 的帧必须已经是配置里的
+> `aipp_output_size`（源须为 16:9）。由谁缩放到这个尺寸可运行时切换：
+> `AlgSetAippScaleMode(ALG_AIPP_SCALE_AUTO)`（默认，SDK 内部 libyuv 预缩放，约 11ms/帧 CPU）
+> 或 `ALG_AIPP_SCALE_EXTERNAL`（调用方/VPSS 负责，CPU 零开销；尺寸不符直接报错）。
+> 详见 [dv500 配置说明](resources/config/svp_acl/dv500/README.md)。
 
 在匹配的目标设备或本地运行环境中，从仓库一级构建目录启动验证程序：
 
 ```bash
-cd build_linux_aarch64_svp_acl
-./test_runner ../resources/config/svp_acl/all.json /data/test.jpg out
-./loop_runner ../resources/config/svp_acl/all.json /data/test.jpg -n 1000
-./loop_runner ../resources/config/svp_acl/license_plate.json /data/frame.yuv \
+cd build_linux_aarch64_svp_acl_dv500
+./test_runner ../resources/config/svp_acl/dv500/all.json /data/test.jpg out
+./loop_runner ../resources/config/svp_acl/dv500/all.json /data/test.jpg -n 1000
+./loop_runner ../resources/config/svp_acl/dv500/license_plate.json /data/frame.yuv \
   -size 1920x1080 -fmt nv12 -n 1000
-./loop_runner ../resources/config/svp_acl/all.json /data/frame.yuv \
-  -size 1920x1080 -fmt nv21 -split-plane -n 1000
+./loop_runner ../resources/config/svp_acl/dv500/all.json /data/frame.yuv \
+  -size 1920x1080 -fmt nv21 -n 1000
 ```
+
+`svp_acl_cv610` 换用 `build_linux_aarch64_svp_acl_cv610` 与 `../resources/config/svp_acl/cv610/`。
+两个海思目标都支持 `-split-plane`：cv610 提供了物理地址时走 IVE 硬件缩放，其余情况由 libyuv 合并；
+dv500 只走 libyuv。
 
 `test_runner` 支持图片或图片目录，`loop_runner` 支持图片和原始 YUV 帧循环输入。上述相对路径要求部署目录保留构建目录与 `resources` 的同级关系。
 
@@ -126,7 +150,7 @@ cd build_linux_aarch64_svp_acl
 
 - 图像格式支持 BGR、RGB、GRAY、NV12 和 NV21。NV12/NV21 可通过 `data` 传入整帧连续映射，也可通过 `plane_data[0]` 和 `[1]` 分别传入 Y 与 UV/VU，分平面支持独立 stride。默认 VPSS 格式为 NV21，同时兼容 NV12。
 - 海思通过 `AlgRun` 传入原分辨率 VPSS 帧，不要求为各模型增加 VPSS 缩放通道。
-- 海思动态 AIPP 下，连续 `data` 直接绑定，不复制、不 flush、不释放；分平面输入同时填写 `plane_phys_addr[0/1]` 后，由 IVE 缩放并输出连续非 cached MMZ，再零拷贝绑定 ACL。无物理地址的普通测试内存回退到 libyuv。IVE/AIPP 完成缩放、转色和归一化，值为 114 的 letterbox 补边固化在模型图中；普通 OM 保持 OpenCV 路径。
+- 海思动态 AIPP 下，连续 `data` 直接绑定，不复制、不 flush、不释放；分平面输入同时填写 `plane_phys_addr[0/1]` 后，由 IVE 缩放并输出连续非 cached MMZ，再零拷贝绑定 ACL。无物理地址的普通测试内存回退到 libyuv。IVE/AIPP 完成缩放、转色和归一化，值为 114 的 letterbox 补边固化在模型图中；普通 OM 保持 OpenCV 路径。**DV500 无 IVE，分平面输入一律由 libyuv 按原尺寸合并后交给 AIPP 缩放。**
 - 网络前处理输出 NCHW，支持 UINT8 和 FLOAT32 输入类型，输入尺寸须与模型一致。
 - SDK 调用由应用串行调度；共享结果和图像缓冲的访问需要同步。
 - 车牌识别未解出字符时，SDK 会丢弃对应检测框；应用仍应按业务要求校验车牌文本格式。

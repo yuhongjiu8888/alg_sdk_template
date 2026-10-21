@@ -7,6 +7,8 @@ std::unique_ptr<IInferer> MakeInferer() {
     return std::unique_ptr<IInferer>(new SvpAclInferer());
 }
 
-const char* BackendName() { return "svp_acl"; }
+const char* BackendName() {
+    return "svp_acl";
+}
 
 }  // namespace alg

@@ -2,7 +2,6 @@
 #define ALG_CORE_LOGGER_H
 
 #include <cstdio>
-
 #include "core/log/alg_log.h"
 
 /*
@@ -30,28 +29,28 @@
 #define ALG_LOG_IS_ENABLED(lvl) (::alg::log::is_enabled((lvl)))
 
 #if defined(ALG_ENABLE_LOG_FILE)
-#define ALG_LOG__EMIT(lvl, fmt, ...)                                      \
-    do {                                                                  \
-        if (ALG_LOG_IS_ENABLED(lvl))                                      \
-            ::alg::log::writef((lvl), fmt, ##__VA_ARGS__);                \
+#define ALG_LOG__EMIT(lvl, fmt, ...)                                                                                   \
+    do {                                                                                                               \
+        if (ALG_LOG_IS_ENABLED(lvl))                                                                                   \
+            ::alg::log::writef((lvl), fmt, ##__VA_ARGS__);                                                             \
     } while (0)
 #else
-#define ALG_LOG__EMIT_TO(stream, lvl, fmt, ...)                           \
-    do {                                                                  \
-        if (ALG_LOG_IS_ENABLED(lvl))                                      \
-            std::fprintf((stream), fmt "\n", ##__VA_ARGS__);             \
+#define ALG_LOG__EMIT_TO(stream, lvl, fmt, ...)                                                                        \
+    do {                                                                                                               \
+        if (ALG_LOG_IS_ENABLED(lvl))                                                                                   \
+            std::fprintf((stream), fmt "\n", ##__VA_ARGS__);                                                           \
     } while (0)
 #endif
 
 #if defined(ALG_ENABLE_LOG_FILE)
 #define ALG_LOGE(fmt, ...) ALG_LOG__EMIT(::alg::log::Level::Error, "[alg][E] " fmt, ##__VA_ARGS__)
-#define ALG_LOGW(fmt, ...) ALG_LOG__EMIT(::alg::log::Level::Warn,  "[alg][W] " fmt, ##__VA_ARGS__)
-#define ALG_LOGI(fmt, ...) ALG_LOG__EMIT(::alg::log::Level::Info,  "[alg][I] " fmt, ##__VA_ARGS__)
+#define ALG_LOGW(fmt, ...) ALG_LOG__EMIT(::alg::log::Level::Warn, "[alg][W] " fmt, ##__VA_ARGS__)
+#define ALG_LOGI(fmt, ...) ALG_LOG__EMIT(::alg::log::Level::Info, "[alg][I] " fmt, ##__VA_ARGS__)
 #define ALG_LOGD(fmt, ...) ALG_LOG__EMIT(::alg::log::Level::Debug, "[alg][D] " fmt, ##__VA_ARGS__)
 #else
 #define ALG_LOGE(fmt, ...) ALG_LOG__EMIT_TO(stderr, ::alg::log::Level::Error, "[alg][E] " fmt, ##__VA_ARGS__)
-#define ALG_LOGW(fmt, ...) ALG_LOG__EMIT_TO(stderr, ::alg::log::Level::Warn,  "[alg][W] " fmt, ##__VA_ARGS__)
-#define ALG_LOGI(fmt, ...) ALG_LOG__EMIT_TO(stdout, ::alg::log::Level::Info,  "[alg][I] " fmt, ##__VA_ARGS__)
+#define ALG_LOGW(fmt, ...) ALG_LOG__EMIT_TO(stderr, ::alg::log::Level::Warn, "[alg][W] " fmt, ##__VA_ARGS__)
+#define ALG_LOGI(fmt, ...) ALG_LOG__EMIT_TO(stdout, ::alg::log::Level::Info, "[alg][I] " fmt, ##__VA_ARGS__)
 #define ALG_LOGD(fmt, ...) ALG_LOG__EMIT_TO(stderr, ::alg::log::Level::Debug, "[alg][D] " fmt, ##__VA_ARGS__)
 #endif
 

@@ -1,5 +1,4 @@
 #include "backend/rk/rk_inferer.h"
-
 #include "core/logger.h"
 
 namespace alg {
