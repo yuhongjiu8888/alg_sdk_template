@@ -124,7 +124,7 @@ CMake 自动按芯片选择。`svp_acl_dv500` 的 DV500 acllib 不含 SVP/IVE，
 > 每帧会多出**固定约 128ms**，与源尺寸和缩放比无关（1920×1080 / 1280×720 / 960×540
 > 都是 128.4ms；源不缩放时 4.8ms）。因此送进 `AlgRun` 的帧必须已经是配置里的
 > `aipp_output_size`（源须为 16:9）。由谁缩放到这个尺寸可运行时切换：
-> `AlgSetAippScaleMode(ALG_AIPP_SCALE_AUTO)`（默认，SDK 内部 libyuv 预缩放，约 11ms/帧 CPU）
+> `AlgSetAippScaleMode(ALG_AIPP_SCALE_AUTO)`（默认，SDK 内部 libyuv 折半预缩放并跨模型共享中间帧，两路全图模型合计约 7ms/帧 CPU）
 > 或 `ALG_AIPP_SCALE_EXTERNAL`（调用方/VPSS 负责，CPU 零开销；尺寸不符直接报错）。
 > 详见 [dv500 配置说明](resources/config/svp_acl/dv500/README.md)。
 

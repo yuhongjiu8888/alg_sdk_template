@@ -53,6 +53,14 @@ struct SharedInputStaging {
     size_t row_stride = 0;
     bool flushed = false;
 
+    /* DV500 CPU 预缩放的 1/2 折半中间帧（如 1080p 的 960x540）。第一个全图
+     * 模型产出后发布，后续模型中间帧尺寸相同时可直接复用，避免重复折半。
+     * 只由 CPU 读写，不绑定 ACL；每帧 Reset。 */
+    void* prescale_data = nullptr;
+    int prescale_width = 0;
+    int prescale_height = 0;
+    int prescale_stride = 0;
+
     void Reset() { *this = SharedInputStaging{}; }
 };
 

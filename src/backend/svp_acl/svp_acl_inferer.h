@@ -60,6 +60,15 @@ class SvpAclInferer : public IInferer {
     bool image_input_preflushed_ = false;
     bool split_copy_path_reported_ = false;
     bool cpu_prescale_reported_ = false;
+#ifdef ALG_SVP_LIBYUV_FALLBACK
+    /* DV500 CPU 预缩放的 1/2 折半中间帧（乒乓复用）。中间帧只被 libyuv/CPU
+     * 读写，不绑定 ACL，因此用普通对齐内存即可。1080p 只需要一块 960x540。 */
+    uint8_t* prescale_tmp_[2] = {nullptr, nullptr};
+    size_t prescale_tmp_capacity_[2] = {0, 0};
+
+    Status EnsurePrescaleTmp(int slot, size_t bytes);
+    void FreePrescaleTmp();
+#endif
 #ifdef ALG_SVP_IVE_PREPROCESS
     td_phys_addr_t ive_output_phys_ = 0;
     void* ive_output_virt_ = nullptr;

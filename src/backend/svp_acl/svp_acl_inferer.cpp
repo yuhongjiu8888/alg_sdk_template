@@ -2,6 +2,7 @@
 #include <sys/time.h>
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -36,6 +37,30 @@ td_s32 ot_mpi_sys_mmz_free(td_phys_addr_t phys_addr, td_void* virt_addr);
 
 namespace alg {
 namespace {
+
+/* DV500 CPU 预缩放：src -> dst 之前先做几次精确 1/2 折半，让最后一段
+ * 落在 libyuv 的专用 NEON 路径上（1/3 之类的非整数比没有专用路径）。
+ * 返回折半次数；0 表示直接一次缩到目标。 */
+inline int PrescaleHalfSteps(int src_w, int src_h, int dst_w, int dst_h) {
+    int hops = 0;
+    /* %4：保证折半后的中间帧宽高仍为偶数，NV12 的 UV 平面才合法。 */
+    while ((src_w % 4 == 0) && (src_h % 4 == 0) && (src_w / 2 > dst_w) && (src_h / 2 > dst_h)) {
+        src_w /= 2;
+        src_h /= 2;
+        ++hops;
+    }
+    return hops;
+}
+
+/* SharedInputStaging 里的 source_* 是否描述的仍是当前这一帧。 */
+inline bool SameSource(const SharedInputStaging& shared, const AlgImage& image, const ImageView& source) {
+    return shared.source_plane[0] == source.plane[0] && shared.source_plane[1] == source.plane[1] &&
+           shared.source_width == image.width && shared.source_height == image.height &&
+           shared.source_stride[0] == source.stride[0] && shared.source_stride[1] == source.stride[1] &&
+           shared.source_format == image.format && shared.source_data_len[0] == source.data_len[0] &&
+           shared.source_data_len[1] == source.data_len[1] &&
+           shared.source_uses_separate_planes == source.uses_separate_planes;
+}
 
 inline double ElapsedMs(const timeval& begin, const timeval& end) {
     return (end.tv_sec - begin.tv_sec) * 1000.0 + (end.tv_usec - begin.tv_usec) / 1000.0;
@@ -224,6 +249,9 @@ void SvpAclInferer::FreeAll() {
     image_input_preflushed_ = false;
     split_copy_path_reported_ = false;
     cpu_prescale_reported_ = false;
+#ifdef ALG_SVP_LIBYUV_FALLBACK
+    FreePrescaleTmp();
+#endif
 #ifdef ALG_SVP_IVE_PREPROCESS
     ive_path_reported_ = false;
 #endif
@@ -568,6 +596,41 @@ Status SvpAclInferer::EnsureOwnImageInput() {
     return ALG_OK;
 }
 
+#ifdef ALG_SVP_LIBYUV_FALLBACK
+Status SvpAclInferer::EnsurePrescaleTmp(int slot, size_t bytes) {
+    if (slot < 0 || slot > 1 || bytes == 0)
+        return ALG_E_INVALID_ARG;
+    if (prescale_tmp_[slot] && prescale_tmp_capacity_[slot] >= bytes)
+        return ALG_OK;
+    if (prescale_tmp_[slot]) {
+        std::free(prescale_tmp_[slot]);
+        prescale_tmp_[slot] = nullptr;
+        prescale_tmp_capacity_[slot] = 0;
+    }
+
+    /* 中间帧只被 libyuv 读写，不参与 ACL 绑定，普通对齐堆内存即可，
+     * 不占 MMZ。 */
+    void* memory = nullptr;
+    if (posix_memalign(&memory, 64, bytes) != 0 || !memory) {
+        ALG_LOGE("svp_acl: allocate CPU pre-scale temp (%zu bytes) failed", bytes);
+        return ALG_E_OOM;
+    }
+    prescale_tmp_[slot] = static_cast<uint8_t*>(memory);
+    prescale_tmp_capacity_[slot] = bytes;
+    return ALG_OK;
+}
+
+void SvpAclInferer::FreePrescaleTmp() {
+    for (int i = 0; i < 2; ++i) {
+        if (prescale_tmp_[i]) {
+            std::free(prescale_tmp_[i]);
+            prescale_tmp_[i] = nullptr;
+            prescale_tmp_capacity_[i] = 0;
+        }
+    }
+}
+#endif
+
 #ifdef ALG_SVP_IVE_PREPROCESS
 void SvpAclInferer::FreeIveBuffers() {
     if (ive_output_virt_) {
@@ -786,12 +849,6 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         ALG_LOGI("svp_acl: split-plane %s %dx%d -> libyuv copy -> shared AIPP staging",
                  image.format == ALG_PIX_NV21 ? "NV21" : "NV12", image.width, image.height);
         split_copy_path_reported_ = true;
-    }
-    if (cpu_prescale && !cpu_prescale_reported_ && ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
-        ALG_LOGI("svp_acl: CPU pre-scale %s %dx%d -> %dx%d (libyuv kFilterBox) -> AIPP scf=0",
-                 image.format == ALG_PIX_NV21 ? "NV21" : "NV12", image.width, image.height, aipp_src_width,
-                 aipp_src_height);
-        cpu_prescale_reported_ = true;
     }
 #ifdef ALG_SVP_IVE_PREPROCESS
     if (use_ive_resize && !ive_path_reported_ && ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
@@ -1068,14 +1125,9 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
     /* 预缩放时 staging 里装的是缩放后的帧，尺寸与源不同，跨模型共享的前提不再成立；
      * 各模型用自己的私有 staging，避免把别的模型的尺寸当作可复用条件。 */
     const bool can_share = !cpu_prescale && shared_staging && shared_staging->flushed &&
-        shared_staging->source_plane[0] == source.plane[0] && shared_staging->source_plane[1] == source.plane[1] &&
-        shared_staging->source_width == image.width && shared_staging->source_height == image.height &&
-        shared_staging->source_stride[0] == source.stride[0] && shared_staging->source_stride[1] == source.stride[1] &&
-        shared_staging->source_format == image.format && shared_staging->source_data_len[0] == source.data_len[0] &&
-        shared_staging->source_data_len[1] == source.data_len[1] &&
-        shared_staging->source_uses_separate_planes == source.uses_separate_planes &&
-        shared_staging->staged_width == aipp_src_width && shared_staging->staged_height == aipp_src_height &&
-        shared_staging->data && shared_staging->capacity >= dst_size && shared_staging->data_size == needed_dst &&
+        SameSource(*shared_staging, image, source) && shared_staging->staged_width == aipp_src_width &&
+        shared_staging->staged_height == aipp_src_height && shared_staging->data &&
+        shared_staging->capacity >= dst_size && shared_staging->data_size == needed_dst &&
         shared_staging->row_stride == dst_stride;
 
     state.aipp_profile_valid = profile;
@@ -1134,15 +1186,111 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
             gettimeofday(&copy_begin, nullptr);
         uint8_t* dst_uv = dst + dst_y_bytes;
         int libyuv_status = 0;
+        /* 本次调用产出的 1/2 折半中间帧；非空时发布到 SharedInputStaging，
+         * 供同一帧内中间帧尺寸相同的后续模型复用。 */
+        void* prescale_base_data = nullptr;
+        int prescale_base_w = 0;
+        int prescale_base_h = 0;
+        int prescale_base_stride = 0;
         if (cpu_prescale) {
             /* NV12Scale 内部对 UV 平面调用 UVScale(..., width/2, ...)，按「UV 对」
              * 缩放、不解释 U/V 字节语义，所以 NV12 与 NV21 通用。一次调用同时完成
              * 「分平面合并」与「缩放到 aipp_output_size」；ResolveImageView 已保证
-             * 连续帧与分平面两种输入下 plane[0]/plane[1]/stride 都成立。 */
-            libyuv_status =
-                libyuv::NV12Scale(source.plane[0], source.stride[0], source.plane[1], source.stride[1], image.width,
-                                  image.height, dst, static_cast<int>(dst_stride), dst_uv, static_cast<int>(dst_stride),
-                                  aipp_src_width, aipp_src_height, libyuv::kFilterBox);
+             * 连续帧与分平面两种输入下 plane[0]/plane[1]/stride 都成立。
+             *
+             * 1080p -> 640x360/568x320 约为 1/3，libyuv 没有 1/3 专用路径，会落到
+             * 通用 ScalePlaneBox；该路径的水平累加在 ARM 上没有 NEON，单次约 10ms。
+             * 这里先用精确 1/2（ScalePlaneDown2，纯 NEON）折半到仍大于目标的中间
+             * 尺寸，再由中间帧缩到目标，避开标量大比例滤波。1080p 折一次到
+             * 960x540，4K 折两次；中间帧用乒乓缓冲复用。 */
+            int hops = PrescaleHalfSteps(image.width, image.height, aipp_src_width, aipp_src_height);
+            int base_w = image.width;
+            int base_h = image.height;
+            for (int i = 0; i < hops; ++i) {
+                base_w /= 2;
+                base_h /= 2;
+            }
+
+            /* 同一帧内两个全图模型常常需要同一张中间帧（如 1080p -> 960x540）。
+             * 先跑的模型算完发布，后跑的模型直接复用，少做一次大图折半。 */
+            const bool reuse_base = hops > 0 && shared_staging && shared_staging->prescale_data &&
+                shared_staging->prescale_width == base_w && shared_staging->prescale_height == base_h &&
+                shared_staging->prescale_stride > 0 && SameSource(*shared_staging, image, source);
+
+            if (!reuse_base && hops > 0) {
+                int w = image.width;
+                int h = image.height;
+                for (int i = 0; i < hops; ++i) {
+                    w /= 2;
+                    h /= 2;
+                    const size_t stride = (static_cast<size_t>(w) + 63) & ~static_cast<size_t>(63);
+                    const size_t bytes = stride * static_cast<size_t>(h) + stride * static_cast<size_t>(h / 2);
+                    if (EnsurePrescaleTmp(i & 1, bytes) != ALG_OK) {
+                        /* 分配失败时退回单次直缩，保持功能可用。 */
+                        hops = 0;
+                        break;
+                    }
+                }
+            }
+
+            if (!cpu_prescale_reported_ && ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
+                ALG_LOGI("svp_acl: CPU pre-scale %s %dx%d -> %dx%d (libyuv kFilterBox, half_steps=%d, "
+                         "reused_base=%d) -> AIPP scf=0",
+                         image.format == ALG_PIX_NV21 ? "NV21" : "NV12", image.width, image.height, aipp_src_width,
+                         aipp_src_height, reuse_base ? 0 : hops, reuse_base ? 1 : 0);
+                cpu_prescale_reported_ = true;
+            }
+
+            if (reuse_base) {
+                const uint8_t* base = static_cast<const uint8_t*>(shared_staging->prescale_data);
+                const int stride = shared_staging->prescale_stride;
+                libyuv_status = libyuv::NV12Scale(
+                    base, stride, base + static_cast<size_t>(stride) * static_cast<size_t>(base_h), stride, base_w,
+                    base_h, dst, static_cast<int>(dst_stride), dst_uv, static_cast<int>(dst_stride), aipp_src_width,
+                    aipp_src_height, libyuv::kFilterBox);
+            } else if (hops > 0) {
+                const uint8_t* cur_y = source.plane[0];
+                const uint8_t* cur_uv = source.plane[1];
+                int cur_stride_y = source.stride[0];
+                int cur_stride_uv = source.stride[1];
+                int cur_w = image.width;
+                int cur_h = image.height;
+                for (int i = 0; i < hops && libyuv_status == 0; ++i) {
+                    const int next_w = cur_w / 2;
+                    const int next_h = cur_h / 2;
+                    const int stride =
+                        static_cast<int>((static_cast<size_t>(next_w) + 63) & ~static_cast<size_t>(63));
+                    uint8_t* buf = prescale_tmp_[i & 1];
+                    uint8_t* buf_uv = buf + static_cast<size_t>(stride) * static_cast<size_t>(next_h);
+                    libyuv_status = libyuv::NV12Scale(cur_y, cur_stride_y, cur_uv, cur_stride_uv, cur_w, cur_h, buf,
+                                                     stride, buf_uv, stride, next_w, next_h, libyuv::kFilterBox);
+                    cur_y = buf;
+                    cur_uv = buf_uv;
+                    cur_stride_y = stride;
+                    cur_stride_uv = stride;
+                    cur_w = next_w;
+                    cur_h = next_h;
+                }
+                if (libyuv_status == 0) {
+                    libyuv_status = libyuv::NV12Scale(
+                        cur_y, cur_stride_y, cur_uv, cur_stride_uv, cur_w, cur_h, dst,
+                        static_cast<int>(dst_stride), dst_uv, static_cast<int>(dst_stride), aipp_src_width,
+                        aipp_src_height, libyuv::kFilterBox);
+                }
+                if (libyuv_status == 0) {
+                    prescale_base_data = prescale_tmp_[(hops - 1) & 1];
+                    prescale_base_w = base_w;
+                    prescale_base_h = base_h;
+                    prescale_base_stride =
+                        static_cast<int>((static_cast<size_t>(base_w) + 63) & ~static_cast<size_t>(63));
+                }
+            } else {
+                libyuv_status =
+                    libyuv::NV12Scale(source.plane[0], source.stride[0], source.plane[1], source.stride[1],
+                                      image.width, image.height, dst, static_cast<int>(dst_stride), dst_uv,
+                                      static_cast<int>(dst_stride), aipp_src_width, aipp_src_height,
+                                      libyuv::kFilterBox);
+            }
         } else {
             libyuv_status = image.format == ALG_PIX_NV21
                 ? libyuv::NV21Copy(source.plane[0], source.stride[0], source.plane[1], source.stride[1], dst,
@@ -1187,6 +1335,12 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
             shared_staging->source_data_len[0] = source.data_len[0];
             shared_staging->source_data_len[1] = source.data_len[1];
             shared_staging->source_uses_separate_planes = source.uses_separate_planes;
+            if (prescale_base_data) {
+                shared_staging->prescale_data = prescale_base_data;
+                shared_staging->prescale_width = prescale_base_w;
+                shared_staging->prescale_height = prescale_base_h;
+                shared_staging->prescale_stride = prescale_base_stride;
+            }
             shared_staging->staged_width = aipp_src_width;
             shared_staging->staged_height = aipp_src_height;
             shared_staging->data = dst;

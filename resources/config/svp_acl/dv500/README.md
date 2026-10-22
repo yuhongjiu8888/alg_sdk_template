@@ -71,16 +71,29 @@ SDK 内部用 `libyuv::NV12Scale(..., kFilterBox)`。它内部对 UV 平面调�
 `UVScale(..., width/2, ...)`，**按「UV 对」缩放、不解释 U/V 字节语义**，
 所以对 NV21 同样正确（NV21 只是对内的字节顺序不同）。
 
-`AUTO` 模式下这段耗时计入 `svp_acl_mdl_execute`，在 `-log info` 的
-`[det_cfg] aipp_pre ... copy=...` 和 `[det_cfg] infer=...` 里能看到：
-检测模型大约 `infer ≈ 16ms`（4.8ms NPU + 约 11ms 预缩放）。
+1080p → 640×360/568×320 约为 1/3，是**非整数比**，libyuv 没有对应的专用路径，
+会落到通用的 `ScalePlaneBox`；该路径的水平累加在 ARM 上没有 NEON，单次约 10ms。
+因此 SDK 在直缩前先做整数折半：用精确 1/2（`ScalePlaneDown2`，纯 NEON）把源缩到
+仍大于目标的中间尺寸，再由中间帧缩到 `aipp_output_size`。1080p 是
+`1920×1080 → 960×540 → 640×360`，4K 会折两次。`-log info` 里的
+`half_steps=` 表示本次实际折半次数。中间帧用普通对齐堆内存（不占 MMZ），按
+inferer 乒乓复用；同一帧内多个全图模型的中间帧尺寸相同时（例如 `ssn_det` 和
+`license_det` 都是 960×540），由 `SharedInputStaging` 共享，只折半一次，日志里的
+`reused_base=1` 表示本次直接复用了前一模型算好的中间帧。多一次重采样，
+画质/检出需要通过实机对比确认。
+
+`AUTO` 模式下这段耗时计入 `pre`，在 `-log info` 的 `[det_cfg] aipp_pre ... copy=...`
+里能看到（`infer=` 只是 NPU 执行时间）。改造前单次直缩时检测模型
+`infer ≈ 16ms`（4.8ms NPU + 约 11ms 预缩放）；折半并共享中间帧后，1920×1080
+输入的稳态整帧约 24ms（41fps），其中 `ssn` 的 `copy ≈ 4.9ms`、`license_det`
+的 `copy ≈ 2.3ms`。具体数值随模型和平台变化。
 
 > **不要**把交错 UV 平面当「宽 = `srcW` 的单通道图」去缩：INTER_AREA 一类的
 > 3 字节窗口会取到 `[V0,U0,V1]`，把 U 和 V 混在一起。实测 PSNR 31.5 dB，
 > 而按 UV 对缩放是 47.7 dB。
 
-同样 1920×1080 → 640×360 的其它实现（`loop_runner -scale 640x360 -scale-mode ...`，
-仅用于对比，不是 SDK 路径）：
+下面这组是**单次直缩**（未加 1/2 折半）的对比基线，用于说明为什么不用 OpenCV /
+最近邻（`loop_runner -scale 640x360 -scale-mode ...`，仅用于对比，不是 SDK 路径）：
 
 | 实现 | 每帧 CPU | 画质（vs 标准区域平均的 PSNR） | 车牌识别 |
 |---|---|---|---|
