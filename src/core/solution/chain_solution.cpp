@@ -169,6 +169,8 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::M
     /* 按源格式选裁剪路径：NV12/NV21 直接抠原图小区域（省全帧解码）；其余走已解码的
      * BGR Mat（BGR 零拷贝 / RGB/GRAY 在解码时已转 BGR）。 */
     const bool nv_source = (image.format == ALG_PIX_NV12 || image.format == ALG_PIX_NV21);
+    /* 子模型且是 NV12 源：直接走“NV12 ROI → 缩放 → 转色”，省掉 BGR 中间图。 */
+    const bool fused_roi = nv_source && mi->SupportsNv12Roi();
     auto Crop = [&](const AlgBox& box, const CropConfig& cfg, cv::Mat* holder, AlgImage* out, CropTransform* xf) {
         return nv_source ? CropFromNV12(image, box, cfg, holder, out, xf)
                          : CropFromDecoded(decoded_bgr, box, cfg, holder, out, xf);
@@ -245,7 +247,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::M
             }
         }
 
-        if (!Crop(src.box, rs.cfg.crop, &roi_holder, &cropped, &xf)) {
+        if (!fused_roi && !Crop(src.box, rs.cfg.crop, &roi_holder, &cropped, &xf)) {
             /* 框完全在画外或裁出空 ROI；classify_into 视为分类失败 → drop。 */
             if (rs.cfg.output_kind == StageOutputKind::kClassifyInto)
                 src.drop = true;
@@ -253,9 +255,21 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::M
         }
 
         sub.clear();
-        Status r = mi->Run(cropped, &sub);
-        if (r != ALG_OK)
-            return r;
+        Status r;
+        if (fused_roi) {
+            r = mi->RunNv12Roi(image, src.box, rs.cfg.crop, &sub, &xf);
+            if (r == ALG_E_PREPROCESS || r == ALG_E_INVALID_ARG) {
+                if (rs.cfg.output_kind == StageOutputKind::kClassifyInto)
+                    src.drop = true;
+                continue;
+            }
+            if (r != ALG_OK)
+                return r;
+        } else {
+            r = mi->Run(cropped, &sub);
+            if (r != ALG_OK)
+                return r;
+        }
         /* classify_into 用的是 label / box.score 覆盖语义，sub.box 是 ROI 内坐标
          * （分类器一般不输出真实 box），跳过坐标反映射避免污染 src.box。 */
         if (rs.cfg.output_kind != StageOutputKind::kClassifyInto)

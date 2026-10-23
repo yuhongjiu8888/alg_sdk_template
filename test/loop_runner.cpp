@@ -19,14 +19,14 @@
  *   -split-plane        把 Y 和 UV/VU 复制到两个独立缓冲，验证分地址输入
  *   -save-every <N>     每 N 帧保存一次画框结果（默认 0 = 从不保存；目录 loop_out/）
  *   -stats-every <N>    每 N 帧打印一次窗口统计（默认 100）
- *   -fps <N>            帧率上限：每帧耗时不足 1000/N ms 时 usleep 补齐（默认 0 = 不限速）
+ *   -fps <N>            帧率上限：交给 SDK 内部限速（AlgSetTargetFps），默认 0 = 不限速
  *                       例：-fps 15 模拟 15fps 相机，-fps 10 模拟 10fps
+ *                       限速睡眠发生在 AlgRun 内部，因此每帧 infer/total 会包含这段等待
  *   -v                  每帧打印完整检出明细（SL/SG/LP 列表）
  */
 
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <unistd.h>
 #include <algorithm>
 #include <cctype>
 #include <csignal>
@@ -155,7 +155,9 @@ void PrintResultDetails(const AlgResult& r) {
     }
     for (int i = 0; i < r.license_plate_count; ++i) {
         const AlgLicensePlate& lp = r.license_plates[i];
-        std::printf("                LP[%d] plate='%s' score=%.3f rec=%.3f\n", i, lp.text, lp.box.score, lp.rec_score);
+        std::printf("                LP[%d] plate='%s' len=%zu score=%.3f rec=%.3f box=(%d,%d,%d,%d)\n", i,
+                    lp.text, std::strlen(lp.text), lp.box.score, lp.rec_score, lp.box.xmin, lp.box.ymin,
+                    lp.box.xmax, lp.box.ymax);
     }
 }
 
@@ -171,7 +173,7 @@ int main(int argc, char** argv) {
                      "  -split-plane      将 Y 与 UV/VU 复制到两个独立缓冲传入\n"
                      "  -save-every <N>   每 N 帧保存画框结果，0=从不保存（默认 0）\n"
                      "  -stats-every <N>  每 N 帧打印窗口统计（默认 100）\n"
-                     "  -fps <N>          帧率上限：usleep 补齐到 1000/N ms/帧（0=不限速，默认 0）\n"
+                     "  -fps <N>          帧率上限：SDK 内部限速（AlgSetTargetFps），0=不限速（默认 0）\n"
                      "  -v                每帧打印完整检出明细\n"
                      "  -log <level>      SDK 日志等级：error|warn|info|debug（默认保持编译期默认值）\n"
                      "                    info 会打印每模型的 pre/infer/post 及 AIPP 子阶段耗时\n"
@@ -199,7 +201,6 @@ int main(int argc, char** argv) {
     const int save_every = std::atoi(Opt(args, "-save-every", "0").c_str());
     const int stats_every = std::max(1, std::atoi(Opt(args, "-stats-every", "100").c_str()));
     const int fps = std::atoi(Opt(args, "-fps", "0").c_str());
-    const long period_us = fps > 0 ? 1000000L / fps : 0; /* 每帧目标间隔（微秒） */
     const bool verbose = HasOpt(args, "-v");
 
     /* 日志等级：不传就沿用编译期默认值，便于按需打开分段耗时而不必重新编译动态库。 */
@@ -419,6 +420,18 @@ int main(int argc, char** argv) {
     }
     std::printf("[init  ] %.2f ms\n", Ms(t0, t1));
 
+    /* 帧率上限统一交给 SDK 内部限速：与真实相机集成路径使用同一套节奏，
+     * AlgRun 是同步的，返回前集成方不会再次调用，因此不需要测试程序自己 usleep。 */
+    if (fps > 0) {
+        const AlgStatus fs = AlgSetTargetFps(h, fps);
+        if (fs != ALG_OK) {
+            std::fprintf(stderr, "AlgSetTargetFps err %d\n", fs);
+            AlgDestroy(h);
+            return fs;
+        }
+        std::printf("[fps   ] SDK 内部限速 -> %d fps（等待计入 AlgRun）\n", fps);
+    }
+
     if (save_every > 0)
         ::mkdir("loop_out", 0755);
     std::signal(SIGINT, OnSignal);
@@ -492,17 +505,9 @@ int main(int argc, char** argv) {
         }
 
         const double infer_ms = Ms(t0, t1);
-        /* 统计口径是"每帧端到端"：开了 -scale 就含缩放，否则与原来完全一致。 */
+        /* 统计口径是"每帧端到端"：开了 -scale 就含缩放；-fps 的限速睡眠在
+         * AlgRun 内部，同样计入 infer_ms/total，和相机集成侧看到的口径一致。 */
         const double ms = scale_ms + infer_ms;
-
-        /* 帧率控制：帧间隔不足 1/fps 秒时 usleep 补齐（仅上限，推理更慢则不强制）。
-         * 用整数微秒避免 softfp 板端浮点开销。 */
-        if (period_us > 0) {
-            const long used_us = static_cast<long>(ms * 1000.0);
-            const long sleep_us = period_us - used_us;
-            if (sleep_us > 0)
-                usleep(static_cast<useconds_t>(sleep_us));
-        }
 
         win_ms += ms;
         all_ms += ms;

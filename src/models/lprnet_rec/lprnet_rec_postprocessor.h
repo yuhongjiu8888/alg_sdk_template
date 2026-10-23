@@ -25,7 +25,9 @@
  *     "blank_index":   36,
  *     "timesteps":     32,
  *     "channels":      37,     // 可选，默认 = characters.size() + 1
- *     "conf_threshold": 0.0 }  // >0：识别分低于此值 drop；0（默认）= 不过滤（对齐 demo）
+ *     "conf_threshold": 0.0,   // >0：识别分低于此值 drop；0（默认）= 不过滤（对齐 demo）
+ *     "min_text_length": 0,    // >0：解码文本短于该长度则拒识（0 = 不限制）
+ *     "max_text_length": 0 }   // >0：长于该长度则拒识（0 = 不限制）
  */
 
 #ifndef ALG_MODELS_LPRNET_REC_LPRNET_REC_POSTPROCESSOR_H
@@ -48,6 +50,8 @@ class LprnetRecPostprocessor : public IPostprocessor {
     int timesteps_ = 32;
     int channels_ = 37; /* 类别数（含 blank） */
     float conf_threshold_ = 0.0f;
+    int min_text_length_ = 0; /* >0：解码文本短于该长度则拒识 */
+    int max_text_length_ = 0; /* >0：解码文本长于该长度则拒识 */
     std::string category_;
     bool configured_ = false;
 };

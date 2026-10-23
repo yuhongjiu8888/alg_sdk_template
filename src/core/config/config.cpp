@@ -305,6 +305,14 @@ AlgStatus LoadSolutionConfig(const std::string& path, SolutionConfig* out, std::
         return ALG_E_CONFIG;
     }
     out->solution_type = root["solution"].get("type", "chain").asString();
+    if (root["solution"].isMember("target_fps")) {
+        const Json::Value& fps = root["solution"]["target_fps"];
+        if (!fps.isInt() || fps.asInt() < 0 || fps.asInt() > 1000) {
+            SetErr(err_msg, "config.solution.target_fps must be an integer in [0, 1000]");
+            return ALG_E_CONFIG;
+        }
+        out->target_fps = fps.asInt();
+    }
 
     /* models */
     if (!root.isMember("models") || !root["models"].isObject()) {

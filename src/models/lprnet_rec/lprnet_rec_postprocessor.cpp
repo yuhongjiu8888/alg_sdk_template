@@ -83,7 +83,15 @@ Status LprnetRecPostprocessor::Configure(const IInferer& inferer, const Json::Va
     timesteps_ = params.get("timesteps", 32).asInt();
     channels_ = params.get("channels", 0).asInt();
     conf_threshold_ = params.get("conf_threshold", 0.0f).asFloat();
+    min_text_length_ = params.get("min_text_length", 0).asInt();
+    max_text_length_ = params.get("max_text_length", 0).asInt();
     category_ = params.get("category", "").asString();
+
+    if (min_text_length_ < 0 || max_text_length_ < 0 ||
+        (min_text_length_ > 0 && max_text_length_ > 0 && min_text_length_ > max_text_length_)) {
+        ALG_LOGE("lprnet_rec: min/max_text_length 非法 min=%d max=%d", min_text_length_, max_text_length_);
+        return ALG_E_POSTPROCESS;
+    }
 
     if (characters_.empty()) {
         ALG_LOGE("lprnet_rec: characters 不能为空");
@@ -115,8 +123,9 @@ Status LprnetRecPostprocessor::Configure(const IInferer& inferer, const Json::Va
         }
     }
 
-    ALG_LOGI("lprnet_rec: ready, chars=%zu timesteps=%d channels=%d blank=%d thr=%.2f cat='%s'", characters_.size(),
-             timesteps_, channels_, blank_index_, conf_threshold_, category_.c_str());
+    ALG_LOGI("lprnet_rec: ready, chars=%zu timesteps=%d channels=%d blank=%d thr=%.2f len=[%d,%d] cat='%s'",
+             characters_.size(), timesteps_, channels_, blank_index_, conf_threshold_, min_text_length_,
+             max_text_length_, category_.c_str());
     configured_ = true;
     return ALG_OK;
 }
@@ -205,6 +214,16 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
     /* 未解出任何字符时 score 仍保持初始值 1.0，不能让空文本绕过识别阈值；
      * classify_into 收到空结果后会丢弃对应检测框。 */
     if (text.empty())
+        return ALG_OK;
+
+    /* 文本长度过滤（可选）：CTC 解码出很短的串时识别分可能依然很高
+     * （分数是逐字符概率的乘积），不能只靠 conf_threshold。返回空后
+     * classify_into 会 drop 掉对应检测框。
+     * 0 = 不按长度限制，保持原行为。 */
+    const int text_len = static_cast<int>(text.size());
+    if (min_text_length_ > 0 && text_len < min_text_length_)
+        return ALG_OK;
+    if (max_text_length_ > 0 && text_len > max_text_length_)
         return ALG_OK;
 
     /* 置信度过滤（可选）：低于阈值 → 返回空 → classify_into drop 掉该检测框。

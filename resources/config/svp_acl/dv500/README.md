@@ -83,10 +83,34 @@ inferer 乒乓复用；同一帧内多个全图模型的中间帧尺寸相同时
 画质/检出需要通过实机对比确认。
 
 `AUTO` 模式下这段耗时计入 `pre`，在 `-log info` 的 `[det_cfg] aipp_pre ... copy=...`
-里能看到（`infer=` 只是 NPU 执行时间）。改造前单次直缩时检测模型
-`infer ≈ 16ms`（4.8ms NPU + 约 11ms 预缩放）；折半并共享中间帧后，1920×1080
-输入的稳态整帧约 24ms（41fps），其中 `ssn` 的 `copy ≈ 4.9ms`、`license_det`
-的 `copy ≈ 2.3ms`。具体数值随模型和平台变化。
+里能看到（`infer=` 只是 NPU 执行时间，`copy_cpu=` 是这段实际消耗的线程 CPU 时间）。
+改造前单次直缩时检测模型 `infer ≈ 16ms`（4.8ms NPU + 约 11ms 预缩放）；
+折半并共享中间帧后（子模型 ROI 融合前），1920×1080 输入的稳态整帧约 24ms（41fps），
+其中 `ssn` 的 `copy ≈ 4.9ms`、`license_det` 的 `copy ≈ 2.3ms`。具体数值随模型和平台变化。
+
+### 子模型 ROI 前处理
+
+检测后裁剪的分类/识别模型（`ssn_cls`、`license_rec`）在 NV12/NV21 源上使用融合前处理：
+直接从原图 ROI 做 Y/UV 缩放和目标尺寸转色，不再先生成一整张 BGR 裁剪图。
+
+- `crop.pad_value >= 0` 的 square 裁剪（限速牌分类）：图内有效区域缩放到目标活动区，
+  其余保持 pad 值（114）；
+- `pad_value < 0` 的 clamp 裁剪（车牌识别）：整块 ROI 缩放后按 letterbox 补边；
+- `-log info` 里子模型日志会带 `(fused_roi)`，`pre=` / `pre_cpu=` 可直接对比；
+- 检测模型仍走 AIPP；BGR/RGB 源仍走 `CropFromDecoded`，固定 ROI 等未融合场景仍走 `CropFromNV12`。
+
+融合路径改变了“先转 BGR 再 resize”的顺序，边界和色度上采样的结果与旧路径有细微差异；
+上线前需对比识别分数。若精度回退，可退回 `CropFromNV12 + LetterboxPreprocessor`。
+
+### 帧率控制
+
+帧率策略可以随配置交付：`solution.target_fps`（`0` = 不限速）。`AlgRun` 是同步接口，
+SDK 会在内部按单调时钟睡到下一帧时间点，集成方不需要再自行 `usleep`；
+运行期也可用 `AlgSetTargetFps` 覆盖。`AlgRun` 会阻塞，若集成方在调用期间持有 VPSS 帧，
+应先拷贝/释放。详见 [配置说明](../../../CONFIG.md)。
+
+> **调优记录**：曾尝试把融合路径的 OpenCV 缩放/转色替换为 libyuv
+> `NV12Scale + NV12ToRGB24`，实机 CPU 和识别效果均回退，已回退；当前保留 OpenCV 实现。
 
 > **不要**把交错 UV 平面当「宽 = `srcW` 的单通道图」去缩：INTER_AREA 一类的
 > 3 字节窗口会取到 `[V0,U0,V1]`，把 U 和 V 混在一起。实测 PSNR 31.5 dB，
@@ -105,6 +129,21 @@ inferer 乒乓复用；同一帧内多个全图模型的中间帧尺寸相同时
 最近邻不要用：它便宜但抽稀像素，车牌细笔画被丢掉，识别置信度会掉到
 `score_threshold` 以下。
 
+### 日志与诊断
+
+`-log info` 下可直接区分墙钟、CPU 和 NPU 等待：
+
+- `CPU pre-scale ... stride=.../... sep=... data_len=... half_steps=... reused_base=...`：
+  源帧布局、折半次数、是否复用了前一模型的中间帧；
+- `aipp_pre ... copy=... copy_cpu=...`：预缩放的墙钟时间与实际线程 CPU 时间；
+- 每个模型 `pre/pre_cpu infer/infer_cpu post/post_cpu`：`infer_cpu` 很小说明 NPU
+  执行期间 CPU 在阻塞等待；
+- 子模型融合路径的日志带 `(fused_roi)`。
+
+生产环境建议使用 `-log warn`，避免串口打印本身影响 CPU 测量。对比 CPU 时用线程级
+`top -H` / `pidstat -t` 和 `pre_cpu`、`infer_cpu`，并在**相同实际 fps、相同日志等级**
+下比较；相机多线程集成时，进程总 CPU 还会包含取流、映射维护等其它线程的开销。
+
 ## 已确认支持的输入形态
 
 DV500 的 acllib 只发布 `acllib/`，**不包含 SVP/IVE**（无 `ss_mpi_ive.h` /
@@ -119,7 +158,7 @@ DV500 的 acllib 只发布 `acllib/`，**不包含 SVP/IVE**（无 `ss_mpi_ive.h
 | 源尺寸 | `AUTO`（默认） | `EXTERNAL` |
 |---|---|---|
 | 等于 `aipp_output_size` | 零拷贝直绑（连续帧）/ 原尺寸合并（分平面），`scf=0`，最快 | 同左 |
-| 大于 `aipp_output_size` | 失去零拷贝，SDK 用 libyuv 缩放到目标尺寸后绑 staging，约 11ms/帧 | **直接报错** |
+| 大于 `aipp_output_size` | 失去零拷贝，SDK 用 libyuv 折半+缩放到目标尺寸后绑 staging，约 5–7ms/帧 | **直接报错** |
 
 预缩放要 CPU 读源地址，因此**连续帧的调用方仍需保证该映射是相干的**
 （现有契约：SYS mmap 的非 cached MMZ/VB 映射）。

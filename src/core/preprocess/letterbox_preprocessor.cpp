@@ -1,5 +1,6 @@
 #include "core/preprocess/letterbox_preprocessor.h"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <opencv2/opencv.hpp>
 #include "core/image_view.h"
@@ -32,6 +33,9 @@ Status LetterboxPreprocessor::Configure(const PreprocessConfig& cfg, const Tenso
     /* 预计算是否需要归一化 —— 避免每帧重复判断。 */
     need_norm_ = (cfg.mean[0] != 0 || cfg.mean[1] != 0 || cfg.mean[2] != 0 || cfg.std[0] != 1 || cfg.std[1] != 1 ||
                   cfg.std[2] != 1 || cfg.scale != 1.0f);
+    /* 只有 U8 快路径才能在 WriteToTensor 里交换 R/B；F32 分支按 cfg.color
+     * 读取，必须保留 DecodeAndResize 里的 cvtColor。 */
+    u8_fast_path_ = (input.dtype == DataType::kU8 && !need_norm_);
     configured_ = true;
     return ALG_OK;
 }
@@ -45,6 +49,7 @@ Status LetterboxPreprocessor::DecodeAndResize(const AlgImage& image, int new_w, 
         return resolve_status;
     const uint8_t* src = source.plane[0];
 
+    swap_rb_ = false;
     switch (image.format) {
         case ALG_PIX_NV21:
         case ALG_PIX_NV12: {
@@ -90,9 +95,12 @@ Status LetterboxPreprocessor::DecodeAndResize(const AlgImage& image, int new_w, 
             const int s = source.stride[0];
             cv::Mat img(src_h, src_w, CV_8UC3, const_cast<uint8_t*>(src), s);
             cv::resize(img, resized_, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
-            if (cfg_.color == ColorOrder::kRGB)
-                cv::cvtColor(resized_, resized_, cv::COLOR_BGR2RGB);
-            else if (cfg_.color == ColorOrder::kGray)
+            if (cfg_.color == ColorOrder::kRGB) {
+                if (u8_fast_path_)
+                    swap_rb_ = true; /* 保持 BGR，WriteToTensor 写通道时交换 R/B */
+                else
+                    cv::cvtColor(resized_, resized_, cv::COLOR_BGR2RGB);
+            } else if (cfg_.color == ColorOrder::kGray)
                 cv::cvtColor(resized_, resized_, cv::COLOR_BGR2GRAY);
             return ALG_OK;
         }
@@ -100,9 +108,12 @@ Status LetterboxPreprocessor::DecodeAndResize(const AlgImage& image, int new_w, 
             const int s = source.stride[0];
             cv::Mat img(src_h, src_w, CV_8UC3, const_cast<uint8_t*>(src), s);
             cv::resize(img, resized_, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
-            if (cfg_.color == ColorOrder::kBGR)
-                cv::cvtColor(resized_, resized_, cv::COLOR_RGB2BGR);
-            else if (cfg_.color == ColorOrder::kGray)
+            if (cfg_.color == ColorOrder::kBGR) {
+                if (u8_fast_path_)
+                    swap_rb_ = true; /* 保持 RGB，WriteToTensor 写通道时交换 */
+                else
+                    cv::cvtColor(resized_, resized_, cv::COLOR_RGB2BGR);
+            } else if (cfg_.color == ColorOrder::kGray)
                 cv::cvtColor(resized_, resized_, cv::COLOR_RGB2GRAY);
             return ALG_OK;
         }
@@ -120,6 +131,40 @@ Status LetterboxPreprocessor::DecodeAndResize(const AlgImage& image, int new_w, 
         }
     }
     return ALG_E_INVALID_ARG;
+}
+
+void LetterboxPreprocessor::ComputeGeometry(
+    int src_w, int src_h, float* scale, int* new_w, int* new_h, int* pad_left, int* pad_top) const {
+    *scale = 1.0f;
+    *new_w = 0;
+    *new_h = 0;
+    *pad_left = 0;
+    *pad_top = 0;
+    switch (cfg_.resize) {
+        case ResizeMode::kStretch:
+            *new_w = net_w_;
+            *new_h = net_h_;
+            break;
+        case ResizeMode::kLetterboxTL:
+            *scale = static_cast<float>(net_w_) / std::max(src_w, src_h);
+            *new_w = static_cast<int>(src_w * *scale);
+            *new_h = static_cast<int>(src_h * *scale);
+            break;
+        case ResizeMode::kLetterboxTLFit:
+            /* 保持宽高比 + 同时适配宽高（min-scale），贴左上角、右下 pad。
+             * 车牌 RTMDet 640x448 的 _resize_pad_top_left 语义。 */
+            *scale = std::min(static_cast<float>(net_w_) / src_w, static_cast<float>(net_h_) / src_h);
+            *new_w = static_cast<int>(src_w * *scale);
+            *new_h = static_cast<int>(src_h * *scale);
+            break;
+        case ResizeMode::kLetterboxCenter:
+            *scale = std::min(static_cast<float>(net_w_) / src_w, static_cast<float>(net_h_) / src_h);
+            *new_w = static_cast<int>(src_w * *scale);
+            *new_h = static_cast<int>(src_h * *scale);
+            *pad_left = (net_w_ - *new_w) / 2;
+            *pad_top = (net_h_ - *new_h) / 2;
+            break;
+    }
 }
 
 void LetterboxPreprocessor::FillPaddingU8(uint8_t* plane, int new_w, int new_h, int pad_left, int pad_top) const {
@@ -186,23 +231,33 @@ Status LetterboxPreprocessor::WriteToTensor(const TensorView& input, int new_w, 
                 FillPaddingU8(p1, new_w, new_h, pad_left, pad_top);
                 FillPaddingU8(p2, new_w, new_h, pad_left, pad_top);
             }
+            const bool swap = swap_rb_;
             for (int y = 0; y < new_h; ++y) {
                 const uint8_t* row = resized_.ptr<uint8_t>(y);
                 const int dst_off = (y + pad_top) * net_w_ + pad_left;
                 int x = 0;
 #ifdef __aarch64__
-                for (; x + 15 < new_w; x += 16) {
-                    uint8x16x3_t v = vld3q_u8(row + x * 3);
-                    vst1q_u8(p0 + dst_off + x, v.val[0]);
-                    vst1q_u8(p1 + dst_off + x, v.val[1]);
-                    vst1q_u8(p2 + dst_off + x, v.val[2]);
+                if (!swap) {
+                    for (; x + 15 < new_w; x += 16) {
+                        uint8x16x3_t v = vld3q_u8(row + x * 3);
+                        vst1q_u8(p0 + dst_off + x, v.val[0]);
+                        vst1q_u8(p1 + dst_off + x, v.val[1]);
+                        vst1q_u8(p2 + dst_off + x, v.val[2]);
+                    }
+                } else {
+                    for (; x + 15 < new_w; x += 16) {
+                        uint8x16x3_t v = vld3q_u8(row + x * 3);
+                        vst1q_u8(p0 + dst_off + x, v.val[2]);
+                        vst1q_u8(p1 + dst_off + x, v.val[1]);
+                        vst1q_u8(p2 + dst_off + x, v.val[0]);
+                    }
                 }
 #endif
                 for (; x < new_w; ++x) {
                     const int si = x * 3;
-                    p0[dst_off + x] = row[si];
+                    p0[dst_off + x] = row[si + (swap ? 2 : 0)];
                     p1[dst_off + x] = row[si + 1];
-                    p2[dst_off + x] = row[si + 2];
+                    p2[dst_off + x] = row[si + (swap ? 0 : 2)];
                 }
             }
         } else {
@@ -253,32 +308,7 @@ Status LetterboxPreprocessor::Apply(const AlgImage& image, TensorView& input, Pr
 
     float scale = 1.0f;
     int new_w = 0, new_h = 0, pad_left = 0, pad_top = 0;
-    switch (cfg_.resize) {
-        case ResizeMode::kStretch:
-            scale = 1.0f;
-            new_w = net_w_;
-            new_h = net_h_;
-            break;
-        case ResizeMode::kLetterboxTL:
-            scale = static_cast<float>(net_w_) / std::max(image.width, image.height);
-            new_w = static_cast<int>(image.width * scale);
-            new_h = static_cast<int>(image.height * scale);
-            break;
-        case ResizeMode::kLetterboxTLFit:
-            /* 保持宽高比 + 同时适配宽高（min-scale），贴左上角、右下 pad。
-             * 车牌 RTMDet 640x448 的 _resize_pad_top_left 语义。 */
-            scale = std::min(static_cast<float>(net_w_) / image.width, static_cast<float>(net_h_) / image.height);
-            new_w = static_cast<int>(image.width * scale);
-            new_h = static_cast<int>(image.height * scale);
-            break;
-        case ResizeMode::kLetterboxCenter:
-            scale = std::min(static_cast<float>(net_w_) / image.width, static_cast<float>(net_h_) / image.height);
-            new_w = static_cast<int>(image.width * scale);
-            new_h = static_cast<int>(image.height * scale);
-            pad_left = (net_w_ - new_w) / 2;
-            pad_top = (net_h_ - new_h) / 2;
-            break;
-    }
+    ComputeGeometry(image.width, image.height, &scale, &new_w, &new_h, &pad_left, &pad_top);
     if (new_w <= 0 || new_h <= 0)
         return ALG_E_INVALID_ARG;
 
@@ -298,6 +328,130 @@ Status LetterboxPreprocessor::Apply(const AlgImage& image, TensorView& input, Pr
     state.pad_top = pad_top;
     state.original_width = image.width;
     state.original_height = image.height;
+    return ALG_OK;
+}
+
+Status LetterboxPreprocessor::ApplyNv12Roi(const AlgImage& image,
+                                           const AlgBox& box,
+                                           const CropConfig& crop_cfg,
+                                           TensorView& input,
+                                           PreprocessState& state,
+                                           CropTransform* xf) {
+    if (!configured_ || !xf)
+        return ALG_E_NOT_INITIALIZED;
+
+    CropGeometry geom;
+    if (!ComputeNv12CropGeometry(image, box, crop_cfg, &geom))
+        return ALG_E_PREPROCESS;
+
+    float scale = 1.0f;
+    int new_w = 0, new_h = 0, pad_left = 0, pad_top = 0;
+    ComputeGeometry(geom.crop_w, geom.crop_h, &scale, &new_w, &new_h, &pad_left, &pad_top);
+    /* NV12 的 UV 是半分辨率，目标活动区宽高必须为偶数。 */
+    new_w &= ~1;
+    new_h &= ~1;
+    if (new_w < 2)
+        new_w = 2;
+    if (new_h < 2)
+        new_h = 2;
+    if (new_w <= 0 || new_h <= 0)
+        return ALG_E_PREPROCESS;
+
+    /* 图内有效区域 → 目标活动区的映射。clamp 路径整块都是有效区；
+     * padded 路径只把图内交集缩放到对应子矩形，其余保持 pad 值。 */
+    int tx = 0, ty = 0, tw = new_w, th = new_h;
+    if (geom.padded) {
+        /* 先按“无有效内容”处理；有交集时再计算目标子矩形。 */
+        tw = 0;
+        th = 0;
+        const int vx = geom.ix1 - geom.offset_x;
+        const int vy = geom.iy1 - geom.offset_y;
+        const int vw = geom.ix2 - geom.ix1;
+        const int vh = geom.iy2 - geom.iy1;
+        if (vw > 0 && vh > 0) {
+            const float sx = static_cast<float>(new_w) / geom.crop_w;
+            const float sy = static_cast<float>(new_h) / geom.crop_h;
+            tx = static_cast<int>(std::lround(vx * sx));
+            ty = static_cast<int>(std::lround(vy * sy));
+            tw = static_cast<int>(std::lround(vw * sx));
+            th = static_cast<int>(std::lround(vh * sy));
+            tx &= ~1;
+            ty &= ~1;
+            tw = (tw + 1) & ~1;
+            th = (th + 1) & ~1;
+            if (tx < 0)
+                tx = 0;
+            if (ty < 0)
+                ty = 0;
+            if (tx + tw > new_w)
+                tw = new_w - tx;
+            if (ty + th > new_h)
+                th = new_h - ty;
+            tw &= ~1;
+            th &= ~1;
+        }
+        if (tw <= 0 || th <= 0)
+            tx = ty = tw = th = 0;
+    }
+
+    const int channels = (cfg_.color == ColorOrder::kGray) ? 1 : 3;
+    resized_.create(new_h, new_w, channels == 1 ? CV_8UC1 : CV_8UC3);
+    if (geom.padded)
+        resized_.setTo(cv::Scalar::all(crop_cfg.pad_value));
+
+    if (tw > 0 && th > 0) {
+        ImageView source;
+        Status rs = ResolveImageView(image, &source);
+        if (rs != ALG_OK)
+            return rs;
+        const int vw = geom.ix2 - geom.ix1;
+        const int vh = geom.iy2 - geom.iy1;
+        const uint8_t* src_y =
+            source.plane[0] + static_cast<size_t>(geom.iy1) * source.stride[0] + geom.ix1;
+        const uint8_t* src_uv =
+            source.plane[1] + static_cast<size_t>(geom.iy1 / 2) * source.stride[1] + geom.ix1;
+        cv::Mat y_src(vh, vw, CV_8UC1, const_cast<uint8_t*>(src_y), source.stride[0]);
+        cv::Mat uv_src(vh / 2, vw / 2, CV_8UC2, const_cast<uint8_t*>(src_uv), source.stride[1]);
+
+        fused_y_.create(th, tw, CV_8UC1);
+        fused_uv_.create(th / 2, tw / 2, CV_8UC2);
+        cv::resize(y_src, fused_y_, cv::Size(tw, th), 0, 0, cv::INTER_LINEAR);
+        cv::resize(uv_src, fused_uv_, cv::Size(tw / 2, th / 2), 0, 0, cv::INTER_LINEAR);
+
+        int code;
+        if (image.format == ALG_PIX_NV21) {
+            code = (cfg_.color == ColorOrder::kRGB) ? cv::COLOR_YUV2RGB_NV21
+                : (cfg_.color == ColorOrder::kGray) ? cv::COLOR_YUV2GRAY_NV21
+                                                    : cv::COLOR_YUV2BGR_NV21;
+        } else {
+            code = (cfg_.color == ColorOrder::kRGB) ? cv::COLOR_YUV2RGB_NV12
+                : (cfg_.color == ColorOrder::kGray) ? cv::COLOR_YUV2GRAY_NV12
+                                                    : cv::COLOR_YUV2BGR_NV12;
+        }
+        const cv::Rect roi(tx, ty, tw, th);
+        if (tx == 0 && ty == 0 && tw == new_w && th == new_h) {
+            cv::cvtColorTwoPlane(fused_y_, fused_uv_, resized_, code);
+        } else {
+            fused_rgb_.create(th, tw, channels == 1 ? CV_8UC1 : CV_8UC3);
+            cv::cvtColorTwoPlane(fused_y_, fused_uv_, fused_rgb_, code);
+            fused_rgb_.copyTo(resized_(roi));
+        }
+    }
+
+    swap_rb_ = false; /* cvtColorTwoPlane 已按 cfg_.color 输出目标通道顺序 */
+    Status s = WriteToTensor(input, new_w, new_h, pad_left, pad_top);
+    if (s != ALG_OK)
+        return s;
+
+    state.scale_ratio = scale;
+    state.pad_left = pad_left;
+    state.pad_top = pad_top;
+    state.original_width = geom.crop_w;
+    state.original_height = geom.crop_h;
+    xf->offset_x = geom.offset_x;
+    xf->offset_y = geom.offset_y;
+    xf->crop_w = geom.crop_w;
+    xf->crop_h = geom.crop_h;
     return ALG_OK;
 }
 

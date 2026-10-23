@@ -17,7 +17,7 @@
           "square": true,
           "pad_value": 114
         },
-        "score_threshold": 0.6,
+        "score_threshold": 0.7,
         "passthrough": [
           {
             "label": 1,
@@ -72,7 +72,7 @@
           36,
           36
         ],
-        "conf_threshold": 0.25,
+        "conf_threshold": 0.6,
         "nms_threshold": 0.45,
         "max_det": 5,
         "obj_prefilter": 0.05

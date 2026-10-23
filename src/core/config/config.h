@@ -89,6 +89,9 @@ struct StageConfig {
 /* 整份 JSON 配置。 */
 struct SolutionConfig {
     std::string solution_type; /* 目前只支持 "chain" */
+    /* >0：AlgRun 内部把处理帧率限制到该值；0 表示不限速（默认）。
+     * 同步接口下由 SDK 睡到下一帧时间点，不依赖集成方的调度方式。 */
+    int target_fps = 0;
     std::vector<ModelInstanceConfig> models;
     std::vector<StageConfig> stages;
 };

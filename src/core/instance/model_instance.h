@@ -19,9 +19,12 @@
 #include "core/object.h"
 #include "core/postprocess/postprocessor.h"
 #include "core/preprocess/preprocessor.h"
+#include "core/solution/crop_util.h"
 #include "core/status.h"
 
 namespace alg {
+
+class LetterboxPreprocessor;
 
 class ModelInstance {
   public:
@@ -34,6 +37,18 @@ class ModelInstance {
     /** 对单张 AlgImage 跑一次完整三件套。 */
     Status Run(const AlgImage& image, std::vector<Object>* out, SharedInputStaging* shared_staging = nullptr);
 
+    /** 子模型是否支持 NV12 ROI 融合前处理（不走 BGR 中间图）。 */
+    bool SupportsNv12Roi() const {
+        return lb_pre_ != nullptr && cfg_.pre.engine != PreprocessEngine::kAipp;
+    }
+
+    /** 直接从 NV12/NV21 原图 ROI 跑子模型；xf 输出 ROI 到原图的映射。 */
+    Status RunNv12Roi(const AlgImage& image,
+                      const AlgBox& box,
+                      const CropConfig& crop,
+                      std::vector<Object>* out,
+                      CropTransform* xf);
+
     const std::string& name() const { return cfg_.name; }
     const PreprocessConfig& pre_cfg() const { return cfg_.pre; }
 
@@ -41,6 +56,7 @@ class ModelInstance {
     ModelInstanceConfig cfg_;
     std::unique_ptr<IInferer> inferer_;
     std::unique_ptr<IPreprocessor> pre_;
+    LetterboxPreprocessor* lb_pre_ = nullptr; /* pre_ 的具体类型，用于 NV12 ROI 融合 */
     std::unique_ptr<IPostprocessor> post_;
     bool initialized_ = false;
 

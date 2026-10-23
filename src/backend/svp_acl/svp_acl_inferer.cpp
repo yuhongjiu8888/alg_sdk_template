@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <limits>
 #include <vector>
@@ -64,6 +65,13 @@ inline bool SameSource(const SharedInputStaging& shared, const AlgImage& image, 
 
 inline double ElapsedMs(const timeval& begin, const timeval& end) {
     return (end.tv_sec - begin.tv_sec) * 1000.0 + (end.tv_usec - begin.tv_usec) / 1000.0;
+}
+
+/* 当前线程累计 CPU 时间。与墙钟一起看，可区分“在算”还是“在等内存/被调度”。 */
+inline double ThreadCpuMs() {
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
 }
 
 struct SvpAclRuntime {
@@ -1182,8 +1190,11 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         }
 
         timeval copy_begin{}, copy_end{};
-        if (profile)
+        double copy_cpu_begin = 0.0;
+        if (profile) {
             gettimeofday(&copy_begin, nullptr);
+            copy_cpu_begin = ThreadCpuMs();
+        }
         uint8_t* dst_uv = dst + dst_y_bytes;
         int libyuv_status = 0;
         /* 本次调用产出的 1/2 折半中间帧；非空时发布到 SharedInputStaging，
@@ -1234,10 +1245,11 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
             }
 
             if (!cpu_prescale_reported_ && ALG_LOG_IS_ENABLED(alg::log::Level::Info)) {
-                ALG_LOGI("svp_acl: CPU pre-scale %s %dx%d -> %dx%d (libyuv kFilterBox, half_steps=%d, "
-                         "reused_base=%d) -> AIPP scf=0",
-                         image.format == ALG_PIX_NV21 ? "NV21" : "NV12", image.width, image.height, aipp_src_width,
-                         aipp_src_height, reuse_base ? 0 : hops, reuse_base ? 1 : 0);
+                ALG_LOGI("svp_acl: CPU pre-scale %s %dx%d stride=%d/%d sep=%d data_len=%d data=%p -> %dx%d "
+                         "(libyuv kFilterBox, half_steps=%d, reused_base=%d) -> AIPP scf=0",
+                         image.format == ALG_PIX_NV21 ? "NV21" : "NV12", image.width, image.height, source.stride[0],
+                         source.stride[1], source.uses_separate_planes ? 1 : 0, image.data_len, image.data,
+                         aipp_src_width, aipp_src_height, reuse_base ? 0 : hops, reuse_base ? 1 : 0);
                 cpu_prescale_reported_ = true;
             }
 
@@ -1307,6 +1319,7 @@ Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
         if (profile) {
             gettimeofday(&copy_end, nullptr);
             state.aipp_copy_ms = ElapsedMs(copy_begin, copy_end);
+            state.aipp_copy_cpu_ms = ThreadCpuMs() - copy_cpu_begin;
         }
 
         /* 只同步当前原图对应的 YUV 区域，不 flush 按最大输入预留的剩余空间。 */

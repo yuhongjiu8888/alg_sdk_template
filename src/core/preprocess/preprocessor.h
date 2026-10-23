@@ -83,6 +83,7 @@ struct PreprocessState {
     double aipp_setup_ms = 0.0;
     double aipp_bind_ms = 0.0;
     double aipp_copy_ms = 0.0;
+    double aipp_copy_cpu_ms = 0.0; /* copy 段实际消耗的线程 CPU 时间（区分内存等待） */
     double aipp_flush_ms = 0.0;
     double aipp_ive_ms = 0.0;
     size_t aipp_staging_bytes = 0;

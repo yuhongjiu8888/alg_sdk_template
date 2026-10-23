@@ -98,6 +98,76 @@ void ConvertNvSubRegions(const uint8_t* y_plane,
 
 }  // namespace
 
+bool ComputeNv12CropGeometry(const AlgImage& src, const AlgBox& box, const CropConfig& cfg, CropGeometry* geom) {
+    if (!geom || (src.format != ALG_PIX_NV12 && src.format != ALG_PIX_NV21) || src.width <= 0 || src.height <= 0 ||
+        (src.width & 1) || (src.height & 1)) {
+        return false;
+    }
+    *geom = CropGeometry{};
+
+    const int src_w = src.width;
+    const int src_h = src.height;
+    int bx1, by1, bx2, by2;
+    ComputeCropRect(box, cfg, &bx1, &by1, &bx2, &by2);
+    geom->bx1 = bx1;
+    geom->by1 = by1;
+    geom->bx2 = bx2;
+    geom->by2 = by2;
+
+    const bool inside = (bx1 >= 0 && by1 >= 0 && bx2 <= src_w && by2 <= src_h);
+    if (cfg.pad_value < 0 || inside) {
+        /* 与 CropFromNV12 clamp 分支一致：裁到图内并做偶对齐。 */
+        const int x1 = EvenFloor(std::max(0, std::min(bx1, src_w - 1)));
+        const int y1 = EvenFloor(std::max(0, std::min(by1, src_h - 1)));
+        int x2 = std::min(EvenCeil(std::max(x1 + 1, std::min(bx2, src_w))), src_w);
+        int y2 = std::min(EvenCeil(std::max(y1 + 1, std::min(by2, src_h))), src_h);
+        if (x2 - x1 < 2)
+            x2 = std::min(x1 + 2, src_w);
+        if (y2 - y1 < 2)
+            y2 = std::min(y1 + 2, src_h);
+        if (x2 - x1 < 2 || y2 - y1 < 2)
+            return false;
+
+        geom->ix1 = x1;
+        geom->iy1 = y1;
+        geom->ix2 = x2;
+        geom->iy2 = y2;
+        geom->offset_x = x1;
+        geom->offset_y = y1;
+        geom->crop_w = x2 - x1;
+        geom->crop_h = y2 - y1;
+        geom->inside = true;
+        geom->padded = false;
+        return true;
+    }
+
+    /* 与 CropFromNV12 padded 分支一致：画布越界，有效区域取图内交集。 */
+    geom->offset_x = bx1;
+    geom->offset_y = by1;
+    geom->crop_w = bx2 - bx1;
+    geom->crop_h = by2 - by1;
+    if (geom->crop_w <= 0 || geom->crop_h <= 0)
+        return false;
+
+    const int ix1 = EvenCeil(std::max(0, bx1));
+    const int iy1 = EvenCeil(std::max(0, by1));
+    const int ix2 = EvenFloor(std::min(src_w, bx2));
+    const int iy2 = EvenFloor(std::min(src_h, by2));
+    if (ix2 > ix1 && iy2 > iy1) {
+        geom->ix1 = ix1;
+        geom->iy1 = iy1;
+        geom->ix2 = ix2;
+        geom->iy2 = iy2;
+    } else {
+        /* 框完全在画外：有效区域为空，融合路径只填 pad。 */
+        geom->ix1 = geom->ix2 = 0;
+        geom->iy1 = geom->iy2 = 0;
+    }
+    geom->inside = false;
+    geom->padded = true;
+    return true;
+}
+
 bool CropFromDecoded(const cv::Mat& decoded_bgr,
                      const AlgBox& box,
                      const CropConfig& cfg,
@@ -219,9 +289,15 @@ bool CropFromNV12(
     int ix2 = EvenFloor(std::min(src_w, bx2));
     int iy2 = EvenFloor(std::min(src_h, by2));
     if (ix2 > ix1 && iy2 > iy1) {
-        cv::Mat tmp_bgr;
-        ConvertNvSubRegions(y_plane, uv_plane, src_stride_y, src_stride_uv, ix1, iy1, ix2, iy2, nv21, &tmp_bgr);
-        tmp_bgr.copyTo((*holder)(cv::Rect(ix1 - bx1, iy1 - by1, tmp_bgr.cols, tmp_bgr.rows)));
+        /* 直接转写到 holder 的 ROI 视图，避免每帧分配一块临时 BGR 再 copyTo。
+         * cvtColorTwoPlane 的 dst.create() 在尺寸/类型一致时会保留非连续视图；
+         * 若实现内部重新分配（data 指针变化），再退回 copyTo 保证结果正确。 */
+        const cv::Rect roi(ix1 - bx1, iy1 - by1, ix2 - ix1, iy2 - iy1);
+        cv::Mat dst_roi = (*holder)(roi);
+        const uint8_t* expected = holder->ptr<uint8_t>(roi.y) + static_cast<size_t>(roi.x) * 3;
+        ConvertNvSubRegions(y_plane, uv_plane, src_stride_y, src_stride_uv, ix1, iy1, ix2, iy2, nv21, &dst_roi);
+        if (dst_roi.data != expected)
+            dst_roi.copyTo((*holder)(roi));
     }
 
     out->format = ALG_PIX_BGR;

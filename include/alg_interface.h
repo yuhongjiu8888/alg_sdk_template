@@ -19,7 +19,13 @@
 
 ALG_C_BEGIN
 
-/** 从 JSON 配置创建 SDK 实例。 */
+/**
+ * 从 JSON 配置创建 SDK 实例。
+ *
+ * 注意：内部会把 OpenCV 并行框架设为单线程。端侧 OpenCV 只处理 96x96 /
+ * 256x64 / ROI 这类小图，pthread 并行的线程池创建与同步开销往往大于收益。
+ * 集成方如另有 OpenCV 并行需求，可在本调用之后自行调用 cv::setNumThreads 恢复。
+ */
 ALG_API AlgStatus AlgCreate(AlgHandle* handle, const char* config_json_path);
 
 /** 释放 SDK 实例及其所有资源。 */
@@ -42,6 +48,20 @@ ALG_API AlgStatus AlgSetLogLevel(AlgLogLevel level);
  * 其他后端与 cv610 后端忽略该设置，行为不受影响。
  */
 ALG_API AlgStatus AlgSetAippScaleMode(AlgAippScaleMode mode);
+
+/**
+ * 限制 AlgRun 的处理帧率（0 = 不限速，默认）。
+ *
+ * AlgRun 是同步接口：集成方在上一次调用返回前不会再调用，因此在内部睡眠
+ * 即可约束实际处理节奏，不依赖集成方用 usleep/硬件节拍自行控帧。适合把
+ * 帧率策略随算法配置一起交付。也可在 JSON 的 solution.target_fps 里配置，
+ * 本接口用于运行期覆盖。
+ *
+ * 注意：AlgRun 会阻塞到下一个时间点。如果集成方在调用期间持有硬件帧
+ * （如 VPSS 帧未 release），帧队列可能堆积/丢帧；对延迟敏感的集成方式
+ * 应在取帧后先拷贝/释放，再调用 AlgRun。
+ */
+ALG_API AlgStatus AlgSetTargetFps(AlgHandle handle, int fps);
 
 /** "alg_sdk.v3.0.0+<backend>"，方便日志/崩溃定位。 */
 ALG_API const char* AlgVersion(void);

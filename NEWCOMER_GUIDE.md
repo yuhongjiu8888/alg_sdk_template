@@ -126,8 +126,12 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 
 DV500 目标没有 IVE，且它的 AIPP 不能负责缩放（大图缩放会固定多出约 128ms/帧）。
 送进 `AlgRun` 的帧需要已经是配置里的 `aipp_output_size`：默认由 SDK 内部用 libyuv 预缩放
-（`ALG_AIPP_SCALE_AUTO`），也可以由 VPSS 直接出这个尺寸的通道并切到
-`ALG_AIPP_SCALE_EXTERNAL` 把 CPU 开销降到零。
+（`ALG_AIPP_SCALE_AUTO`，内部先做精确 1/2 折半，同一帧内多个全图模型的中间帧会共享），
+也可以由 VPSS 直接出这个尺寸的通道并切到 `ALG_AIPP_SCALE_EXTERNAL` 把 CPU 开销降到零。
+
+检测后的分类/识别子模型在 NV12/NV21 源上直接从原图 ROI 缩放/转色，不再生成整张 BGR
+裁剪图（`-log info` 中带 `(fused_roi)`）。帧率策略可以在 `solution.target_fps` 中配置
+（`0` = 不限速）；`AlgRun` 是同步接口，SDK 会在内部限速，集成方不需要自行 `usleep`。
 
 ## 5. 配置与执行关系
 
