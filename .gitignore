@@ -9,3 +9,4 @@ nv21_out/
 *.jpg
 *.yuv
 .claude
+image/
