@@ -5,6 +5,7 @@
 #   ./build.sh linux aarch64 xmm           # XMM chip on aarch64 Linux (cross-compile)
 #   ./build.sh linux aarch64 svp_acl_cv610 # HiSilicon Hi3516CV610 (32-bit arm-musleabi)
 #   ./build.sh linux aarch64 svp_acl_dv500 # HiSilicon Hi3519DV500 (aarch64)
+#   ./build.sh linux arm ez               # EEasyTech EZ826/JC371 (32-bit ARM)
 #   ./build.sh linux aarch64 rk            # Rockchip backend on aarch64 Linux
 #   ./build.sh linux x86_64 mnn            # MNN backend for local x86_64 CPU inference
 #
@@ -26,14 +27,14 @@ show_usage() {
     cat <<EOF
 Usage: $0 <platform> <arch> <backend>
   platform = linux
-  arch     = aarch64 | x86_64
-  backend  = xmm | svp_acl_cv610 | svp_acl_dv500 | rk (aarch64) | mnn (x86_64)
+  arch     = arm | aarch64 | x86_64
+  backend  = ez (arm) | xmm | svp_acl_cv610 | svp_acl_dv500 | rk (aarch64) | mnn (x86_64)
 
-For mnn backend, pass -DMNN_ROOT=/path/to/MNN to override the default
-MNN install path (/root/opensource/mnn).
+Configure SDK paths in the corresponding cmake/CMakeLists_linux_*.cmake
+and compiler paths in toolchain/*.toolchain.cmake before building.
 
-HiSilicon toolchain / SDK paths can be overridden through CMake, e.g.
--DSVP_ACL_ROOT=... -DSVP_OPENCV_ROOT=... -DHISI_SECUREC_LIB_DIR=...
+EZ826/JC371 uses the 32-bit ARM target:
+$0 linux arm ez
 EOF
     exit 1
 }
@@ -43,23 +44,29 @@ platform=$1
 arch=$2
 backend=$(alg_normalize_backend "$3")
 
-if [ "$backend" != "$3" ]; then
-    echo "note: backend '$3' is an alias of '$backend'"
-fi
+case "${platform}-${arch}-${backend}" in
+    linux-arm-ez|linux-aarch64-xmm|linux-aarch64-svp_acl_cv610|linux-aarch64-svp_acl_dv500|linux-aarch64-rk|linux-x86_64-mnn) ;;
+    *) echo "Unsupported platform-arch-backend: ${platform}-${arch}-${backend}" >&2; show_usage ;;
+esac
 
 build_dir="${BUILD_DIR_PREFIX}_${platform}_${arch}_${backend}"
 rm -rf "${build_dir}"
 mkdir -p "${build_dir}"
 
 case "${platform}-${arch}" in
-    linux-aarch64)
+    linux-arm|linux-aarch64)
         _tc_rel=$(alg_toolchain_file "${backend}")
         cd "${build_dir}"
         toolchain="${REPO_ROOT}/${_tc_rel#./}"
+        if [ "$arch" = arm ]; then
+            linux_platform_option=-DLINUX_ARM=ON
+        else
+            linux_platform_option=-DLINUX_AARCH64=ON
+        fi
         cmake \
             -DCMAKE_TOOLCHAIN_FILE="${toolchain}" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DLINUX_AARCH64=ON \
+            "${linux_platform_option}" \
             -DALG_BACKEND="${backend}" \
             -DALG_LOG_INFO=OFF \
             ..

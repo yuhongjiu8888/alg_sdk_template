@@ -6,8 +6,8 @@
  * 需要调用方或 SDK 自己先把整帧缩到 aipp_output_size。
  */
 
-#ifndef ALG_CORE_INFER_AIPP_SCALE_H
-#define ALG_CORE_INFER_AIPP_SCALE_H
+#ifndef ALG_BACKEND_SVP_ACL_AIPP_SCALE_H
+#define ALG_BACKEND_SVP_ACL_AIPP_SCALE_H
 
 namespace alg {
 namespace aipp_scale {
@@ -26,4 +26,4 @@ void set_mode(Mode mode);
 }  // namespace aipp_scale
 }  // namespace alg
 
-#endif  // ALG_CORE_INFER_AIPP_SCALE_H
+#endif  // ALG_BACKEND_SVP_ACL_AIPP_SCALE_H

@@ -263,6 +263,8 @@ Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSta
 
     /* letterbox 反映射回原图。 */
     const float inv_s = state.scale_ratio > 0 ? 1.0f / state.scale_ratio : 1.0f;
+    const float inv_x = state.scale_x > 0 ? 1.0f / state.scale_x : inv_s;
+    const float inv_y = state.scale_y > 0 ? 1.0f / state.scale_y : inv_s;
     const int max_x = state.original_width - 1;
     const int max_y = state.original_height - 1;
 
@@ -277,10 +279,10 @@ Status YoloxDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSta
         o.label = p.label;
         if (p.label >= 0 && p.label < static_cast<int>(class_values_.size()))
             o.value = class_values_[p.label];
-        int x1 = static_cast<int>((p.x1 - state.pad_left) * inv_s + 0.5f);
-        int y1 = static_cast<int>((p.y1 - state.pad_top) * inv_s + 0.5f);
-        int x2 = static_cast<int>((p.x2 - state.pad_left) * inv_s + 0.5f);
-        int y2 = static_cast<int>((p.y2 - state.pad_top) * inv_s + 0.5f);
+        int x1 = static_cast<int>((p.x1 - state.pad_left) * inv_x + 0.5f);
+        int y1 = static_cast<int>((p.y1 - state.pad_top) * inv_y + 0.5f);
+        int x2 = static_cast<int>((p.x2 - state.pad_left) * inv_x + 0.5f);
+        int y2 = static_cast<int>((p.y2 - state.pad_top) * inv_y + 0.5f);
         o.box.xmin = x1 < 0 ? 0 : (x1 > max_x ? max_x : x1);
         o.box.ymin = y1 < 0 ? 0 : (y1 > max_y ? max_y : y1);
         o.box.xmax = x2 < 0 ? 0 : (x2 > max_x ? max_x : x2);

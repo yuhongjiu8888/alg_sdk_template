@@ -94,6 +94,12 @@ typedef enum AlgPixelFormat_ {
  * 各平面可有独立 stride 和长度。海思 IVE 硬件前处理还需在
  * plane_phys_addr[0/1] 传入对应 MMZ/VB 物理地址；不提供物理地址时保留
  * CPU 合并兼容路径。结构体必须零初始化后再填写。
+ *
+ * 亿智 EZ826/JC371：NV21 对应 YVU420_SP。data=NULL 时通过 plane_data 和
+ * plane_phys_addr 传入相机 Y/VU 平面；两平面 stride 相同且为 32 的倍数时，
+ * 可直接用物理地址做硬件裁剪/缩放。调用方负责外部相机缓存的一致性，须在
+ * AlgRun 返回前保持平面有效且不改写。不满足直接输入条件或缺少物理地址时，
+ * SDK 逐行复制到复用的设备缓冲，缩放/转色仍由硬件完成。
  */
 typedef struct AlgImage_ {
     AlgPixelFormat format;

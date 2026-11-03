@@ -19,7 +19,7 @@ namespace alg {
 
 enum class ColorOrder : int { kBGR, kRGB, kGray };
 
-enum class PreprocessEngine : int { kAuto, kOpenCV, kAipp };
+enum class PreprocessEngine : int { kAuto, kOpenCV, kAipp, kHardware };
 
 enum class InputFormatPolicy : int { kAuto, kNV12, kNV21 };
 
@@ -53,12 +53,15 @@ struct PreprocessConfig {
     InputFormatPolicy input_format = InputFormatPolicy::kAuto;
     int max_input_width = 1920;
     int max_input_height = 1080;
+#ifdef ALG_BACKEND_SVP_ACL
+    /* HiSilicon-only dynamic AIPP / graph padding configuration. */
     int aipp_output_width = 0;  /* 0 表示 net_width；非 0 时 OM 图首负责补到 net_width */
     int aipp_output_height = 0; /* 0 表示 net_height */
     int graph_pad_left = 0;
     int graph_pad_top = 0;
     int graph_pad_right = 0;
     int graph_pad_bottom = 0;
+#endif
 };
 
 /**
@@ -69,12 +72,16 @@ struct PreprocessConfig {
  */
 struct PreprocessState {
     float scale_ratio = 1.0f; /* ratio applied to the original image */
+    /* Per-axis hardware resize ratios. Zero preserves scale_ratio for existing backends. */
+    float scale_x = 0.0f;
+    float scale_y = 0.0f;
     int pad_left = 0;
     int pad_top = 0;
     int original_width = 0;
     int original_height = 0;
 
-    /* 仅在 Info 日志开启且使用动态 AIPP 时填写，用于板端拆分前处理耗时。 */
+#ifdef ALG_BACKEND_SVP_ACL
+    /* 仅在 Info 日志开启且使用海思动态 AIPP 时填写，用于板端拆分前处理耗时。 */
     bool aipp_profile_valid = false;
     bool aipp_staging_reused = false;
     bool aipp_split_planes = false;
@@ -88,6 +95,7 @@ struct PreprocessState {
     double aipp_ive_ms = 0.0;
     size_t aipp_staging_bytes = 0;
     size_t aipp_staging_stride = 0;
+#endif
 };
 
 class IPreprocessor {

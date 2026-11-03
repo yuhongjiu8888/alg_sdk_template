@@ -88,9 +88,9 @@ PARE 等由检测阶段确定的类别采用透传方式，跳过第二阶段 OC
 | `std` | `[f, f, f]` | 否 | `[1, 1, 1]` | 归一化标准差（逐通道） |
 | `scale` | float | 否 | `1.0` | 全局缩放系数 |
 | `pad_value` | int | 否 | `0` | letterbox 填充值 (0-255) |
-| `engine` | string | 否 | `"auto"` | `"auto"` / `"aipp"` / `"opencv"`；动态 AIPP OM 使用 AIPP |
+| `engine` | string | 否 | `"auto"` | `"auto"` / `"hardware"` / `"aipp"` / `"opencv"`；`hardware` 要求后端硬件前处理，亿智构建使用它或 `auto`；`aipp` 仅限海思 |
 | `input_format` | string | 否 | `"auto"` | `"auto"` / `"NV12"` / `"NV21"`；auto 接受两种格式 |
-| `max_input_size` | `[w, h]` | 否 | `[1920, 1080]` | 动态 AIPP OM 允许的最大源图尺寸 |
+| `max_input_size` | `[w, h]` | 否 | `[1920, 1080]` | 硬件前处理允许的最大源图尺寸；海思动态 AIPP 上限 4096 |
 | `aipp_output_size` | `[w, h]` | 否 | 未设置 | 动态 AIPP 缩放后的有效图尺寸；使用图内补边时必填 |
 | `aipp_graph_padding` | `[l,t,r,b]` | 否 | 未设置 | OM 图首常量 Pad 的四边宽度，与 AIPP 输出相加后必须等于 `input_size` |
 
@@ -106,6 +106,8 @@ FLOAT32 输入的有效图像区域采用 `y = (x - mean) * (scale / std)`，`st
 ATC 动态 AIPP 模板位于 [`config/svp_acl/cv610/aipp/`](config/svp_acl/cv610/aipp/)。动态 OM 应使用独立文件名；`engine=auto` 会根据模型是否带动态 AIPP 自动选择硬件或 OpenCV 路径。
 
 当前同一份动态 AIPP OM 同时适用 IVE resize 和 AIPP resize 路径：SDK 在每帧调用 `svp_acl_mdl_set_aipp_scf_params` 时自动设置 `scf_switch`，IVE 已缩放时为 0，否则为 2，不需要两份 OM。未来若改为“IVE resize/padding + 静态 AIPP”，必须重新转换静态 AIPP OM，并同步移除图内 Pad、增加静态 AIPP 后端绑定支持。详细决策和验证项见 [`config/svp_acl/cv610/aipp/README.md`](config/svp_acl/cv610/aipp/README.md)。
+
+亿智 EZ826/JC371 构建使用 `ImageConvert` 完成 NV21/NV12 裁剪、缩放、转色，并在模型尺寸缓冲上补边，无 OpenCV 依赖。配置采用 `engine=hardware`、`color=BGR`、`mean=[0,0,0]`、`std=[1,1,1]`、`scale=1`；通道交换和归一化应在模型转换时内置，避免重复执行。亿智配置不使用海思的 `aipp_output_size`、`aipp_graph_padding`。接入方式和模型模板说明见 [EZ826 集成指南](../doc/EZ826_INTEGRATION.md)。
 
 ### 缩放策略
 

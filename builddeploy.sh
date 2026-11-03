@@ -6,6 +6,7 @@
 #   ./builddeploy.sh aarch64 xmm                        # 仅编译打包 aarch64-xmm
 #   ./builddeploy.sh aarch64 svp_acl_cv610              # 仅编译打包 Hi3516CV610
 #   ./builddeploy.sh aarch64 svp_acl_dv500              # 仅编译打包 Hi3519DV500
+#   ./builddeploy.sh arm ez                            # 仅编译打包 EZ826/JC371
 #   ./builddeploy.sh x86_64 mnn                         # 仅编译打包 x86_64-mnn
 #
 # （`svp_acl` 仍可用，等价于 `svp_acl_cv610`）
@@ -22,6 +23,12 @@ set -e
 : "${BUILD_JOBS:=8}"
 DEPLOY_DIR="deploy"
 BUILD_SCRIPT="./build.sh"
+
+if [[ $# -ne 0 && $# -ne 2 ]]; then
+    echo "Usage: $0 [<arch> <backend>]" >&2
+    echo "Configure SDK paths in the corresponding CMake files before packaging." >&2
+    exit 1
+fi
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "${REPO_ROOT}"
@@ -65,12 +72,12 @@ function check_backend_resources() {
 # 打包函数
 #
 # 参数:
-#   $1 = arch       (如 aarch64, x86_64)
+#   $1 = arch       (如 arm, aarch64, x86_64)
 #   $2 = backend    (如 xmm, mnn, svp_acl_dv500)
 #   $3 = is_test    (true=测试包, false=发布包)
 #
 # 资源目录按芯片分：resources/config/svp_acl/dv500/、resources/model/svp_acl/dv500/，
-# 打包时保持同样的相对层级，JSON 里的 ../resources/model/... 才能解析到。
+# 打包时原样保留目录层级及配置内容，运行时按配置约定选择工作目录。
 # ==============================================================
 function package_artifacts() {
     local arch="$1"
@@ -87,7 +94,7 @@ function package_artifacts() {
     fi
 
     local pkg_dir="${DEPLOY_DIR}/${folder_name}"
-    local build_dir="build_linux_${target_id}"
+    local build_dir="${BUILD_DIR_PREFIX:-build}_linux_${target_id}"
 
     echo ""
     echo "--- Packaging ${folder_name} ---"
@@ -103,10 +110,12 @@ function package_artifacts() {
 
     # ---- 测试包：test_runner ----
     if [[ "$is_test" == "true" ]]; then
-        if [[ -f "${build_dir}/test_runner" ]]; then
-            cp "${build_dir}/test_runner" "${pkg_dir}/"
+        local runner="test_runner"
+        [[ "$backend" == "ez" ]] && runner="ez_nv21_runner"
+        if [[ -f "${build_dir}/${runner}" ]]; then
+            cp "${build_dir}/${runner}" "${pkg_dir}/"
         else
-            echo "Warning: test_runner not found in ${build_dir}"
+            echo "Warning: ${runner} not found in ${build_dir}"
         fi
     # ---- 发布包：头文件 + 文档 ----
     else
@@ -117,26 +126,37 @@ function package_artifacts() {
         fi
     fi
 
-    # ---- 业务 JSON 配置（speed_limit / license_plate / ...）----
-    # 保持 resources/config/<res_subdir>/ 目录结构，与 JSON 内相对路径一致
+    # ---- 配置目录原样拷贝（包含子目录，不解析或改写配置）----
     mkdir -p "${pkg_dir}/resources/config/${res_subdir}"
-    cp resources/config/${res_subdir}/*.json \
-       "${pkg_dir}/resources/config/${res_subdir}/" 2>/dev/null || {
-        echo "ERROR: no config json under resources/config/${res_subdir}/"
-        exit 1
-    }
-    if [[ -d "resources/config/${res_subdir}/aipp" ]]; then
-        cp -R "resources/config/${res_subdir}/aipp" \
-              "${pkg_dir}/resources/config/${res_subdir}/"
+    cp -a "resources/config/${res_subdir}/." "${pkg_dir}/resources/config/${res_subdir}/"
+
+    if [[ "$backend" == "ez" ]]; then
+        if [[ -f "doc/EZ826_INTEGRATION.md" ]]; then
+            cp doc/EZ826_INTEGRATION.md "${pkg_dir}/"
+        fi
+        # Board MDP libraries remain provided by the camera firmware. Include the
+        # official NDK runtime alongside our library; LD_LIBRARY_PATH=./lib is
+        # also supported on loaders that do not inherit an executable's RPATH.
+        local ez_runtime_manifest="${build_dir}/ez_runtime_libraries.txt"
+        if [[ ! -s "${ez_runtime_manifest}" ]]; then
+            echo "ERROR: missing EZ runtime library list ${ez_runtime_manifest}" >&2
+            return 1
+        fi
+        mkdir -p "${pkg_dir}/lib"
+        local ez_runtime_lib
+        while IFS= read -r ez_runtime_lib; do
+            [[ -z "${ez_runtime_lib}" ]] && continue
+            if [[ ! -f "${ez_runtime_lib}" ]]; then
+                echo "ERROR: missing EZ runtime library ${ez_runtime_lib}" >&2
+                return 1
+            fi
+            cp -L "${ez_runtime_lib}" "${pkg_dir}/lib/"
+        done < "${ez_runtime_manifest}"
     fi
 
-    # ---- 模型文件（排除红绿灯模型）----
+    # ---- 模型目录原样拷贝（不查找、筛选或校验模型配对）----
     mkdir -p "${pkg_dir}/resources/model/${res_subdir}"
-    for f in "resources/model/${res_subdir}/"*; do
-        name=$(basename "$f")
-        [[ "$name" == traffic_light.* ]] && continue
-        cp "$f" "${pkg_dir}/resources/model/${res_subdir}/"
-    done
+    cp -a "resources/model/${res_subdir}/." "${pkg_dir}/resources/model/${res_subdir}/"
 
     echo "Package ready: ${pkg_dir}/"
 

@@ -20,6 +20,7 @@ alg_sdk 是面向车载及嵌入式设备的视觉推理 SDK，负责将检测�
 | `xmm` | XMM 板端运行环境 | `.xmm` | 提供模型加载、推理和内存管理实现 |
 | `svp_acl_cv610` | 海思 Hi3516CV610（32 位 arm-musleabi） | `.om` | 提供模型加载、推理及辅助缓冲管理实现 |
 | `svp_acl_dv500` | 海思 Hi3519DV500（aarch64） | `.om` | 同上；无 IVE，且 **AIPP 不可做大图缩放**（见下） |
+| `ez` | 亿智 EZ826 / JC371（32 位 arm-linux-gnueabihf） | `.ezb` + `.bin` / `.eezb` | NV21 / NV12 硬件裁剪、缩放与推理；无 OpenCV 依赖，业务模型需另行转换 |
 | `mnn` | x86_64 / MNN | `.mnn` | 提供本地推理实现 |
 | `rk` | Rockchip RKNN | — | 保留接口桩，模型加载返回 `ALG_E_BACKEND` |
 
@@ -48,7 +49,7 @@ src/
     log/                  日志输出与文件管理
     tensor.h              跨后端张量描述
     object.h / object.cpp 内部对象及公共结果转换
-  backend/                XMM、SVP ACL、MNN 和 RK 适配
+  backend/                XMM、SVP ACL、EZ、MNN 和 RK 适配
   models/                 检测及识别后处理器
 cmake/                    平台构建配置
 toolchain/                交叉编译工具链
@@ -87,6 +88,7 @@ backup/                   历史接口归档
 | [svp_acl/dv500/speed_limit.json](resources/config/svp_acl/dv500/speed_limit.json) | 同上，Hi3519DV500（模型文件名不同，见 [dv500/README.md](resources/config/svp_acl/dv500/README.md)） |
 | [svp_acl/dv500/license_plate.json](resources/config/svp_acl/dv500/license_plate.json) | 同上，Hi3519DV500 |
 | [svp_acl/dv500/all.json](resources/config/svp_acl/dv500/all.json) | 同上，Hi3519DV500 |
+| [ez/](resources/config/ez/README.md) | 亿智限速牌 / 车牌配置模板，需补齐转换后的业务模型 |
 | [xmm/all.json](resources/config/xmm/all.json)、[mnn/all.json](resources/config/mnn/all.json) | 内部红绿灯与限速牌组合流程；公共输出为限速牌及禁令 / 停车牌 |
 
 限速牌检测输入为 576×320，识别输入为 96×96，均采用 RGB。OCR 支持单输出及多输出布局；三位数字加三路门控的单输出共 36 个元素。多输出模型通过张量名称和索引配置识别各输出头。
@@ -107,10 +109,13 @@ backup/                   历史接口归档
 ./build.sh linux aarch64 xmm
 ./build.sh linux aarch64 svp_acl_cv610
 ./build.sh linux aarch64 svp_acl_dv500
+./build.sh linux arm ez
 ./build.sh linux x86_64 mnn
 ```
 
 默认产物位于 `build_linux_<arch>_<backend>/`，包含动态库、`test_runner` 和 `loop_runner`。构建脚本会清理并重建对应目录，交付资料和测试数据应存放在构建目录之外。
+
+亿智 `ez` 目标使用 ARM32 hard-float 工具链，默认构建动态库和不依赖 OpenCV 的 `ez_nv21_runner`。相机 NV21 / NV12 通过官方 `ImageConvert` 做缩放与裁剪；源物理地址和 stride 满足要求时由硬件直接读取，否则复用设备 staging。SDK 路径在 `cmake/CMakeLists_linux_ez.cmake` 中配置，打包使用 `./builddeploy.sh arm ez`。模型转换、缓存约定和运行示例见 [亿智接入说明](doc/EZ826_INTEGRATION.md)。本仓库未附 `.ezb` / `.bin` 业务模型，配置模板不能直接运行。
 
 海思构建沿用脚本中的 `aarch64` 入口名称：`svp_acl_cv610` 实际采用 ARM 32 位 `arm-linux-musleabi` 工具链，`svp_acl_dv500` 使用 aarch64 工具链。平台依赖见 [板端构建配置](cmake/CMakeLists_linux_aarch64.cmake)、[本地构建配置](cmake/CMakeLists_linux_x86_64.cmake) 和 [海思工具链](toolchain/)。JSONCPP 源码随工程编入。
 
@@ -150,11 +155,11 @@ dv500 只走 libyuv。
 
 ## 接入与交付约束
 
-- 图像格式支持 BGR、RGB、GRAY、NV12 和 NV21。NV12/NV21 可通过 `data` 传入整帧连续映射，也可通过 `plane_data[0]` 和 `[1]` 分别传入 Y 与 UV/VU，分平面支持独立 stride。默认 VPSS 格式为 NV21，同时兼容 NV12。
+- 通用输入格式包括 BGR、RGB、GRAY、NV12 和 NV21，具体取决于后端；亿智当前支持 NV12 / NV21。NV12/NV21 可通过 `data` 传入整帧连续映射，也可通过 `plane_data[0]` 和 `[1]` 分别传入 Y 与 UV/VU，分平面支持独立 stride。默认 VPSS 格式为 NV21，同时兼容 NV12。
 - 海思通过 `AlgRun` 传入原分辨率 VPSS 帧，不要求为各模型增加 VPSS 缩放通道。
 - 海思动态 AIPP 下，连续 `data` 直接绑定，不复制、不 flush、不释放；分平面输入同时填写 `plane_phys_addr[0/1]` 后，由 IVE 缩放并输出连续非 cached MMZ，再零拷贝绑定 ACL。无物理地址的普通测试内存回退到 libyuv。IVE/AIPP 完成缩放、转色和归一化，值为 114 的 letterbox 补边固化在模型图中；普通 OM 保持 OpenCV 路径。**DV500 无 IVE，分平面输入一律由 libyuv 按原尺寸合并后交给 AIPP 缩放。**
 - 网络前处理输出 NCHW，支持 UINT8 和 FLOAT32 输入类型，输入尺寸须与模型一致。
-- SDK 内部用 OpenCV 处理小图 resize/转色；`AlgCreate` 会把 OpenCV 并行框架设为单线程，避免线程池创建和并行同步的额外 CPU。集成方如另有 OpenCV 并行需求，可在 `AlgCreate` 之后自行调用 `cv::setNumThreads()` 恢复。
+- 除亿智无 OpenCV 构建外，SDK 内部用 OpenCV 处理小图 resize/转色；`AlgCreate` 会把 OpenCV 并行框架设为单线程，避免线程池创建和并行同步的额外 CPU。集成方如另有 OpenCV 并行需求，可在 `AlgCreate` 之后自行调用 `cv::setNumThreads()` 恢复。
 - 检测后的分类/识别子模型在 NV12/NV21 源上直接从原图 ROI 缩放/转色，不再生成整张 BGR 裁剪图；检测模型和 BGR/RGB 输入路径不变。`-log info` 里子模型日志带 `(fused_roi)`。
 - SDK 调用由应用串行调度；共享结果和图像缓冲的访问需要同步。
 - 车牌识别未解出字符时，SDK 会丢弃对应检测框；可通过 `lprnet_rec` 的 `min_text_length` / `max_text_length` 增加长度过滤，应用仍应按业务要求校验车牌文本格式。
@@ -168,5 +173,6 @@ dv500 只走 libyuv。
 | [架构设计](ARCHITECTURE.md) | 模块职责、数据流和扩展方式 |
 | [开发接入指南](NEWCOMER_GUIDE.md) | 工程接入、配置选择和问题定位 |
 | [配置说明](resources/CONFIG.md) | 业务编排和模型参数 |
+| [亿智 EZ826 / JC371 接入](doc/EZ826_INTEGRATION.md) | NV21 硬件前处理、模型转换、相机帧与构建部署 |
 | [日志模块](src/core/log/README.md) | 日志编译选项及运行期配置 |
 | [红绿灯接口归档](backup/traffic_light_revert/README.md) | 历史公共接口与恢复流程 |

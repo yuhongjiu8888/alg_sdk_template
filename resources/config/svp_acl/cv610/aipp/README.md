@@ -37,7 +37,7 @@ dynamic AIPP `.cfg` 中配置，而是 SDK 每帧调用
 
 1. 重新生成静态 AIPP OM；当前动态 AIPP OM 不能直接当作静态 AIPP OM 复用。
 2. 移除或调整当前模型图内的常量 Pad，否则会二次 padding，且输入 shape 不匹配。
-3. 后端新增静态 AIPP 模型识别和 IVE MMZ 直接绑定逻辑；当前 `SupportsDynamicAipp`/`PrepareDynamicAipp` 只支持动态 AIPP。
+3. 后端新增静态 AIPP 模型识别和 IVE MMZ 直接绑定逻辑；当前海思后端的 `SupportsHardwarePreprocess`/`PrepareHardwareInput` 只支持动态 AIPP。
 4. 确认 RGB=114 在当前 BT.601 limited-range CSC 下对应的 Y/UV 填充值，并用金样校验；不直接假定 Y=114 就与图内 RGB Pad 完全等价。
 5. 验证 IVE 的 ROI 输出偏移、stride、宽高/色度偶数对齐、补边初始化方式，以及多模型时的 MMZ 占用和端到端性能。
 6. 对比当前动态 AIPP 方案的像素、量化输入、检测结果和坐标回映，板端验证通过后再切换默认路径。

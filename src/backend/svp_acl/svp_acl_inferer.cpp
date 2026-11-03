@@ -14,7 +14,7 @@
 #endif
 
 #include "core/image_view.h"
-#include "core/infer/aipp_scale.h"
+#include "backend/svp_acl/aipp_scale.h"
 #include "core/logger.h"
 
 #ifdef ALG_SVP_LIBYUV_FALLBACK
@@ -570,7 +570,15 @@ Status SvpAclInferer::Forward() {
     return ALG_OK;
 }
 
-bool SvpAclInferer::SupportsDynamicAipp() const {
+Status SvpAclInferer::ValidatePreprocessConfig(const PreprocessConfig& cfg) const {
+    if (cfg.engine == PreprocessEngine::kAipp && !SupportsHardwarePreprocess()) {
+        ALG_LOGE("svp_acl: preprocess.engine=aipp requires an available dynamic AIPP model");
+        return ALG_E_CONFIG;
+    }
+    return ALG_OK;
+}
+
+bool SvpAclInferer::SupportsHardwarePreprocess() const {
 #ifdef ALG_SVP_DYNAMIC_AIPP
     return dynamic_aipp_ != nullptr;
 #else
@@ -713,7 +721,7 @@ Status SvpAclInferer::EnsureIveBuffers(int width, int height, size_t stride) {
 #endif
 #endif
 
-Status SvpAclInferer::PrepareDynamicAipp(const AlgImage& image,
+Status SvpAclInferer::PrepareHardwareInput(const AlgImage& image,
                                          const PreprocessConfig& cfg,
                                          PreprocessState& state,
                                          SharedInputStaging* shared_staging) {

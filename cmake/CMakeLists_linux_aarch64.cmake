@@ -88,12 +88,12 @@ set(ALG_CORE_SRCS
     src/core/object.cpp
     src/core/config/config.cpp
     src/core/log/alg_log.cpp
-    src/core/infer/aipp_scale.cpp
     src/core/registry/postprocessor_registry.cpp
     src/core/instance/model_instance.cpp
     src/core/preprocess/letterbox_preprocessor.cpp
     src/core/postprocess/nms.cpp
     src/core/solution/crop_util.cpp
+    src/core/solution/crop_geometry.cpp
     src/core/solution/chain_solution.cpp
 )
 
@@ -155,6 +155,7 @@ elseif(ALG_SVP_BACKEND)
     set(ALG_BACKEND_SRCS
         src/backend/svp_acl/svp_acl_inferer.cpp
         src/backend/svp_acl/svp_acl_backend.cpp
+        src/backend/svp_acl/aipp_scale.cpp
     )
     if(ALG_SVP_CHIP STREQUAL "dv500")
         set(SVP_ACL_ROOT

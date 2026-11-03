@@ -4,7 +4,9 @@
 #include <ctime>
 #include "backend/backend_factory.h"
 #include "core/logger.h"
+#ifndef ALG_NO_OPENCV
 #include "core/preprocess/letterbox_preprocessor.h"
+#endif
 #include "core/registry/postprocessor_registry.h"
 
 namespace alg {
@@ -38,19 +40,33 @@ Status ModelInstance::Init(const ModelInstanceConfig& cfg) {
         ALG_LOGE("[%s] inferer reports no I/O tensors", cfg.name.c_str());
         return ALG_E_BACKEND;
     }
+    s = inferer_->ValidatePreprocessConfig(cfg.pre);
+    if (s != ALG_OK) {
+        ALG_LOGE("[%s] preprocessing configuration is unsupported by this backend", cfg.name.c_str());
+        return s;
+    }
 
-    if (inferer_->SupportsDynamicAipp()) {
+    if (inferer_->SupportsHardwarePreprocess()) {
         if (cfg.pre.engine == PreprocessEngine::kOpenCV) {
-            ALG_LOGE("[%s] dynamic-AIPP OM cannot use preprocess.engine=opencv", cfg.name.c_str());
+            ALG_LOGE("[%s] hardware image preprocessing cannot use preprocess.engine=opencv", cfg.name.c_str());
             return ALG_E_CONFIG;
         }
     } else {
+        if (cfg.pre.engine == PreprocessEngine::kHardware) {
+            ALG_LOGE("[%s] hardware image preprocessing is unavailable", cfg.name.c_str());
+            return ALG_E_CONFIG;
+        }
+#ifdef ALG_NO_OPENCV
+        ALG_LOGE("[%s] this build requires hardware image preprocessing", cfg.name.c_str());
+        return ALG_E_CONFIG;
+#else
         auto* lb = new LetterboxPreprocessor();
         pre_.reset(lb);
         lb_pre_ = cfg.pre.engine == PreprocessEngine::kAipp ? nullptr : lb;
         s = pre_->Configure(cfg.pre, inferer_->InputView(0));
         if (s != ALG_OK)
             return s;
+#endif
     }
 
     post_ = PostprocessorRegistry::Instance().Create(cfg.post_type);
@@ -76,8 +92,9 @@ Status ModelInstance::RunNv12Roi(const AlgImage& image,
                                  const AlgBox& box,
                                  const CropConfig& crop,
                                  std::vector<Object>* out,
-                                 CropTransform* xf) {
-    if (!initialized_ || !lb_pre_ || !out || !xf)
+                                 CropTransform* xf,
+                                 SharedInputStaging* shared_staging) {
+    if (!initialized_ || !SupportsNv12Roi() || !out || !xf)
         return ALG_E_INVALID_ARG;
     out->clear();
 
@@ -90,7 +107,15 @@ Status ModelInstance::RunNv12Roi(const AlgImage& image,
     }
 
     PreprocessState state;
-    Status s = lb_pre_->ApplyNv12Roi(image, box, crop, inferer_->InputView(0), state, xf);
+    Status s = ALG_E_PREPROCESS;
+    if (inferer_->SupportsNv12Roi()) {
+        s = inferer_->PrepareNv12Roi(image, box, crop, cfg_.pre, state, xf, shared_staging);
+    }
+#ifndef ALG_NO_OPENCV
+    else if (lb_pre_) {
+        s = lb_pre_->ApplyNv12Roi(image, box, crop, inferer_->InputView(0), state, xf);
+    }
+#endif
     if (s != ALG_OK)
         return s;
     if (profile) {
@@ -137,11 +162,11 @@ Status ModelInstance::RunImpl(const AlgImage& image, std::vector<Object>* out, S
 
     PreprocessState state;
     Status s;
-    const bool try_aipp = cfg_.pre.engine != PreprocessEngine::kOpenCV && inferer_->SupportsDynamicAipp();
-    if (try_aipp) {
-        s = inferer_->PrepareDynamicAipp(image, cfg_.pre, state, shared_staging);
-    } else if (cfg_.pre.engine == PreprocessEngine::kAipp) {
-        ALG_LOGE("[%s] preprocess.engine=aipp but dynamic AIPP is unavailable", cfg_.name.c_str());
+    const bool try_hardware = cfg_.pre.engine != PreprocessEngine::kOpenCV && inferer_->SupportsHardwarePreprocess();
+    if (try_hardware) {
+        s = inferer_->PrepareHardwareInput(image, cfg_.pre, state, shared_staging);
+    } else if (cfg_.pre.engine == PreprocessEngine::kAipp || cfg_.pre.engine == PreprocessEngine::kHardware) {
+        ALG_LOGE("[%s] hardware preprocessing requested but unavailable", cfg_.name.c_str());
         return ALG_E_PREPROCESS;
     } else {
         if (!pre_)
@@ -173,6 +198,7 @@ Status ModelInstance::RunImpl(const AlgImage& image, std::vector<Object>* out, S
         ALG_LOGI("[%s] pre=%.2fms pre_cpu=%.2fms infer=%.2fms infer_cpu=%.2fms post=%.2fms "
                  "post_cpu=%.2fms objects=%zu",
                  cfg_.name.c_str(), pre_ms, c1 - c0, Ms(t1, t2), c2 - c1, Ms(t2, t3), c3 - c2, out->size());
+#ifdef ALG_BACKEND_SVP_ACL
         if (state.aipp_profile_valid) {
             const double measured_ms =
                 state.aipp_setup_ms + state.aipp_bind_ms + state.aipp_copy_ms + state.aipp_flush_ms + state.aipp_ive_ms;
@@ -187,6 +213,7 @@ Status ModelInstance::RunImpl(const AlgImage& image, std::vector<Object>* out, S
                      state.aipp_external_zero_copy ? 1 : 0, state.aipp_ive_resize ? 1 : 0,
                      state.aipp_staging_bytes, state.aipp_staging_stride);
         }
+#endif
     }
     return ALG_OK;
 }

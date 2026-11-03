@@ -22,9 +22,10 @@ ALG_C_BEGIN
 /**
  * 从 JSON 配置创建 SDK 实例。
  *
- * 注意：内部会把 OpenCV 并行框架设为单线程。端侧 OpenCV 只处理 96x96 /
+ * 使用 OpenCV 的构建会把其并行框架设为单线程。端侧 OpenCV 只处理 96x96 /
  * 256x64 / ROI 这类小图，pthread 并行的线程池创建与同步开销往往大于收益。
  * 集成方如另有 OpenCV 并行需求，可在本调用之后自行调用 cv::setNumThreads 恢复。
+ * 亿智构建使用硬件图像处理，无 OpenCV 依赖。
  */
 ALG_API AlgStatus AlgCreate(AlgHandle* handle, const char* config_json_path);
 
@@ -45,7 +46,8 @@ ALG_API AlgStatus AlgSetLogLevel(AlgLogLevel level);
  * 便于按实机 CPU 余量动态切换。非法枚举值返回 ALG_E_INVALID_ARG。
  *
  * 只对 Hi3519DV500 生效（见 alg_types.h 里 AlgAippScaleMode 的说明）；
- * 其他后端与 cv610 后端忽略该设置，行为不受影响。
+ * 其他后端与 cv610 后端忽略该设置，行为不受影响。非海思构建保留本兼容入口，
+ * 校验参数后直接返回，不编入 AIPP 模块。
  */
 ALG_API AlgStatus AlgSetAippScaleMode(AlgAippScaleMode mode);
 

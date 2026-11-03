@@ -8,6 +8,7 @@
 #   xmm           XMM 芯片（sgk 工具链）
 #   svp_acl_cv610 海思 Hi3516CV610，32 位 arm-musleabi
 #   svp_acl_dv500 海思 Hi3519DV500，aarch64
+#   ez            亿智 EZ826/JC371，arm 入口，32 位 arm-linux-gnueabihf
 #   rk            瑞芯微（接口桩）
 #   mnn           x86_64 本地推理
 # 旧值 svp_acl 等价于 svp_acl_cv610。
@@ -25,6 +26,7 @@ alg_toolchain_file() {
     case "$1" in
         svp_acl_cv610) echo "./toolchain/hisi_v610_linux.toolchain.cmake" ;;
         svp_acl_dv500) echo "./toolchain/hisi_d500_linux.toolchain.cmake" ;;
+        ez)            echo "./toolchain/ez_linux.toolchain.cmake" ;;
         *)             echo "./toolchain/sgk_linux.toolchain.cmake" ;;
     esac
 }

@@ -43,6 +43,8 @@ PreprocessEngine ParseEngine(const std::string& s) {
         return PreprocessEngine::kOpenCV;
     if (s == "aipp")
         return PreprocessEngine::kAipp;
+    if (s == "hardware")
+        return PreprocessEngine::kHardware;
     return PreprocessEngine::kAuto;
 }
 
@@ -101,8 +103,18 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
         return false;
     }
     const std::string engine = v.get("engine", "auto").asString();
-    if (engine != "auto" && engine != "opencv" && engine != "aipp") {
-        SetErr(err, "preprocess.engine must be auto, opencv or aipp");
+#ifndef ALG_BACKEND_SVP_ACL
+    if (engine == "aipp") {
+        SetErr(err, "preprocess.engine=aipp is only available on HiSilicon SVP ACL backends");
+        return false;
+    }
+    if (v.isMember("aipp_output_size") || v.isMember("aipp_graph_padding")) {
+        SetErr(err, "AIPP preprocessing parameters are only available on HiSilicon SVP ACL backends");
+        return false;
+    }
+#endif
+    if (engine != "auto" && engine != "opencv" && engine != "aipp" && engine != "hardware") {
+        SetErr(err, "preprocess.engine must be auto, opencv, aipp or hardware");
         return false;
     }
     cfg->engine = ParseEngine(engine);
@@ -121,11 +133,14 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
         }
         cfg->max_input_width = max_sz[0].asInt();
         cfg->max_input_height = max_sz[1].asInt();
+#ifdef ALG_BACKEND_SVP_ACL
         if (cfg->max_input_width > 4096 || cfg->max_input_height > 4096) {
             SetErr(err, "preprocess.max_input_size exceeds CV610 AIPP limit 4096");
             return false;
         }
+#endif
     }
+#ifdef ALG_BACKEND_SVP_ACL
     if (v.isMember("aipp_output_size")) {
         const Json::Value& aipp_sz = v["aipp_output_size"];
         if (!aipp_sz.isArray() || aipp_sz.size() != 2 || aipp_sz[0].asInt() <= 0 || aipp_sz[1].asInt() <= 0) {
@@ -165,6 +180,7 @@ bool ParsePreprocess(const Json::Value& v, PreprocessConfig* cfg, std::string* e
         SetErr(err, "aipp_graph_padding cannot be used with stretch resize");
         return false;
     }
+#endif
     return true;
 }
 

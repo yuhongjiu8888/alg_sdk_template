@@ -3,7 +3,9 @@
 #include <map>
 #include <unordered_map>
 #include "core/logger.h"
+#ifndef ALG_NO_OPENCV
 #include "core/solution/crop_util.h"
+#endif
 
 namespace alg {
 
@@ -159,7 +161,7 @@ bool BelowMinBoxShort(const Object& o, const std::map<std::string, int>& m) {
 
 }  // namespace
 
-Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::Mat& decoded_bgr) {
+Status ChainSolution::RunStage(int stage_idx, const AlgImage& image) {
     RuntimeStage& rs = stages_[stage_idx];
     ModelInstance* mi = rs.model;
 
@@ -171,9 +173,14 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::M
     const bool nv_source = (image.format == ALG_PIX_NV12 || image.format == ALG_PIX_NV21);
     /* 子模型且是 NV12 源：直接走“NV12 ROI → 缩放 → 转色”，省掉 BGR 中间图。 */
     const bool fused_roi = nv_source && mi->SupportsNv12Roi();
-    auto Crop = [&](const AlgBox& box, const CropConfig& cfg, cv::Mat* holder, AlgImage* out, CropTransform* xf) {
-        return nv_source ? CropFromNV12(image, box, cfg, holder, out, xf)
-                         : CropFromDecoded(decoded_bgr, box, cfg, holder, out, xf);
+    auto Crop = [&](const AlgBox& box, const CropConfig& cfg, AlgImage* out, CropTransform* xf) {
+#ifdef ALG_NO_OPENCV
+        ALG_LOGE("ChainSolution: stage '%s' requires a supported hardware ROI path", rs.cfg.name.c_str());
+        return false;
+#else
+        return nv_source ? CropFromNV12(image, box, cfg, &rs.roi_holder, out, xf)
+                         : CropFromDecoded(decoded_bgr_, box, cfg, &rs.roi_holder, out, xf);
+#endif
     };
 
     if (rs.cfg.input_kind == StageInputKind::kImage) {
@@ -181,10 +188,12 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::M
 
         if (rs.cfg.roi.enabled) {
             /* 固定 ROI 裁剪：在原图上裁出指定区域再送模型。 */
-            if (!nv_source && decoded_bgr.empty()) {
+#ifndef ALG_NO_OPENCV
+            if (!nv_source && decoded_bgr_.empty()) {
                 ALG_LOGE("ChainSolution: stage '%s' needs roi but decoded_bgr is empty", rs.cfg.name.c_str());
                 return ALG_E_PREPROCESS;
             }
+#endif
             AlgImage cropped{};
             CropTransform xf;
             AlgBox roi_box;
@@ -193,11 +202,16 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::M
             roi_box.xmax = rs.cfg.roi.x + rs.cfg.roi.width;
             roi_box.ymax = rs.cfg.roi.y + rs.cfg.roi.height;
             CropConfig crop_cfg; /* expand_ratio=1, square=false：不做扩展 */
-            if (!Crop(roi_box, crop_cfg, &rs.roi_holder, &cropped, &xf)) {
-                ALG_LOGE("ChainSolution: stage '%s' roi crop failed", rs.cfg.name.c_str());
-                return ALG_E_PREPROCESS;
+            Status r;
+            if (fused_roi) {
+                r = mi->RunNv12Roi(image, roi_box, crop_cfg, &out_bucket, &xf, &shared_input_);
+            } else {
+                if (!Crop(roi_box, crop_cfg, &cropped, &xf)) {
+                    ALG_LOGE("ChainSolution: stage '%s' roi crop failed", rs.cfg.name.c_str());
+                    return ALG_E_PREPROCESS;
+                }
+                r = mi->Run(cropped, &out_bucket);
             }
-            Status r = mi->Run(cropped, &out_bucket);
             if (r != ALG_OK)
                 return r;
             /* 后处理输出的是裁剪图坐标，映射回原图。 */
@@ -215,7 +229,6 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::M
         out_bucket.clear();
     }
 
-    cv::Mat& roi_holder = rs.roi_holder;
     AlgImage cropped{};
     CropTransform xf;
     std::vector<Object>& sub = rs.sub_objects; /* 跨帧保留 capacity */
@@ -247,7 +260,10 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::M
             }
         }
 
-        if (!fused_roi && !Crop(src.box, rs.cfg.crop, &roi_holder, &cropped, &xf)) {
+        CropGeometry roi_geometry;
+        const bool crop_ok = fused_roi ? ComputeNv12CropGeometry(image, src.box, rs.cfg.crop, &roi_geometry)
+                                       : Crop(src.box, rs.cfg.crop, &cropped, &xf);
+        if (!crop_ok) {
             /* 框完全在画外或裁出空 ROI；classify_into 视为分类失败 → drop。 */
             if (rs.cfg.output_kind == StageOutputKind::kClassifyInto)
                 src.drop = true;
@@ -257,12 +273,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image, const cv::M
         sub.clear();
         Status r;
         if (fused_roi) {
-            r = mi->RunNv12Roi(image, src.box, rs.cfg.crop, &sub, &xf);
-            if (r == ALG_E_PREPROCESS || r == ALG_E_INVALID_ARG) {
-                if (rs.cfg.output_kind == StageOutputKind::kClassifyInto)
-                    src.drop = true;
-                continue;
-            }
+            r = mi->RunNv12Roi(image, src.box, rs.cfg.crop, &sub, &xf, &shared_input_);
             if (r != ALG_OK)
                 return r;
         } else {
@@ -310,8 +321,8 @@ Status ChainSolution::RunInternal(const AlgImage& image, std::vector<Object>* ou
     if (!out_objects)
         return ALG_E_INVALID_ARG;
 
-    /* 本帧尚无分平面 AIPP staging；连续映射不使用该缓存，分平面输入由
-     * 第一个动态 AIPP stage 填充，兼容的后续 stage 复用。 */
+    /* 本帧尚无共享 YUV staging；由需要复制输入的首个硬件 stage 填充，
+     * 兼容的后续整帧/ROI stage 复用。外部物理帧直接读取，不使用此缓存。 */
     shared_input_.Reset();
 
     /* 整帧只解码一次。把 decoded_bgr_ 作为成员，OpenCV 会自动复用底层 buffer：
@@ -322,15 +333,20 @@ Status ChainSolution::RunInternal(const AlgImage& image, std::vector<Object>* ou
      * 从原图抠小区域转色，都不需要整帧 BGR。其余格式保持原样（BGR 为零拷贝包装）。 */
     const bool nv_source = (image.format == ALG_PIX_NV12 || image.format == ALG_PIX_NV21);
     if (needs_decoded_bgr_ && !nv_source) {
+#ifdef ALG_NO_OPENCV
+        ALG_LOGE("ChainSolution: this build supports NV12/NV21 hardware ROI input only");
+        return ALG_E_PREPROCESS;
+#else
         DecodeSourceToBgrInto(image, &decoded_bgr_);
         if (decoded_bgr_.empty()) {
             ALG_LOGE("ChainSolution: decode source failed");
             return ALG_E_PREPROCESS;
         }
+#endif
     }
 
     for (size_t i = 0; i < stages_.size(); ++i) {
-        Status r = RunStage(static_cast<int>(i), image, decoded_bgr_);
+        Status r = RunStage(static_cast<int>(i), image);
         if (r != ALG_OK)
             return r;
     }

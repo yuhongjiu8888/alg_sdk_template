@@ -9,7 +9,8 @@
  *      in `input_views_` and `output_views_` so they point at host-visible
  *      buffers with correct shape/dtype/quant metadata.
  *   2. Forward(): caller has filled InputView(i).data with preprocessed
- *      bytes; backend syncs/flushes as needed, runs NPU graph, ensures
+ *      bytes, or used an optional hardware image-preparation hook below;
+ *      backend syncs/flushes as needed, runs NPU graph, ensures
  *      OutputView(i).data is readable from host on return.
  *   3. The pre/post layers only see TensorView; they have no idea what
  *      kind of memory it is.
@@ -27,13 +28,18 @@
 
 namespace alg {
 
+struct CropConfig;
+struct CropTransform;
+
 /**
- * 同一条 ChainSolution 内多个动态 AIPP 模型共享的 YUV staging 描述。
+ * 同一条 ChainSolution 内多个硬件前处理模型共享的 YUV staging 描述。
  *
  * 未提供物理地址的分平面测试输入由 libyuv 按原尺寸合并，后续模型在源平面
  * 和原图 staging 布局相同时临时绑定复用。生产环境的物理双平面输入走 IVE，
  * 连续 MMZ/VB 映射直接绑定，均不使用本结构。描述本身不拥有内存，实际
  * staging 缓冲仍由第一个 inferer 持有。
+ * 亿智后端在普通内存输入时发布已刷新缓存的设备缓冲物理地址，后续整帧和 ROI
+ * 模型均可直接读取。每次 AlgRun 开始清空描述，避免复用上一帧内容。
  */
 struct SharedInputStaging {
     const void* source_plane[2] = {};
@@ -52,6 +58,8 @@ struct SharedInputStaging {
     size_t data_size = 0;
     size_t row_stride = 0;
     bool flushed = false;
+    /* EZ image-engine staging; zero for backends without physical device buffers. */
+    uint64_t device_phys_addr = 0;
 
     /* DV500 CPU 预缩放的 1/2 折半中间帧（如 1080p 的 960x540）。第一个全图
      * 模型产出后发布，后续模型中间帧尺寸相同时可直接复用，避免重复折半。
@@ -74,9 +82,22 @@ class IInferer {
     /** Run one forward pass against the currently-populated input views. */
     virtual Status Forward() = 0;
 
-    /** 可选的芯片动态图像前处理；默认后端不支持。 */
-    virtual bool SupportsDynamicAipp() const { return false; }
-    virtual Status PrepareDynamicAipp(const AlgImage&, const PreprocessConfig&, PreprocessState&, SharedInputStaging*) {
+    /** Reject unsupported static preprocessing settings during model initialization.
+     * AIPP is HiSilicon-specific; its backend explicitly enables that engine. */
+    virtual Status ValidatePreprocessConfig(const PreprocessConfig& cfg) const {
+        return cfg.engine == PreprocessEngine::kAipp ? ALG_E_CONFIG : ALG_OK;
+    }
+
+    /** Optional backend hardware image preprocessing; unavailable by default. */
+    virtual bool SupportsHardwarePreprocess() const { return false; }
+    virtual Status PrepareHardwareInput(const AlgImage&, const PreprocessConfig&, PreprocessState&, SharedInputStaging*) {
+        return ALG_E_BACKEND;
+    }
+
+    /** Optional hardware crop/resize directly from the original NV12/NV21 frame. */
+    virtual bool SupportsNv12Roi() const { return false; }
+    virtual Status PrepareNv12Roi(const AlgImage&, const AlgBox&, const CropConfig&, const PreprocessConfig&,
+                                  PreprocessState&, CropTransform*, SharedInputStaging*) {
         return ALG_E_BACKEND;
     }
 
