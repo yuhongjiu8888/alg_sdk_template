@@ -94,16 +94,24 @@ int main(int argc, char** argv) {
     image.data = frame.data();
     image.data_len = static_cast<int>(bytes);
     timespec begin{}, end{}, cpu_begin{}, cpu_end{};
+    int completed_frames = 0;
+    double total_run_ms = 0.0;
     clock_gettime(CLOCK_MONOTONIC, &begin);
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_begin);
     for (int i = 0; i < iterations; ++i) {
         AlgResult result{};
+        timespec frame_begin{}, frame_end{};
+        clock_gettime(CLOCK_MONOTONIC, &frame_begin);
         status = AlgRun(handle, &image, &result);
+        clock_gettime(CLOCK_MONOTONIC, &frame_end);
+        const double run_ms = Milliseconds(frame_begin, frame_end);
         if (status != ALG_OK) {
-            std::fprintf(stderr, "AlgRun iteration %d failed: %d\n", i, status);
+            std::fprintf(stderr, "AlgRun iteration %d failed: %d (run=%.2fms)\n", i, status, run_ms);
             break;
         }
-        std::printf("frame=%lld speed_limits=%d signs=%d license_plates=%d\n", result.frame_id,
+        ++completed_frames;
+        total_run_ms += run_ms;
+        std::printf("frame=%lld run=%.2fms speed_limits=%d signs=%d license_plates=%d\n", result.frame_id, run_ms,
                     result.speed_limit_count, result.sign_count, result.license_plate_count);
         for (int j = 0; j < result.speed_limit_count; ++j)
             std::printf("  speed=%d score=%.4f\n", static_cast<int>(result.speed_limits[j].value) * 10,
@@ -119,8 +127,12 @@ int main(int argc, char** argv) {
     }
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_end);
     clock_gettime(CLOCK_MONOTONIC, &end);
-    std::printf("backend=%s wall=%.2fms thread_cpu=%.2fms requested_iterations=%d\n", AlgBackendName(),
-                Milliseconds(begin, end), Milliseconds(cpu_begin, cpu_end), iterations);
+    const double avg_run_ms = completed_frames > 0 ? total_run_ms / completed_frames : 0.0;
+    const double avg_fps = total_run_ms > 0.0 ? completed_frames * 1000.0 / total_run_ms : 0.0;
+    std::printf("backend=%s wall=%.2fms thread_cpu=%.2fms requested_iterations=%d completed_frames=%d "
+                "avg_run=%.2fms avg_fps=%.2f\n", AlgBackendName(),
+                Milliseconds(begin, end), Milliseconds(cpu_begin, cpu_end), iterations, completed_frames,
+                avg_run_ms, avg_fps);
     AlgDestroy(handle);
     return status == ALG_OK ? 0 : 1;
 }
