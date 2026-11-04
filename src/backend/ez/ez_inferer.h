@@ -32,7 +32,7 @@ class EzInferer : public IInferer {
         size_t size = 0;
         int width = 0;
         int height = 0;
-        img_fmt format = BGRA_HWC;
+        img_fmt format = BGRA_WHC;
     };
 
     void FreeAll();

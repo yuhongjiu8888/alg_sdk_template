@@ -20,9 +20,9 @@
   ├─ 物理地址、stride 满足硬件要求：直接供硬件读取
   └─ 普通虚拟内存或布局不满足要求：逐行复制到可复用设备 staging
           ↓
-ImageConvert：裁剪 + 缩放 → BGRA_HWC 目标缓冲的有效区域
+ImageConvert：裁剪 + 缩放 → BGRA_WHC 目标缓冲的有效区域
           ↓
-ImportNetInputDataFromImage：同尺寸导入网络
+ImportNetInputDataFromImage：裁出有效网络尺寸并导入
           ↓
 vxProcessGraph + vxFinish
           ↓
@@ -37,7 +37,7 @@ ExportNetOutputRawData：导出密集 NCHW 浮点张量
 
 设备 staging 和目标图像缓冲由模型实例持有并复用。无源物理地址时仍有逐行拷贝；同一帧中首个模型复制并刷新一次源图，后续全图模型和 ROI 子模型在源指针、尺寸、stride、格式、长度和布局匹配时共享这份设备输入，避免重复复制整帧。共享描述在每次 `AlgRun` 开始时重置，设备内存仍归原模型实例所有，不缓存上一帧像素。
 
-补边初始化和输出导出也会消耗 CPU，因此硬件前处理不代表整个 `AlgRun` 零 CPU。现有后处理继续在 CPU 上运行。BGRA_HWC 的硬件目标横坐标要求 16 对齐；居中补边或越界 ROI 的有效区不满足时，硬件先输出到 scratch，再按行复制小尺寸 BGRA 有效区到最终画布，保留原始裁剪几何。
+补边初始化和输出导出也会消耗 CPU，因此硬件前处理不代表整个 `AlgRun` 零 CPU。现有后处理继续在 CPU 上运行。`BGRA_WHC` 的硬件目标纵坐标 `output_crop_y` 要求 16 对齐；居中补边或越界 ROI 的有效区不满足时，硬件先输出到 scratch，再按列复制小尺寸 BGRA 有效区到最终画布，保留原始裁剪几何。
 
 ## 相机帧接入
 
@@ -85,9 +85,11 @@ AlgStatus status = AlgRun(handle, &image, &result);
 
 本实现面向 NV21 / NV12。BGR、RGB、GRAY 相机输入在此后端不支持，不会静默转成 CPU 路径。`input_format` 可设置为 `NV21`、`NV12` 或 `auto`；固定格式与实际输入不符会报错。`max_input_size` 是允许的源图尺寸上限，应覆盖相机分辨率。
 
-硬件中间图为 `BGRA_HWC`。运行期配置采用 `color: BGR`、`mean=[0,0,0]`、`std=[1,1,1]`、`scale=1`，颜色交换、归一化和量化由转换后的网络负责。模板中的原业务网络数学输入仍为 RGB，转换模型时必须固化 BGR 到 RGB 的通道交换，避免二次交换或遗漏。
+硬件中间图为 `BGRA_WHC`（旧名称 `NNA_BGRA`）。运行期配置采用 `color: BGR`、`mean=[0,0,0]`、`std=[1,1,1]`、`scale=1`，颜色交换、归一化和量化由转换后的网络负责。模板中的原业务网络数学输入仍为 RGB，转换模型时必须固化 BGR 到 RGB 的通道交换，避免二次交换或遗漏。
 
-`input_size` 必须等于模型完整输入尺寸。BGRA_HWC 设备缓冲宽度按 16 对齐，导入网络时裁出有效宽度，不要求修改模型尺寸。硬件目标有效区横坐标未对齐时走上面的小图 scratch 复制路径。
+`input_size` 必须等于模型完整输入尺寸。`BGRA_WHC` 设备缓冲高度按 16 对齐，导入网络时用 `crop_in_w/h` 指定有效网络尺寸，不要求修改模型尺寸。WHC 按列存储，像素 `(x, y)` 的字节偏移为 `(x * 缓冲高度 + y) * 4`，补边与 scratch 复制均按此布局处理。硬件目标有效区纵坐标未对齐时走上面的小图 scratch 复制路径。
+
+若出现 `output format error for input BGRA_HWC image.`，原因是当前 NDK 的 `ImportNetInputDataFromImage` 将四通道图像导入网络时选择 `BGRA_WHC` 目标格式，而图像转换接口不支持 `BGRA_HWC` 到 `BGRA_WHC` 的转换。前处理必须直接从 NV21 / NV12 生成 `BGRA_WHC`，并同步处理高度对齐、目标纵坐标对齐与按列补边、复制；只修改导入时的格式枚举会导致像素布局错误。
 
 固定 `stage.roi` 和 `objects_from:` 子模型直接从原 NV21 / NV12 帧读取；`crop.expand_ratio`、`crop.square` 和补边由共享裁剪几何决定。子模型沿用硬件路径，不生成整幅 BGR 裁剪图。补边和几何边界的具体对齐行为以实现日志和板端结果为准，需重点比对靠近画面边缘的目标。
 

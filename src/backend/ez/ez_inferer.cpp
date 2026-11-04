@@ -23,11 +23,20 @@ bool FinishOperation(vx_context context, vx_status status, const char* operation
     return operation_ok && finished;
 }
 
-bool AlignWidth(int width, int alignment, int* result) {
-    if (width <= 0 || width > std::numeric_limits<int>::max() - (alignment - 1))
+bool AlignDimension(int value, int alignment, int* result) {
+    if (value <= 0 || value > std::numeric_limits<int>::max() - (alignment - 1))
         return false;
-    *result = (width + alignment - 1) / alignment * alignment;
+    *result = (value + alignment - 1) / alignment * alignment;
     return true;
+}
+
+void FillWhcRect(uint8_t* data, int storage_height, int x, int y, int width, int height, int value) {
+    // BGRA_WHC stores each column contiguously, including its aligned height.
+    if (width <= 0 || height <= 0)
+        return;
+    for (int column = x; column < x + width; ++column)
+        std::memset(data + (static_cast<size_t>(column) * storage_height + y) * 4, value,
+                    static_cast<size_t>(height) * 4);
 }
 
 bool LogicalShape(vx_graph graph, std::string& name, Shape* shape) {
@@ -272,7 +281,7 @@ Status EzInferer::EnsureImage(DeviceImage* image, img_fmt format, int width, int
         FreeImage(image);
         return ALG_E_INVALID_ARG;
     }
-    required = (format == BGRA_HWC) ? required * 4 : required + required / 2;
+    required = (format == BGRA_HWC || format == BGRA_WHC) ? required * 4 : required + required / 2;
     if (!image->physical || !image->data || image->size < required ||
         image->size - 1 > std::numeric_limits<vx_size>::max() - image->physical) {
         FreeImage(image);
@@ -344,7 +353,7 @@ Status EzInferer::BindSource(const AlgImage& image, const ImageView& view, vx_si
         return ALG_OK;
     }
     int aligned_width = 0;
-    if (!AlignWidth(image.width, 32, &aligned_width))
+    if (!AlignDimension(image.width, 32, &aligned_width))
         return ALG_E_INVALID_ARG;
     const size_t y_size = static_cast<size_t>(aligned_width) * image.height;
     const size_t total_size = y_size + y_size / 2;
@@ -473,38 +482,27 @@ Status EzInferer::Prepare(const AlgImage& image, const PreprocessConfig& cfg, co
     }
     const float scale_x = static_cast<float>(resized_w) / geometry.crop_w;
     const float scale_y = static_cast<float>(resized_h) / geometry.crop_h;
-    int canvas_width = 0;
-    if (!AlignWidth(net_width_, 16, &canvas_width))
+    int canvas_height = 0;
+    if (!AlignDimension(net_height_, 16, &canvas_height))
         return ALG_E_INVALID_ARG;
-    status = EnsureImage(&canvas_, BGRA_HWC, canvas_width, net_height_);
+    status = EnsureImage(&canvas_, BGRA_WHC, net_width_, canvas_height);
     if (status != ALG_OK)
         return status;
     // Only memset/copy runs on CPU; all pixel conversion, crop and scaling run on the image engine.
     const bool has_padding = top || left || resized_w != net_width_ || resized_h != net_height_;
     if (has_padding) {
         // Fill margins only; a stretch/full-canvas conversion needs no CPU memset.
-        const size_t row_bytes = static_cast<size_t>(canvas_width) * 4;
-        if (top)
-            std::memset(canvas_.data, cfg.pad_value, static_cast<size_t>(top) * row_bytes);
+        FillWhcRect(canvas_.data, canvas_height, 0, 0, net_width_, top, cfg.pad_value);
         const int bottom_start = top + resized_h;
-        if (bottom_start < net_height_)
-            std::memset(canvas_.data + static_cast<size_t>(bottom_start) * row_bytes, cfg.pad_value,
-                        static_cast<size_t>(net_height_ - bottom_start) * row_bytes);
-        for (int row = top; row < bottom_start; ++row) {
-            uint8_t* dst = canvas_.data + static_cast<size_t>(row) * row_bytes;
-            if (left)
-                std::memset(dst, cfg.pad_value, static_cast<size_t>(left) * 4);
-            const int right_start = left + resized_w;
-            if (right_start < net_width_)
-                std::memset(dst + static_cast<size_t>(right_start) * 4, cfg.pad_value,
-                            static_cast<size_t>(net_width_ - right_start) * 4);
-        }
+        FillWhcRect(canvas_.data, canvas_height, 0, bottom_start, net_width_, net_height_ - bottom_start,
+                    cfg.pad_value);
+        FillWhcRect(canvas_.data, canvas_height, 0, top, left, resized_h, cfg.pad_value);
+        const int right_start = left + resized_w;
+        FillWhcRect(canvas_.data, canvas_height, right_start, top, net_width_ - right_start, resized_h,
+                    cfg.pad_value);
     }
-    if (geometry.padded) {
-        for (int row = top; row < top + resized_h; ++row)
-            std::memset(canvas_.data + (static_cast<size_t>(row) * canvas_width + left) * 4,
-                        crop_pad_value, static_cast<size_t>(resized_w) * 4);
-    }
+    if (geometry.padded)
+        FillWhcRect(canvas_.data, canvas_height, left, top, resized_w, resized_h, crop_pad_value);
     if ((has_padding || geometry.padded) &&
         !Check(vxFlushDeviceMemoryCache(context_, canvas_.handle), "vxFlushDeviceMemoryCache(canvas fill)"))
         return ALG_E_BACKEND;
@@ -526,13 +524,13 @@ Status EzInferer::Prepare(const AlgImage& image, const PreprocessConfig& cfg, co
             return ALG_E_PREPROCESS;
         DeviceImage* target = &canvas_;
         int target_x = x0, target_y = y0;
-        if (x0 % 16 != 0) {
-            // BGRA_HWC hardware crop_out_x must be 16-aligned (API 4.1).
+        if (y0 % 16 != 0) {
+            // BGRA_WHC hardware crop_out_y must be 16-aligned (API 4.1).
             // Keep exact center/ROI coordinates by copying the small converted rectangle afterwards.
-            int scratch_width = 0;
-            if (!AlignWidth(output_w, 16, &scratch_width))
+            int scratch_height = 0;
+            if (!AlignDimension(output_h, 16, &scratch_height))
                 return ALG_E_INVALID_ARG;
-            status = EnsureImage(&scratch_, BGRA_HWC, scratch_width, output_h);
+            status = EnsureImage(&scratch_, BGRA_WHC, output_w, scratch_height);
             if (status != ALG_OK)
                 return status;
             target = &scratch_;
@@ -548,7 +546,7 @@ Status EzInferer::Prepare(const AlgImage& image, const PreprocessConfig& cfg, co
         parameter.input_crop_w = geometry.ix2 - geometry.ix1;
         parameter.input_crop_h = geometry.iy2 - geometry.iy1;
         parameter.color_range = 0;
-        parameter.output_fmt = BGRA_HWC;
+        parameter.output_fmt = BGRA_WHC;
         parameter.output_width = target->width;
         parameter.output_height = target->height;
         parameter.output_crop_x = target_x;
@@ -561,21 +559,23 @@ Status EzInferer::Prepare(const AlgImage& image, const PreprocessConfig& cfg, co
         if (scratch_copy) {
             if (!Check(vxFlushDeviceMemoryCache(context_, scratch_.handle), "vxFlushDeviceMemoryCache(scratch read)"))
                 return ALG_E_BACKEND;
-            for (int row = 0; row < output_h; ++row)
-                std::memcpy(canvas_.data + (static_cast<size_t>(row + y0) * canvas_width + x0) * 4,
-                            scratch_.data + static_cast<size_t>(row) * scratch_.width * 4,
-                            static_cast<size_t>(output_w) * 4);
+            for (int column = 0; column < output_w; ++column)
+                std::memcpy(canvas_.data + (static_cast<size_t>(column + x0) * canvas_height + y0) * 4,
+                            scratch_.data + static_cast<size_t>(column) * scratch_.height * 4,
+                            static_cast<size_t>(output_h) * 4);
             if (!Check(vxFlushDeviceMemoryCache(context_, canvas_.handle), "vxFlushDeviceMemoryCache(canvas copy)"))
                 return ALG_E_BACKEND;
         }
     }
-    // crop_out_* in input_image is deprecated in this NDK. Import a same-size converted image;
-    // explicit ImageConvert geometry above is authoritative. Model handles channel order and normalization.
+    // crop_out_* in input_image is deprecated in this NDK. Crop only the aligned storage padding;
+    // explicit ImageConvert geometry above is authoritative. Import requires BGRA_WHC: the SDK selects
+    // WHC output for image tensors and cannot convert BGRA_HWC to BGRA_WHC.
+    // Model handles channel order and normalization.
     input_image imported{};
     imported.op = CVT;
-    imported.fmt = BGRA_HWC;
+    imported.fmt = BGRA_WHC;
     imported.width = canvas_.width;
-    imported.height = net_height_;
+    imported.height = canvas_.height;
     imported.u.cvt_param.crop_in_w = net_width_;
     imported.u.cvt_param.crop_in_h = net_height_;
     imported.u.cvt_param.color_range = 0;
