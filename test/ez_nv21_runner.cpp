@@ -10,6 +10,18 @@
 #include <vector>
 
 namespace {
+const char* SignName(AlgSignType type) {
+    switch (type) {
+        case SIGN_NO_PARKING:
+            return "no_parking";
+        case SIGN_PARE:
+            return "pare";
+        case SIGN_INVALID:
+        default:
+            return "invalid";
+    }
+}
+
 bool ParsePositive(const char* value, int* out) {
     char* end = nullptr;
     errno = 0;
@@ -96,6 +108,11 @@ int main(int argc, char** argv) {
         for (int j = 0; j < result.speed_limit_count; ++j)
             std::printf("  speed=%d score=%.4f\n", static_cast<int>(result.speed_limits[j].value) * 10,
                         result.speed_limits[j].box.score);
+        for (int j = 0; j < result.sign_count; ++j) {
+            const AlgSign& sign = result.signs[j];
+            std::printf("  sign=%s score=%.4f box=(%d,%d)-(%d,%d)\n", SignName(sign.type), sign.box.score,
+                        sign.box.xmin, sign.box.ymin, sign.box.xmax, sign.box.ymax);
+        }
         for (int j = 0; j < result.license_plate_count; ++j)
             std::printf("  plate=%s score=%.4f\n", result.license_plates[j].text,
                         result.license_plates[j].box.score);
