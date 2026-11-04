@@ -35,7 +35,7 @@
   },
   "models": {
     "ssn_cfg": {
-      "model_path": "../resources/model/ez/speedsignnet.ezb",
+      "model_path": "../resources/model/ez/speedlimit_detect.ezb",
       "preprocess": {
         "input_size": [
           576,
@@ -69,7 +69,7 @@
       }
     },
     "cls_cfg": {
-      "model_path": "../resources/model/ez/classifier.ezb",
+      "model_path": "../resources/model/ez/speedlimit_classifier.ezb",
       "preprocess": {
         "input_size": [
           96,

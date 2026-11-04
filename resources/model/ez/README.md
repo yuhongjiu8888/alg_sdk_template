@@ -4,8 +4,8 @@
 
 | 业务 | 网络定义 | 权重 | 网络输入 W×H |
 |---|---|---|---|
-| 限速牌检测 | `speedsignnet.ezb` | `speedsignnet.bin` | 576×320 |
-| 限速牌 OCR / 门控 | `classifier.ezb` | `classifier.bin` | 96×96 |
+| 限速牌检测 | `speedlimit_detect.ezb` | `speedlimit_detect.bin` | 576×320 |
+| 限速牌 OCR / 门控 | `speedlimit_classifier.ezb` | `speedlimit_classifier.bin` | 96×96 |
 | 车牌检测 | `license_detection.ezb` | `license_detection.bin` | 640×448 |
 | 车牌识别 | `license_recognizer.ezb` | `license_recognizer.bin` | 256×64 |
 

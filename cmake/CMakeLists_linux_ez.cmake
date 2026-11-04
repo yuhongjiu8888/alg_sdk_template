@@ -11,9 +11,10 @@ endif()
 # Configure the EZ SDK installation here before running build.sh/builddeploy.sh.
 # The scripts accept the same target arguments as the HiSilicon build; no SDK
 # path arguments or environment variables are needed.
-set(EZ_NDK_ROOT "${CMAKE_SOURCE_DIR}/third_party/ez/ndk-826")
+set(EZ_NDK_ROOT "/home/yuwei/alg_sdk/chip_sdk/eezaytech/ezndk20-2026-07-30/ndks/ndk-826")
 set(EZ_NDK_LIB_DIR "${EZ_NDK_ROOT}")
 set(EZ_PLATFORM_LIB_DIR "${EZ_NDK_LIB_DIR}")
+set(EZ_PLATFORM_BOARD_LIB_DIR "${EZ_NDK_LIB_DIR}/board_lib")
 # Same platform dependencies as examples/826_JC371/*/Virgo.mk (TARGET_FRAMEWORK=MDP).
 set(EZ_PLATFORM_LIBS log mbase ax)
 set(ALG_BUILD_EZ_RUNNER ON)
@@ -36,19 +37,27 @@ foreach(_ez_name openvx openvx-nn nn)
     list(APPEND ALG_EZ_LIBRARIES "${_ez_path}")
     list(APPEND ALG_EZ_RUNTIME_LIBRARIES "${_ez_path}")
 endforeach()
+# set(_ez_path "${EZ_NDK_LIB_DIR}/board_lib/lib${_ez_name}.so")
 foreach(_ez_name IN LISTS EZ_PLATFORM_LIBS)
     unset(_ez_platform_library CACHE)
     unset(_ez_platform_library)
     find_library(_ez_platform_library NAMES "${_ez_name}"
-        PATHS "${EZ_PLATFORM_LIB_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+        PATHS "${EZ_PLATFORM_BOARD_LIB_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
     if(NOT _ez_platform_library)
         message(FATAL_ERROR
-            "Missing EZ platform library '${_ez_name}' under ${EZ_PLATFORM_LIB_DIR}; "
-            "set EZ_PLATFORM_LIB_DIR to the board SDK library directory")
+            "Missing EZ platform library '${_ez_name}' under ${EZ_PLATFORM_BOARD_LIB_DIR}; "
+            "set EZ_PLATFORM_BOARD_LIB_DIR to the board SDK library directory")
     endif()
     list(APPEND ALG_EZ_LIBRARIES "${_ez_platform_library}")
 endforeach()
 unset(_ez_platform_library CACHE)
+
+# libalg_sdk.so records the NDK libraries by SONAME, so every consumer (e.g. the
+# runner) must let ld resolve those transitive dependencies. "-L" is not enough
+# for needed libraries on this binutils, and default system paths must not be
+# used; point ld explicitly at both SDK directories.
+set(ALG_EZ_RPATH_LINK_FLAGS
+    "-Wl,-rpath-link,${EZ_NDK_LIB_DIR} -Wl,-rpath-link,${EZ_PLATFORM_BOARD_LIB_DIR}")
 
 # Tell the packaging script exactly which configured NDK libraries to copy.
 # Keep this independent of CMakeCache: paths are edited directly above.
@@ -97,7 +106,8 @@ target_compile_definitions(alg_sdk PRIVATE ALG_BUILDING_SDK=1 PUBLIC ALG_NO_OPEN
 target_compile_options(alg_sdk PRIVATE
     -Wall -fPIC -fvisibility=hidden -ffunction-sections -fdata-sections)
 # Preserve IEEE checks used for geometry and quantization; do not enable -ffast-math.
-set_property(TARGET alg_sdk APPEND_STRING PROPERTY LINK_FLAGS " -Wl,--gc-sections")
+set_property(TARGET alg_sdk APPEND_STRING PROPERTY LINK_FLAGS
+    " -Wl,--gc-sections ${ALG_EZ_RPATH_LINK_FLAGS}")
 target_link_libraries(alg_sdk PRIVATE ${ALG_EZ_LIBRARIES} rt dl pthread m)
 # Deployments keep NDK runtime libraries next to the application under lib/.
 set_target_properties(alg_sdk PROPERTIES
@@ -110,6 +120,8 @@ if(ALG_BUILD_EZ_RUNNER)
     target_link_libraries(ez_nv21_runner PRIVATE alg_sdk pthread)
     set_target_properties(ez_nv21_runner PROPERTIES
         BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN;$ORIGIN/lib")
+    set_property(TARGET ez_nv21_runner APPEND_STRING PROPERTY LINK_FLAGS
+        " ${ALG_EZ_RPATH_LINK_FLAGS}")
 endif()
 message(STATUS "EZ_NDK_ROOT = ${EZ_NDK_ROOT}")
 message(STATUS "EZ_PLATFORM_LIB_DIR = ${EZ_PLATFORM_LIB_DIR}")
