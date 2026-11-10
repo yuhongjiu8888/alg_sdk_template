@@ -1,86 +1,17 @@
 #include "models/rtmdet_det/rtmdet_det_postprocessor.h"
 #include <algorithm>
 #include <cmath>
-#include <cstring>
-#include <limits>
 #include "core/logger.h"
+#include "core/postprocess/box_transform.h"
+#include "core/postprocess/math_utils.h"
 #include "core/postprocess/nms.h"
 
 namespace alg {
 
 namespace {
 
-inline float Sigmoid(float x) {
-    return 1.0f / (1.0f + std::exp(-x));
-}
-
-inline float Logit(float p) {
-    if (p <= 0.0f)
-        return -std::numeric_limits<float>::infinity();
-    if (p >= 1.0f)
-        return std::numeric_limits<float>::infinity();
-    /* 略向低侧放宽，避免 log/sigmoid 浮点舍入在阈值边界误剪。 */
-    return std::log(p / (1.0f - p)) - 1e-6f;
-}
-
 inline float Clamp(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
-}
-
-/* 反量化辅助：与其它后处理器一致，支持 FLOAT / FLOAT16 / 量化整型。 */
-inline float ReadElem(const TensorView& t, size_t idx) {
-    switch (t.dtype) {
-        case DataType::kF32:
-            return static_cast<const float*>(t.data)[idx];
-        case DataType::kI8: {
-            int raw = static_cast<int>(static_cast<const int8_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kU8: {
-            int raw = static_cast<int>(static_cast<const uint8_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kI16: {
-            int raw = static_cast<int>(static_cast<const int16_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kU16: {
-            int raw = static_cast<int>(static_cast<const uint16_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kI32: {
-            int raw = static_cast<const int32_t*>(t.data)[idx];
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kF16: {
-            uint16_t h = static_cast<const uint16_t*>(t.data)[idx];
-            uint32_t sign = (h & 0x8000u) << 16;
-            uint32_t exp = (h & 0x7C00u) >> 10;
-            uint32_t mant = (h & 0x03FFu);
-            uint32_t f;
-            if (exp == 0) {
-                if (mant == 0) {
-                    f = sign;
-                } else {
-                    exp = 1;
-                    while ((mant & 0x0400u) == 0) {
-                        mant <<= 1;
-                        exp--;
-                    }
-                    mant &= 0x03FFu;
-                    f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-                }
-            } else if (exp == 0x1F) {
-                f = sign | 0x7F800000u | (mant << 13);
-            } else {
-                f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-            }
-            float out;
-            std::memcpy(&out, &f, sizeof(out));
-            return out;
-        }
-    }
-    return 0.0f;
 }
 
 /* 按 tensor 实际布局取 (c, y, x) 处的扁平元素下标。
@@ -108,7 +39,7 @@ Status RtmdetDetPostprocessor::Configure(const IInferer& inferer, const Json::Va
     nms_threshold_ = params.get("nms_threshold", 0.45f).asFloat();
     min_bbox_size_ = params.get("min_bbox_size", 4.0f).asFloat();
     max_det_ = params.get("max_det", 2).asInt();
-    conf_logit_threshold_ = Logit(conf_threshold_);
+    conf_logit_threshold_ = LogitThreshold(conf_threshold_);
     category_ = params.get("category", "").asString();
 
     strides_.clear();
@@ -312,27 +243,15 @@ Status RtmdetDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSt
     }
 
     /* 4. 反映射回原图：减去 pad 再除以 letterbox scale（与 yolox_det 一致）。 */
-    const float inv_s = state.scale_ratio > 0 ? 1.0f / state.scale_ratio : 1.0f;
-    const float inv_x = state.scale_x > 0 ? 1.0f / state.scale_x : inv_s;
-    const float inv_y = state.scale_y > 0 ? 1.0f / state.scale_y : inv_s;
-    const int max_x = state.original_width - 1;
-    const int max_y = state.original_height - 1;
+    const DetectionBoxTransform box_transform(state);
 
     const bool emit_category = !category_.empty();
     out->reserve(filtered_.size());
     for (const Proposal& p : filtered_) {
         Object o;
         o.field_mask = ALG_FIELD_BOX;
-        o.box.score = p.score;
+        o.box = box_transform.Apply(p);
         o.label = p.label;
-        int x1 = static_cast<int>((p.x1 - state.pad_left) * inv_x + 0.5f);
-        int y1 = static_cast<int>((p.y1 - state.pad_top) * inv_y + 0.5f);
-        int x2 = static_cast<int>((p.x2 - state.pad_left) * inv_x + 0.5f);
-        int y2 = static_cast<int>((p.y2 - state.pad_top) * inv_y + 0.5f);
-        o.box.xmin = x1 < 0 ? 0 : (x1 > max_x ? max_x : x1);
-        o.box.ymin = y1 < 0 ? 0 : (y1 > max_y ? max_y : y1);
-        o.box.xmax = x2 < 0 ? 0 : (x2 > max_x ? max_x : x2);
-        o.box.ymax = y2 < 0 ? 0 : (y2 > max_y ? max_y : y2);
 
         if (emit_category) {
             Attribute a;

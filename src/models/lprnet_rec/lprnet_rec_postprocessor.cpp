@@ -1,81 +1,10 @@
 #include "models/lprnet_rec/lprnet_rec_postprocessor.h"
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include "core/logger.h"
+#include "core/tensor_utils.h"
 
 namespace alg {
-
-namespace {
-
-/* 反量化辅助：读取 t.data 在 byte_ptr 处的一个元素（按 dtype 解包，
- * 支持 FLOAT / FLOAT16 / 量化整型）。与其它后处理器 ReadElem 等价，
- * 只是按字节指针定位 —— 便于支撑 ATC 输出按行对齐（row_stride）的张量。 */
-inline float ReadElemAt(const TensorView& t, const uint8_t* p) {
-    switch (t.dtype) {
-        case DataType::kF32: {
-            float v;
-            std::memcpy(&v, p, sizeof(v));
-            return v;
-        }
-        case DataType::kI8: {
-            int8_t raw;
-            std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<int>(raw) - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kU8: {
-            uint8_t raw;
-            std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<int>(raw) - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kI16: {
-            int16_t raw;
-            std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<int>(raw) - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kU16: {
-            uint16_t raw;
-            std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<int>(raw) - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kI32: {
-            int32_t raw;
-            std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<float>(raw) - static_cast<float>(t.quant.zero_point)) * t.quant.scale;
-        }
-        case DataType::kF16: {
-            uint16_t h;
-            std::memcpy(&h, p, sizeof(h));
-            uint32_t sign = (h & 0x8000u) << 16;
-            uint32_t exp = (h & 0x7C00u) >> 10;
-            uint32_t mant = (h & 0x03FFu);
-            uint32_t f;
-            if (exp == 0) {
-                if (mant == 0) {
-                    f = sign;
-                } else {
-                    exp = 1;
-                    while ((mant & 0x0400u) == 0) {
-                        mant <<= 1;
-                        exp--;
-                    }
-                    mant &= 0x03FFu;
-                    f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-                }
-            } else if (exp == 0x1F) {
-                f = sign | 0x7F800000u | (mant << 13);
-            } else {
-                f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-            }
-            float out;
-            std::memcpy(&out, &f, sizeof(out));
-            return out;
-        }
-    }
-    return 0.0f;
-}
-
-}  // namespace
 
 Status LprnetRecPostprocessor::Configure(const IInferer& inferer, const Json::Value& params) {
     characters_ = params.get("characters", "").asString();

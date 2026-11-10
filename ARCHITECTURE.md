@@ -100,6 +100,15 @@ BGR、RGB 和 GRAY 使用图像行跨度。NV12/NV21 支持连续缓冲，也支
 
 检测框先从网络坐标恢复到本次模型输入图像的坐标；模型输入若来自裁剪，编排层再恢复到原帧坐标。分类结果写回时保留上游检测框，采用分类分和业务属性更新对象。
 
+模型后处理复用以下公共工具，新增模型时应优先使用这些实现：
+
+- `core/tensor_utils.h`：`HalfToFloat`、按物理元素下标读取的 `ReadElem` 和按字节地址读取的 `ReadElemAt`，支持浮点解码及整型反量化。调用方负责缓冲边界和行跨度；两种读取入口保留各自原有的 I32 舍入顺序。
+- `core/postprocess/math_utils.h`：`Sigmoid`、带边界容差的 `LogitThreshold`、支持起始偏移的稳定 `SoftmaxArgmax`。
+- `core/postprocess/box_transform.h`：`DetectionBoxTransform` 每帧缓存反缩放系数，统一检测框反映射、取整和裁边，支持独立的横纵缩放比例。
+- `core/postprocess/nms.h`：检测候选框及通用 NMS。
+
+公共工具可独立测试，无需芯片 SDK、模型和 OpenCV：`cmake -S test -B build_unit -DCMAKE_BUILD_TYPE=Debug`、`cmake --build build_unit`、`ctest --test-dir build_unit --output-on-failure`。
+
 | 注册名 | 用途 |
 |--------|------|
 | `yolox_det` | 多尺度 YOLOX 检测，保留红绿灯内部流程 |
