@@ -12,10 +12,8 @@ namespace alg {
 class DetectionBoxTransform {
   public:
     explicit DetectionBoxTransform(const PreprocessState& state)
-        : pad_left_(state.pad_left),
-          pad_top_(state.pad_top),
-          max_x_(state.original_width - 1),
-          max_y_(state.original_height - 1) {
+            : pad_left_(state.pad_left), pad_top_(state.pad_top), max_x_(state.original_width - 1),
+              max_y_(state.original_height - 1) {
         const float inv_s = state.scale_ratio > 0 ? 1.0f / state.scale_ratio : 1.0f;
         inv_x_ = state.scale_x > 0 ? 1.0f / state.scale_x : inv_s;
         inv_y_ = state.scale_y > 0 ? 1.0f / state.scale_y : inv_s;

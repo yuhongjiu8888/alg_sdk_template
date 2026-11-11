@@ -37,12 +37,12 @@ class ChainSolution {
 
     /* Init 期把 JSON 里按名字的引用解析掉，运行期完全走索引。 */
     struct RuntimeStage {
-        StageConfig cfg;                 /* 拷贝一份，运行期只读 */
-        ModelInstance* model;            /* 直接指针，省 unordered_map 查询 */
-        int input_idx;                   /* -1 表示 input == "image" */
-        int output_target;               /* -1 表示 produces == "objects" */
+        StageConfig cfg;      /* 拷贝一份，运行期只读 */
+        ModelInstance* model; /* 直接指针，省 unordered_map 查询 */
+        int input_idx;        /* -1 表示 input == "image" */
+        int output_target;    /* -1 表示 produces == "objects" */
 #ifndef ALG_NO_OPENCV
-        cv::Mat roi_holder;              /* 跨帧复用 ROI 像素缓冲 */
+        cv::Mat roi_holder; /* 跨帧复用 ROI 像素缓冲 */
 #endif
         std::vector<Object> sub_objects; /* 跨帧复用子模型结果容量 */
     };
@@ -52,7 +52,7 @@ class ChainSolution {
     std::vector<StageProduce> stage_produces_; /* 与 stages_ 索引对齐 */
     SharedInputStaging shared_input_;          /* 硬件前处理每帧复用的 YUV staging */
 #ifndef ALG_NO_OPENCV
-    cv::Mat decoded_bgr_;                      /* 复用：避免每帧重新分配 */
+    cv::Mat decoded_bgr_; /* 复用：避免每帧重新分配 */
 #endif
     bool needs_decoded_bgr_ = false;
     bool initialized_ = false;

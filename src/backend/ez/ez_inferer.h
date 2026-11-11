@@ -2,10 +2,10 @@
 #ifndef ALG_BACKEND_EZ_EZ_INFERER_H
 #define ALG_BACKEND_EZ_EZ_INFERER_H
 
-#include <string>
-#include <vector>
 #include <VX/vx.h>
 #include <net_api.h>
+#include <string>
+#include <vector>
 #include "core/image_view.h"
 #include "core/infer/inferer.h"
 #include "core/solution/crop_geometry.h"
@@ -20,9 +20,17 @@ class EzInferer : public IInferer {
     Status ValidatePreprocessConfig(const PreprocessConfig&) const override;
     bool SupportsHardwarePreprocess() const override { return true; }
     bool SupportsNv12Roi() const override { return true; }
-    Status PrepareHardwareInput(const AlgImage&, const PreprocessConfig&, PreprocessState&, SharedInputStaging*) override;
-    Status PrepareNv12Roi(const AlgImage&, const AlgBox&, const CropConfig&, const PreprocessConfig&,
-                          PreprocessState&, CropTransform*, SharedInputStaging*) override;
+    Status PrepareHardwareInput(const AlgImage&,
+                                const PreprocessConfig&,
+                                PreprocessState&,
+                                SharedInputStaging*) override;
+    Status PrepareNv12Roi(const AlgImage&,
+                          const AlgBox&,
+                          const CropConfig&,
+                          const PreprocessConfig&,
+                          PreprocessState&,
+                          CropTransform*,
+                          SharedInputStaging*) override;
 
   private:
     struct DeviceImage {
@@ -41,8 +49,8 @@ class EzInferer : public IInferer {
     Status BuildViews();
     Status ValidateConfig(const AlgImage&, const PreprocessConfig&) const;
     Status BindSource(const AlgImage&, const ImageView&, vx_size*, vx_size*, int*, bool*, bool*, SharedInputStaging*);
-    Status Prepare(const AlgImage&, const PreprocessConfig&, const CropGeometry&, int, PreprocessState&,
-                   SharedInputStaging*);
+    Status Prepare(
+        const AlgImage&, const PreprocessConfig&, const CropGeometry&, int, PreprocessState&, SharedInputStaging*);
 
     vx_context context_ = nullptr;
     vx_graph graph_ = nullptr;

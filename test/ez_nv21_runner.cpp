@@ -1,5 +1,4 @@
 /** Raw NV21 smoke/loop runner. Uses only the public C API and the C++ runtime. */
-#include "alg_interface.h"
 #include <cerrno>
 #include <climits>
 #include <cstdio>
@@ -8,6 +7,7 @@
 #include <exception>
 #include <limits>
 #include <vector>
+#include "alg_interface.h"
 
 namespace {
 const char* SignName(AlgSignType type) {
@@ -44,8 +44,7 @@ int main(int argc, char** argv) {
     }
     int width = 0, height = 0, stride = 0, iterations = 1;
     if (!ParsePositive(argv[3], &width) || !ParsePositive(argv[4], &height) || (width & 1) || (height & 1) ||
-        (argc >= 6 && !ParsePositive(argv[5], &stride)) ||
-        (argc >= 7 && !ParsePositive(argv[6], &iterations))) {
+        (argc >= 6 && !ParsePositive(argv[5], &stride)) || (argc >= 7 && !ParsePositive(argv[6], &iterations))) {
         std::fprintf(stderr, "Invalid dimensions, stride or iterations; NV21 width/height must be even.\n");
         return 2;
     }
@@ -122,17 +121,16 @@ int main(int argc, char** argv) {
                         sign.box.xmin, sign.box.ymin, sign.box.xmax, sign.box.ymax);
         }
         for (int j = 0; j < result.license_plate_count; ++j)
-            std::printf("  plate=%s score=%.4f\n", result.license_plates[j].text,
-                        result.license_plates[j].box.score);
+            std::printf("  plate=%s score=%.4f\n", result.license_plates[j].text, result.license_plates[j].box.score);
     }
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_end);
     clock_gettime(CLOCK_MONOTONIC, &end);
     const double avg_run_ms = completed_frames > 0 ? total_run_ms / completed_frames : 0.0;
     const double avg_fps = total_run_ms > 0.0 ? completed_frames * 1000.0 / total_run_ms : 0.0;
     std::printf("backend=%s wall=%.2fms thread_cpu=%.2fms requested_iterations=%d completed_frames=%d "
-                "avg_run=%.2fms avg_fps=%.2f\n", AlgBackendName(),
-                Milliseconds(begin, end), Milliseconds(cpu_begin, cpu_end), iterations, completed_frames,
-                avg_run_ms, avg_fps);
+                "avg_run=%.2fms avg_fps=%.2f\n",
+                AlgBackendName(), Milliseconds(begin, end), Milliseconds(cpu_begin, cpu_end), iterations,
+                completed_frames, avg_run_ms, avg_fps);
     AlgDestroy(handle);
     return status == ALG_OK ? 0 : 1;
 }

@@ -406,10 +406,8 @@ Status LetterboxPreprocessor::ApplyNv12Roi(const AlgImage& image,
             return rs;
         const int vw = geom.ix2 - geom.ix1;
         const int vh = geom.iy2 - geom.iy1;
-        const uint8_t* src_y =
-            source.plane[0] + static_cast<size_t>(geom.iy1) * source.stride[0] + geom.ix1;
-        const uint8_t* src_uv =
-            source.plane[1] + static_cast<size_t>(geom.iy1 / 2) * source.stride[1] + geom.ix1;
+        const uint8_t* src_y = source.plane[0] + static_cast<size_t>(geom.iy1) * source.stride[0] + geom.ix1;
+        const uint8_t* src_uv = source.plane[1] + static_cast<size_t>(geom.iy1 / 2) * source.stride[1] + geom.ix1;
         cv::Mat y_src(vh, vw, CV_8UC1, const_cast<uint8_t*>(src_y), source.stride[0]);
         cv::Mat uv_src(vh / 2, vw / 2, CV_8UC2, const_cast<uint8_t*>(src_uv), source.stride[1]);
 

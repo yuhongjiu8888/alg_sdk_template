@@ -210,8 +210,8 @@ Status ModelInstance::RunImpl(const AlgImage& image, std::vector<Object>* out, S
                      cfg_.name.c_str(), state.aipp_setup_ms, state.aipp_bind_ms, state.aipp_copy_ms,
                      state.aipp_copy_cpu_ms, state.aipp_flush_ms, state.aipp_ive_ms, other_ms,
                      state.aipp_staging_reused ? 1 : 0, state.aipp_split_planes ? 1 : 0,
-                     state.aipp_external_zero_copy ? 1 : 0, state.aipp_ive_resize ? 1 : 0,
-                     state.aipp_staging_bytes, state.aipp_staging_stride);
+                     state.aipp_external_zero_copy ? 1 : 0, state.aipp_ive_resize ? 1 : 0, state.aipp_staging_bytes,
+                     state.aipp_staging_stride);
         }
 #endif
     }

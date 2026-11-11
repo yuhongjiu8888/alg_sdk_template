@@ -7,6 +7,8 @@ std::unique_ptr<IInferer> MakeInferer() {
     return std::unique_ptr<IInferer>(new EzInferer());
 }
 
-const char* BackendName() { return "ez"; }
+const char* BackendName() {
+    return "ez";
+}
 
 }  // namespace alg

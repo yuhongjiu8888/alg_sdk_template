@@ -40,8 +40,8 @@ class ModelInstance {
     /** 子模型是否支持 NV12 ROI 融合前处理（不走 BGR 中间图）。 */
     bool SupportsNv12Roi() const {
         return (inferer_ && inferer_->SupportsNv12Roi()) ||
-               (lb_pre_ != nullptr && cfg_.pre.engine != PreprocessEngine::kAipp &&
-                cfg_.pre.engine != PreprocessEngine::kHardware);
+            (lb_pre_ != nullptr && cfg_.pre.engine != PreprocessEngine::kAipp &&
+             cfg_.pre.engine != PreprocessEngine::kHardware);
     }
 
     /** 直接从 NV12/NV21 原图 ROI 跑子模型；xf 输出 ROI 到原图的映射。 */

@@ -13,8 +13,8 @@
 #include <unistd.h>
 #endif
 
-#include "core/image_view.h"
 #include "backend/svp_acl/aipp_scale.h"
+#include "core/image_view.h"
 #include "core/logger.h"
 
 #ifdef ALG_SVP_LIBYUV_FALLBACK
@@ -56,11 +56,11 @@ inline int PrescaleHalfSteps(int src_w, int src_h, int dst_w, int dst_h) {
 /* SharedInputStaging 里的 source_* 是否描述的仍是当前这一帧。 */
 inline bool SameSource(const SharedInputStaging& shared, const AlgImage& image, const ImageView& source) {
     return shared.source_plane[0] == source.plane[0] && shared.source_plane[1] == source.plane[1] &&
-           shared.source_width == image.width && shared.source_height == image.height &&
-           shared.source_stride[0] == source.stride[0] && shared.source_stride[1] == source.stride[1] &&
-           shared.source_format == image.format && shared.source_data_len[0] == source.data_len[0] &&
-           shared.source_data_len[1] == source.data_len[1] &&
-           shared.source_uses_separate_planes == source.uses_separate_planes;
+        shared.source_width == image.width && shared.source_height == image.height &&
+        shared.source_stride[0] == source.stride[0] && shared.source_stride[1] == source.stride[1] &&
+        shared.source_format == image.format && shared.source_data_len[0] == source.data_len[0] &&
+        shared.source_data_len[1] == source.data_len[1] &&
+        shared.source_uses_separate_planes == source.uses_separate_planes;
 }
 
 inline double ElapsedMs(const timeval& begin, const timeval& end) {
@@ -722,9 +722,9 @@ Status SvpAclInferer::EnsureIveBuffers(int width, int height, size_t stride) {
 #endif
 
 Status SvpAclInferer::PrepareHardwareInput(const AlgImage& image,
-                                         const PreprocessConfig& cfg,
-                                         PreprocessState& state,
-                                         SharedInputStaging* shared_staging) {
+                                           const PreprocessConfig& cfg,
+                                           PreprocessState& state,
+                                           SharedInputStaging* shared_staging) {
 #ifndef ALG_SVP_DYNAMIC_AIPP
     (void)image;
     (void)cfg;
@@ -1278,12 +1278,11 @@ Status SvpAclInferer::PrepareHardwareInput(const AlgImage& image,
                 for (int i = 0; i < hops && libyuv_status == 0; ++i) {
                     const int next_w = cur_w / 2;
                     const int next_h = cur_h / 2;
-                    const int stride =
-                        static_cast<int>((static_cast<size_t>(next_w) + 63) & ~static_cast<size_t>(63));
+                    const int stride = static_cast<int>((static_cast<size_t>(next_w) + 63) & ~static_cast<size_t>(63));
                     uint8_t* buf = prescale_tmp_[i & 1];
                     uint8_t* buf_uv = buf + static_cast<size_t>(stride) * static_cast<size_t>(next_h);
                     libyuv_status = libyuv::NV12Scale(cur_y, cur_stride_y, cur_uv, cur_stride_uv, cur_w, cur_h, buf,
-                                                     stride, buf_uv, stride, next_w, next_h, libyuv::kFilterBox);
+                                                      stride, buf_uv, stride, next_w, next_h, libyuv::kFilterBox);
                     cur_y = buf;
                     cur_uv = buf_uv;
                     cur_stride_y = stride;
@@ -1293,9 +1292,8 @@ Status SvpAclInferer::PrepareHardwareInput(const AlgImage& image,
                 }
                 if (libyuv_status == 0) {
                     libyuv_status = libyuv::NV12Scale(
-                        cur_y, cur_stride_y, cur_uv, cur_stride_uv, cur_w, cur_h, dst,
-                        static_cast<int>(dst_stride), dst_uv, static_cast<int>(dst_stride), aipp_src_width,
-                        aipp_src_height, libyuv::kFilterBox);
+                        cur_y, cur_stride_y, cur_uv, cur_stride_uv, cur_w, cur_h, dst, static_cast<int>(dst_stride),
+                        dst_uv, static_cast<int>(dst_stride), aipp_src_width, aipp_src_height, libyuv::kFilterBox);
                 }
                 if (libyuv_status == 0) {
                     prescale_base_data = prescale_tmp_[(hops - 1) & 1];
@@ -1305,11 +1303,10 @@ Status SvpAclInferer::PrepareHardwareInput(const AlgImage& image,
                         static_cast<int>((static_cast<size_t>(base_w) + 63) & ~static_cast<size_t>(63));
                 }
             } else {
-                libyuv_status =
-                    libyuv::NV12Scale(source.plane[0], source.stride[0], source.plane[1], source.stride[1],
-                                      image.width, image.height, dst, static_cast<int>(dst_stride), dst_uv,
-                                      static_cast<int>(dst_stride), aipp_src_width, aipp_src_height,
-                                      libyuv::kFilterBox);
+                libyuv_status = libyuv::NV12Scale(source.plane[0], source.stride[0], source.plane[1], source.stride[1],
+                                                  image.width, image.height, dst, static_cast<int>(dst_stride), dst_uv,
+                                                  static_cast<int>(dst_stride), aipp_src_width, aipp_src_height,
+                                                  libyuv::kFilterBox);
             }
         } else {
             libyuv_status = image.format == ALG_PIX_NV21

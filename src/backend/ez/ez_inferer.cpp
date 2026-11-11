@@ -1,9 +1,9 @@
 #include "backend/ez/ez_inferer.h"
+#include <vx_ext_amd.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
-#include <vx_ext_amd.h>
 #include "core/logger.h"
 
 namespace alg {
@@ -59,8 +59,7 @@ bool LogicalShape(vx_graph graph, std::string& name, Shape* shape) {
     }
     size_t elements = 1;
     for (int i = 0; i < 4; ++i) {
-        if (shape->dims[i] <= 0 ||
-            elements > static_cast<size_t>(std::numeric_limits<int>::max()) / shape->dims[i])
+        if (shape->dims[i] <= 0 || elements > static_cast<size_t>(std::numeric_limits<int>::max()) / shape->dims[i])
             return false;
         elements *= shape->dims[i];
     }
@@ -74,7 +73,9 @@ bool IsSuffix(const std::string& text, const char* suffix) {
 
 }  // namespace
 
-EzInferer::~EzInferer() { FreeAll(); }
+EzInferer::~EzInferer() {
+    FreeAll();
+}
 
 void EzInferer::FreeImage(DeviceImage* image) {
     if (image->handle && context_)
@@ -135,7 +136,7 @@ Status EzInferer::Load(const std::string& model_path) {
         } else {
             const std::string weights_path = model_path.substr(0, model_path.size() - 4) + ".bin";
             loaded = Check(LoadNetModel(context_, model_path.c_str(), true, &topology), "LoadNetModel(topology)") &&
-                     Check(LoadNetModel(context_, weights_path.c_str(), true, &weights), "LoadNetModel(weights)");
+                Check(LoadNetModel(context_, weights_path.c_str(), true, &weights), "LoadNetModel(weights)");
         }
         if (!loaded)
             break;
@@ -222,8 +223,9 @@ Status EzInferer::BuildViews() {
         // The official sample queries this vendor attribute as vx_size. On 826 it contains a signed
         // 32-bit fixed-point position; preserve that sign when converting it to the exponent.
         vx_size raw_position = 0;
-        if (!Check(vxQueryTensor(input_tensors_[0], VX_TENSOR_FIXED_POINT_POSITION,
-                                 &raw_position, sizeof(raw_position)), "vxQueryTensor(input fixed point)"))
+        if (!Check(
+                vxQueryTensor(input_tensors_[0], VX_TENSOR_FIXED_POINT_POSITION, &raw_position, sizeof(raw_position)),
+                "vxQueryTensor(input fixed point)"))
             return ALG_E_BACKEND;
         const uint32_t position_bits = static_cast<uint32_t>(raw_position);
         int32_t fixed_position = 0;
@@ -259,8 +261,8 @@ Status EzInferer::BuildViews() {
         exported_outputs_[i] = net_blob_data{};
         exported_outputs_[i].layout = NCHW;
         exported_outputs_[i].need_quantize = false;
-        ALG_LOGI("[ez] output[%zu] %s logical NCHW=(%d,%d,%d,%d), exported float32", i, output.name.c_str(),
-                 output.N(), output.C(), output.H(), output.W());
+        ALG_LOGI("[ez] output[%zu] %s logical NCHW=(%d,%d,%d,%d), exported float32", i, output.name.c_str(), output.N(),
+                 output.C(), output.H(), output.W());
     }
     return ALG_OK;
 }
@@ -276,8 +278,7 @@ Status EzInferer::EnsureImage(DeviceImage* image, img_fmt format, int width, int
     image->data = reinterpret_cast<uint8_t*>(vxGetDeviceMemoryVirtualAddress(image->handle));
     image->size = vxGetDeviceMemorySize(image->handle);
     size_t required = 0;
-    if (!CheckedPlaneByteSize(width, height, &required) ||
-        required > std::numeric_limits<size_t>::max() / 4) {
+    if (!CheckedPlaneByteSize(width, height, &required) || required > std::numeric_limits<size_t>::max() / 4) {
         FreeImage(image);
         return ALG_E_INVALID_ARG;
     }
@@ -331,19 +332,25 @@ Status EzInferer::ValidateConfig(const AlgImage& image, const PreprocessConfig& 
     return ALG_OK;
 }
 
-Status EzInferer::BindSource(const AlgImage& image, const ImageView& view, vx_size* y, vx_size* uv,
-                              int* width, bool* external, bool* reused, SharedInputStaging* shared) {
+Status EzInferer::BindSource(const AlgImage& image,
+                             const ImageView& view,
+                             vx_size* y,
+                             vx_size* uv,
+                             int* width,
+                             bool* external,
+                             bool* reused,
+                             SharedInputStaging* shared) {
     *external = false;
     *reused = false;
     // Width is the hardware row pitch. Crop bounds use image.width, excluding row padding.
-    if (view.uses_separate_planes && view.phys_addr[0] && view.phys_addr[1] &&
-        view.stride[0] == view.stride[1] && view.stride[0] % 32 == 0) {
+    if (view.uses_separate_planes && view.phys_addr[0] && view.phys_addr[1] && view.stride[0] == view.stride[1] &&
+        view.stride[0] % 32 == 0) {
         const uint64_t max_address = static_cast<uint64_t>(std::numeric_limits<vx_size>::max());
         size_t y_size = 0, uv_size = 0;
         if (!CheckedPlaneByteSize(view.stride[0], image.height, &y_size) ||
-            !CheckedPlaneByteSize(view.stride[1], image.height / 2, &uv_size) ||
-            view.phys_addr[0] > max_address || view.phys_addr[1] > max_address ||
-            y_size - 1 > max_address - view.phys_addr[0] || uv_size - 1 > max_address - view.phys_addr[1])
+            !CheckedPlaneByteSize(view.stride[1], image.height / 2, &uv_size) || view.phys_addr[0] > max_address ||
+            view.phys_addr[1] > max_address || y_size - 1 > max_address - view.phys_addr[0] ||
+            uv_size - 1 > max_address - view.phys_addr[1])
             return ALG_E_INVALID_ARG;
         *y = static_cast<vx_size>(view.phys_addr[0]);
         *uv = static_cast<vx_size>(view.phys_addr[1]);
@@ -363,10 +370,9 @@ Status EzInferer::BindSource(const AlgImage& image, const ImageView& view, vx_si
         shared->source_stride[0] == view.stride[0] && shared->source_stride[1] == view.stride[1] &&
         shared->source_format == image.format && shared->source_data_len[0] == view.data_len[0] &&
         shared->source_data_len[1] == view.data_len[1] &&
-        shared->source_uses_separate_planes == view.uses_separate_planes &&
-        shared->staged_width == aligned_width && shared->staged_height == image.height &&
-        shared->row_stride == static_cast<size_t>(aligned_width) && shared->data_size == total_size &&
-        shared->capacity >= total_size) {
+        shared->source_uses_separate_planes == view.uses_separate_planes && shared->staged_width == aligned_width &&
+        shared->staged_height == image.height && shared->row_stride == static_cast<size_t>(aligned_width) &&
+        shared->data_size == total_size && shared->capacity >= total_size) {
         const uint64_t max_address = static_cast<uint64_t>(std::numeric_limits<vx_size>::max());
         if (shared->device_phys_addr > max_address || total_size - 1 > max_address - shared->device_phys_addr)
             return ALG_E_INVALID_ARG;
@@ -423,8 +429,10 @@ Status EzInferer::BindSource(const AlgImage& image, const ImageView& view, vx_si
     return ALG_OK;
 }
 
-Status EzInferer::PrepareHardwareInput(const AlgImage& image, const PreprocessConfig& cfg, PreprocessState& state,
-                                     SharedInputStaging* shared) {
+Status EzInferer::PrepareHardwareInput(const AlgImage& image,
+                                       const PreprocessConfig& cfg,
+                                       PreprocessState& state,
+                                       SharedInputStaging* shared) {
     CropGeometry geometry;
     geometry.ix2 = geometry.crop_w = image.width;
     geometry.iy2 = geometry.crop_h = image.height;
@@ -432,8 +440,12 @@ Status EzInferer::PrepareHardwareInput(const AlgImage& image, const PreprocessCo
     return Prepare(image, cfg, geometry, cfg.pad_value, state, shared);
 }
 
-Status EzInferer::PrepareNv12Roi(const AlgImage& image, const AlgBox& box, const CropConfig& crop,
-                                 const PreprocessConfig& cfg, PreprocessState& state, CropTransform* transform,
+Status EzInferer::PrepareNv12Roi(const AlgImage& image,
+                                 const AlgBox& box,
+                                 const CropConfig& crop,
+                                 const PreprocessConfig& cfg,
+                                 PreprocessState& state,
+                                 CropTransform* transform,
                                  SharedInputStaging* shared) {
     prepared_ = false;
     CropGeometry geometry;
@@ -449,8 +461,12 @@ Status EzInferer::PrepareNv12Roi(const AlgImage& image, const AlgBox& box, const
     return ALG_OK;
 }
 
-Status EzInferer::Prepare(const AlgImage& image, const PreprocessConfig& cfg, const CropGeometry& geometry,
-                           int crop_pad_value, PreprocessState& state, SharedInputStaging* shared) {
+Status EzInferer::Prepare(const AlgImage& image,
+                          const PreprocessConfig& cfg,
+                          const CropGeometry& geometry,
+                          int crop_pad_value,
+                          PreprocessState& state,
+                          SharedInputStaging* shared) {
     prepared_ = false;
     Status status = ValidateConfig(image, cfg);
     if (status != ALG_OK)
@@ -466,9 +482,9 @@ Status EzInferer::Prepare(const AlgImage& image, const PreprocessConfig& cfg, co
     float scale = 1.0f;
     if (cfg.resize != ResizeMode::kStretch) {
         scale = cfg.resize == ResizeMode::kLetterboxTL
-                    ? static_cast<float>(net_width_) / std::max(geometry.crop_w, geometry.crop_h)
-                    : std::min(static_cast<float>(net_width_) / geometry.crop_w,
-                               static_cast<float>(net_height_) / geometry.crop_h);
+            ? static_cast<float>(net_width_) / std::max(geometry.crop_w, geometry.crop_h)
+            : std::min(static_cast<float>(net_width_) / geometry.crop_w,
+                       static_cast<float>(net_height_) / geometry.crop_h);
         resized_w = std::max(1, static_cast<int>(geometry.crop_w * scale));
         resized_h = std::max(1, static_cast<int>(geometry.crop_h * scale));
         if (resized_w > net_width_ || resized_h > net_height_) {
@@ -498,8 +514,7 @@ Status EzInferer::Prepare(const AlgImage& image, const PreprocessConfig& cfg, co
                     cfg.pad_value);
         FillWhcRect(canvas_.data, canvas_height, 0, top, left, resized_h, cfg.pad_value);
         const int right_start = left + resized_w;
-        FillWhcRect(canvas_.data, canvas_height, right_start, top, net_width_ - right_start, resized_h,
-                    cfg.pad_value);
+        FillWhcRect(canvas_.data, canvas_height, right_start, top, net_width_ - right_start, resized_h, cfg.pad_value);
     }
     if (geometry.padded)
         FillWhcRect(canvas_.data, canvas_height, left, top, resized_w, resized_h, crop_pad_value);
@@ -593,8 +608,8 @@ Status EzInferer::Prepare(const AlgImage& image, const PreprocessConfig& cfg, co
     state.pad_top = top;
     ALG_LOGD("[ez] image engine pre: source=%dx%d physical=%d source_copy=%d reused=%d model_copy=%d "
              "roi=%dx%d net=%dx%d",
-             image.width, image.height, external ? 1 : 0, external || reused ? 0 : 1, reused ? 1 : 0, scratch_copy ? 1 : 0,
-             geometry.crop_w, geometry.crop_h, net_width_, net_height_);
+             image.width, image.height, external ? 1 : 0, external || reused ? 0 : 1, reused ? 1 : 0,
+             scratch_copy ? 1 : 0, geometry.crop_w, geometry.crop_h, net_width_, net_height_);
     prepared_ = true;
     return ALG_OK;
 }
@@ -616,8 +631,8 @@ Status EzInferer::Forward() {
         if (!Check(ExportNetOutputRawData(graph_, output_names_[i], raw), "ExportNetOutputRawData"))
             return ALG_E_BACKEND;
         const TensorView& expected = output_views_[i];
-        if (!raw.data || raw.type != DFLOAT32 || raw.layout != NCHW || raw.n != expected.N() ||
-            raw.c != expected.C() || raw.h != expected.H() || raw.w != expected.W()) {
+        if (!raw.data || raw.type != DFLOAT32 || raw.layout != NCHW || raw.n != expected.N() || raw.c != expected.C() ||
+            raw.h != expected.H() || raw.w != expected.W()) {
             ALG_LOGE("[ez] exported output[%zu] geometry/type differs from model metadata", i);
             return ALG_E_BACKEND;
         }

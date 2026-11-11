@@ -20,10 +20,10 @@ struct CropTransform {
 struct CropGeometry {
     int bx1 = 0, by1 = 0, bx2 = 0, by2 = 0; /* 扩边后的裁剪画布（可能越界） */
     int ix1 = 0, iy1 = 0, ix2 = 0, iy2 = 0; /* 图内有效 ROI（偶对齐） */
-    int offset_x = 0, offset_y = 0;          /* 裁剪画布左上角 → 原图 */
-    int crop_w = 0, crop_h = 0;              /* 裁剪画布尺寸 */
-    bool inside = false;                     /* 画布完全在图内（clamp 路径） */
-    bool padded = false;                     /* 越界部分用 pad_value 填充 */
+    int offset_x = 0, offset_y = 0;         /* 裁剪画布左上角 → 原图 */
+    int crop_w = 0, crop_h = 0;             /* 裁剪画布尺寸 */
+    bool inside = false;                    /* 画布完全在图内（clamp 路径） */
+    bool padded = false;                    /* 越界部分用 pad_value 填充 */
 };
 
 /* 计算 NV12/NV21 ROI 几何；失败（空 ROI / 非 YUV420SP）返回 false。 */

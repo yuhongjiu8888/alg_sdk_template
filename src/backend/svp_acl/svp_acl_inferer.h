@@ -32,9 +32,9 @@ class SvpAclInferer : public IInferer {
     Status ValidatePreprocessConfig(const PreprocessConfig& cfg) const override;
     bool SupportsHardwarePreprocess() const override;
     Status PrepareHardwareInput(const AlgImage& image,
-                              const PreprocessConfig& cfg,
-                              PreprocessState& state,
-                              SharedInputStaging* shared_staging) override;
+                                const PreprocessConfig& cfg,
+                                PreprocessState& state,
+                                SharedInputStaging* shared_staging) override;
 
   private:
     Status BuildViews();

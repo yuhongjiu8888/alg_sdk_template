@@ -155,9 +155,9 @@ void PrintResultDetails(const AlgResult& r) {
     }
     for (int i = 0; i < r.license_plate_count; ++i) {
         const AlgLicensePlate& lp = r.license_plates[i];
-        std::printf("                LP[%d] plate='%s' len=%zu score=%.3f rec=%.3f box=(%d,%d,%d,%d)\n", i,
-                    lp.text, std::strlen(lp.text), lp.box.score, lp.rec_score, lp.box.xmin, lp.box.ymin,
-                    lp.box.xmax, lp.box.ymax);
+        std::printf("                LP[%d] plate='%s' len=%zu score=%.3f rec=%.3f box=(%d,%d,%d,%d)\n", i, lp.text,
+                    std::strlen(lp.text), lp.box.score, lp.rec_score, lp.box.xmin, lp.box.ymin, lp.box.xmax,
+                    lp.box.ymax);
     }
 }
 

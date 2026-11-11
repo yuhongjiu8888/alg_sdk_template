@@ -55,8 +55,7 @@ class LetterboxPreprocessor : public IPreprocessor {
     bool swap_rb_ = false;
 
     /* 由 resize 模式 + 源尺寸计算 scale / 目标活动区 / letterbox pad。 */
-    void ComputeGeometry(
-        int src_w, int src_h, float* scale, int* new_w, int* new_h, int* pad_left, int* pad_top) const;
+    void ComputeGeometry(int src_w, int src_h, float* scale, int* new_w, int* new_h, int* pad_left, int* pad_top) const;
 
     Status DecodeAndResize(const AlgImage& image, int new_w, int new_h);
     Status WriteToTensor(const TensorView& input, int new_w, int new_h, int pad_left, int pad_top);

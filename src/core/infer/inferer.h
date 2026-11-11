@@ -90,14 +90,22 @@ class IInferer {
 
     /** Optional backend hardware image preprocessing; unavailable by default. */
     virtual bool SupportsHardwarePreprocess() const { return false; }
-    virtual Status PrepareHardwareInput(const AlgImage&, const PreprocessConfig&, PreprocessState&, SharedInputStaging*) {
+    virtual Status PrepareHardwareInput(const AlgImage&,
+                                        const PreprocessConfig&,
+                                        PreprocessState&,
+                                        SharedInputStaging*) {
         return ALG_E_BACKEND;
     }
 
     /** Optional hardware crop/resize directly from the original NV12/NV21 frame. */
     virtual bool SupportsNv12Roi() const { return false; }
-    virtual Status PrepareNv12Roi(const AlgImage&, const AlgBox&, const CropConfig&, const PreprocessConfig&,
-                                  PreprocessState&, CropTransform*, SharedInputStaging*) {
+    virtual Status PrepareNv12Roi(const AlgImage&,
+                                  const AlgBox&,
+                                  const CropConfig&,
+                                  const PreprocessConfig&,
+                                  PreprocessState&,
+                                  CropTransform*,
+                                  SharedInputStaging*) {
         return ALG_E_BACKEND;
     }
 
