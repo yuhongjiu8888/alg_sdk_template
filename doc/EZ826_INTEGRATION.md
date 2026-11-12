@@ -143,7 +143,7 @@ LD_LIBRARY_PATH=.:/opt/ez/lib ./ez_nv21_runner \
   ../resources/config/ez/all.json /data/frame.nv21 1920 1080 1920 100
 ```
 
-参数依次为 `config.json frame.nv21 width height [stride] [iterations]`。文件必须恰好包含一帧 `stride × height × 3/2` 字节，重复运行使用同一帧；输出报告墙钟和线程 CPU 时间。此程序使用普通虚拟内存，验证的是 staging 路径；相机物理帧直读应在实际相机集成应用中验证。
+参数依次为 `config.json frame.nv21 width height [stride] [iterations] [fps]`。`fps` 范围为 `0–1000`，通过 `AlgSetTargetFps` 设置，`0` 表示不限速；省略时沿用配置中的帧率设置。文件必须恰好包含一帧 `stride × height × 3/2` 字节，重复运行使用同一帧；输出报告墙钟和线程 CPU 时间，`run` 耗时包含 SDK 内部限速等待。此程序使用普通虚拟内存，验证的是 staging 路径；相机物理帧直读应在实际相机集成应用中验证。
 
 部署时按进程工作目录填写配置中的 `model_path`，或使用设备上的绝对路径。保留模板中的 `../resources/model/ez/` 时，可从测试包根目录下的 `run/` 子目录启动：
 

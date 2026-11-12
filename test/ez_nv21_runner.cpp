@@ -38,9 +38,20 @@ double Milliseconds(const timespec& begin, const timespec& end) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 5 || argc > 7) {
-        std::fprintf(stderr, "Usage: %s config.json frame.nv21 width height [stride] [iterations]\n", argv[0]);
+    if (argc < 5 || argc > 8) {
+        std::fprintf(stderr, "Usage: %s config.json frame.nv21 width height [stride] [iterations] [fps]\n", argv[0]);
         return 2;
+    }
+    int target_fps = 0;
+    if (argc == 8) {
+        char* end = nullptr;
+        errno = 0;
+        const long parsed = std::strtol(argv[7], &end, 10);
+        if (errno || end == argv[7] || *end || parsed < 0 || parsed > 1000) {
+            std::fprintf(stderr, "Invalid fps; expected an integer in [0, 1000] (0 = unlimited).\n");
+            return 2;
+        }
+        target_fps = static_cast<int>(parsed);
     }
     int width = 0, height = 0, stride = 0, iterations = 1;
     if (!ParsePositive(argv[3], &width) || !ParsePositive(argv[4], &height) || (width & 1) || (height & 1) ||
@@ -84,6 +95,14 @@ int main(int argc, char** argv) {
     if (status != ALG_OK) {
         std::fprintf(stderr, "AlgCreate failed: %d\n", status);
         return 1;
+    }
+    if (argc == 8) {
+        status = AlgSetTargetFps(handle, target_fps);
+        if (status != ALG_OK) {
+            std::fprintf(stderr, "AlgSetTargetFps(%d) failed: %d\n", target_fps, status);
+            AlgDestroy(handle);
+            return 1;
+        }
     }
     AlgImage image{};
     image.format = ALG_PIX_NV21;
