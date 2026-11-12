@@ -171,8 +171,8 @@ Status RtmdetDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSt
         const int stride = strides_[level];
         for (int y = 0; y < H; ++y) {
             for (int x = 0; x < W; ++x) {
-                const size_t p = FlatIndex(cls, 0, y, x);
-                const float score_logit = ReadElem(cls, p);
+                const size_t cls_index = FlatIndex(cls, 0, y, x);
+                const float score_logit = ReadElem(cls, cls_index);
                 if (score_logit < conf_logit_threshold_)
                     continue;
                 const float score = Sigmoid(score_logit);
