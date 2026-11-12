@@ -40,7 +40,6 @@ class ChainSolution {
         StageConfig cfg;      /* 拷贝一份，运行期只读 */
         ModelInstance* model; /* 直接指针，省 unordered_map 查询 */
         int input_idx;        /* -1 表示 input == "image" */
-        int output_target;    /* -1 表示 produces == "objects" */
 #ifndef ALG_NO_OPENCV
         cv::Mat roi_holder; /* 跨帧复用 ROI 像素缓冲 */
 #endif

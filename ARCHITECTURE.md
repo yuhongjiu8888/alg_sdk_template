@@ -36,7 +36,7 @@ flowchart TD
 | 业务编排 | `src/core/solution/` | 顺序执行阶段、ROI 裁剪、结果写回与过滤 |
 | 模型实例 | `src/core/instance/` | 组合单模型的前处理、推理和后处理 |
 | 前处理 | `src/core/preprocess/` | 颜色转换、缩放、填充、归一化和张量写入 |
-| 后端适配 | `src/backend/` | 封装 XMM、SVP ACL、MNN；保留 RK 桩实现 |
+| 后端适配 | `src/backend/` | 封装 XMM、SVP ACL、EZ、MNN |
 | 后处理与注册 | `src/models/`、`src/core/registry/` | 按模型类型解析输出并创建处理器 |
 | 公共结果转换 | `src/core/object.cpp` | 将内部对象映射为强类型数组 |
 | 日志 | `src/core/log/` | 日志级别、异步输出与文件管理 |
@@ -114,7 +114,6 @@ BGR、RGB 和 GRAY 使用图像行跨度。NV12/NV21 支持连续缓冲，也支
 | `yolox_det` | 多尺度 YOLOX 检测，保留红绿灯内部流程 |
 | `yolov5_anchor_det` | SpeedSignNet 单尺度锚框检测，分数为 `sigmoid(obj) × softmax(cls)` |
 | `ocr_classifier` | 逐位 OCR、门控分类及数字组合过滤 |
-| `dualhead_classifier` | 双头分类模型兼容处理 |
 | `rtmdet_det` | RTMDet 车牌检测 |
 | `lprnet_rec` | LPRNet CTC 车牌识别 |
 

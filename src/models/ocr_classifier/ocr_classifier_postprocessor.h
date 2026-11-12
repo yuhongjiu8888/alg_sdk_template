@@ -2,7 +2,6 @@
  * @file ocr_classifier_postprocessor.h
  * @brief 定长多位字符 OCR 分类器后处理（限速牌 v3.4 SpeedSignOCR 三头识别用）。
  *
- * 替代 dualhead_classifier：双头结构假设"唯一 3 位数是 100"，无法表达 110/120。
  * 本后处理对接逐位读数字的 OCR 网络（训练端 alg_speed_limit/src/classifier_src/
  * classifier.py 的 SpeedSignOCR），按"位"识别再装配成限速值。
  *
@@ -12,7 +11,7 @@
  *   - logits_u  (1, 11)  —— 个位字符
  * 字符表：idx 0..9 = '0'..'9'，idx blank_index(默认 10) = 占位/无此位。
  *
- * 三头**同形状 (1,11)，无法靠 size 区分**（不同于 dualhead 的 8 vs 2）。因此本后处理
+ * 三头**同形状 (1,11)，无法靠 size 区分**。因此本后处理
  * 优先按输出张量 name 匹配（head_names），name 不可用（如 XMM 输出名为空）时退回
  * 配置的固定索引 head_indices。
  *

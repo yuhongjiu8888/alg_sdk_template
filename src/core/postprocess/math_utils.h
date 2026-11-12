@@ -21,28 +21,32 @@ inline float LogitThreshold(float p) {
     return std::log(p / (1.0f - p)) - 1e-6f;
 }
 
-/* 数值稳定 softmax，返回首个最大值的相对下标及其概率。
- * 调用方保证 n > 0、[base, base + n) 为可读的连续物理元素。 */
-inline void SoftmaxArgmax(const TensorView& t, size_t base, int n, int* arg, float* max_prob) {
-    float m = ReadElem(t, base);
-    for (int i = 1; i < n; ++i) {
-        float v = ReadElem(t, base + i);
-        if (v > m)
-            m = v;
-    }
-    float sum = 0.f;
+/* read_logit 负责张量布局和读取方式；返回减去最大 logit 后的指数和。 */
+template <typename ReadLogit>
+inline float SoftmaxSum(ReadLogit read_logit, int n, int* arg, float* max_logit) {
+    float m = read_logit(0);
     int best = 0;
-    float best_logit = ReadElem(t, base);
-    for (int i = 0; i < n; ++i) {
-        float v = ReadElem(t, base + i);
-        sum += std::exp(v - m);
-        if (v > best_logit) {
-            best_logit = v;
+    for (int i = 1; i < n; ++i) {
+        float v = read_logit(i);
+        if (v > m) {
+            m = v;
             best = i;
         }
     }
+    float sum = 0.f;
+    for (int i = 0; i < n; ++i)
+        sum += std::exp(read_logit(i) - m);
     *arg = best;
-    *max_prob = std::exp(best_logit - m) / sum;
+    *max_logit = m;
+    return sum;
+}
+
+/* 数值稳定 softmax，返回首个最大值的相对下标及其概率。
+ * 调用方保证 n > 0、[base, base + n) 为可读的连续物理元素。 */
+inline void SoftmaxArgmax(const TensorView& t, size_t base, int n, int* arg, float* max_prob) {
+    float max_logit;
+    const float sum = SoftmaxSum([&](int i) { return ReadElem(t, base + i); }, n, arg, &max_logit);
+    *max_prob = 1.0f / sum;
 }
 
 }  // namespace alg

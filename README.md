@@ -22,10 +22,8 @@ alg_sdk 是面向车载及嵌入式设备的视觉推理 SDK，负责将检测�
 | `svp_acl_dv500` | 海思 Hi3519DV500（aarch64） | `.om` | 同上；无 IVE，且 **AIPP 不可做大图缩放**（见下） |
 | `ez` | 亿智 EZ826 / JC371（32 位 arm-linux-gnueabihf） | `.ezb` + `.bin` / `.eezb` | NV21 / NV12 硬件裁剪、缩放与推理；无 OpenCV 依赖，业务模型需另行转换 |
 | `mnn` | x86_64 / MNN | `.mnn` | 提供本地推理实现 |
-| `rk` | Rockchip RKNN | — | 保留接口桩，模型加载返回 `ALG_E_BACKEND` |
 
-> 旧的 `svp_acl` 仍可用，等价于 `svp_acl_cv610`。两个海思变体运行时的 `AlgBackendName()`
-> 都返回 `svp_acl`，靠包名和资源目录区分。
+两个海思变体运行时的 `AlgBackendName()` 都返回 `svp_acl`，靠包名和资源目录区分。
 
 一份动态库在编译时选择一个后端。模型文件、运行依赖和目标架构须与动态库配套。SVP ACL 后端管理模型所需的 `task_buf`、`work_buf`，这些辅助缓冲不作为业务图像输入暴露给上层。
 
@@ -49,7 +47,7 @@ src/
     log/                  日志输出与文件管理
     tensor.h              跨后端张量描述
     object.h / object.cpp 内部对象及公共结果转换
-  backend/                XMM、SVP ACL、EZ、MNN 和 RK 适配
+  backend/                XMM、SVP ACL、EZ 和 MNN 适配
   models/                 检测及识别后处理器
 cmake/                    平台构建配置
 toolchain/                交叉编译工具链

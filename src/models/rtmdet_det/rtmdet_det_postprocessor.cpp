@@ -184,70 +184,28 @@ Status RtmdetDetPostprocessor::Apply(const IInferer& inferer, const PreprocessSt
                 const float bottom = ReadElem(reg, FlatIndex(reg, 3, y, x));
                 const float prior_x = static_cast<float>(x) * stride;
                 const float prior_y = static_cast<float>(y) * stride;
-                Proposal p_;
-                p_.x1 = prior_x - left;
-                p_.y1 = prior_y - top;
-                p_.x2 = prior_x + right;
-                p_.y2 = prior_y + bottom;
-                p_.score = score;
-                p_.label = 0;
-                props_.push_back(p_);
+                Proposal p;
+                p.x1 = Clamp(prior_x - left, 0.0f, static_cast<float>(input_w));
+                p.y1 = Clamp(prior_y - top, 0.0f, static_cast<float>(input_h));
+                p.x2 = Clamp(prior_x + right, 0.0f, static_cast<float>(input_w));
+                p.y2 = Clamp(prior_y + bottom, 0.0f, static_cast<float>(input_h));
+                if (p.x2 - p.x1 <= min_bbox_size_ || p.y2 - p.y1 <= min_bbox_size_)
+                    continue;
+                p.score = score;
+                p.label = 0;
+                props_.push_back(p);
             }
         }
     }
 
-    /* 2. clip 到模型输入空间，过滤过小框（demo 的 min_bbox_size=4）。 */
-    filtered_.clear();
-    filtered_.reserve(props_.size());
-    for (const Proposal& c : props_) {
-        const float x1 = Clamp(c.x1, 0.0f, static_cast<float>(input_w));
-        const float y1 = Clamp(c.y1, 0.0f, static_cast<float>(input_h));
-        const float x2 = Clamp(c.x2, 0.0f, static_cast<float>(input_w));
-        const float y2 = Clamp(c.y2, 0.0f, static_cast<float>(input_h));
-        if (x2 - x1 <= min_bbox_size_ || y2 - y1 <= min_bbox_size_)
-            continue;
-        Proposal p;
-        p.x1 = x1;
-        p.y1 = y1;
-        p.x2 = x2;
-        p.y2 = y2;
-        p.score = c.score;
-        p.label = 0;
-        filtered_.push_back(p);
-    }
+    Nms(props_, nms_threshold_, &nms_scratch_, max_det_);
 
-    /* 3. 单类 NMS + 截断 max_det。 */
-    Nms(filtered_, nms_threshold_, &nms_scratch_, max_det_);
-
-    /* —— 一次性诊断：板端 0 检出时确认检测头是否有响应（原始 min/max、最强框）。 */
-    {
-        static bool dumped = false;
-        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && !dumped) {
-            dumped = true;
-            int raw_min = 0x7FFFFFFF, raw_max = 0;
-            for (const TensorView& t : {inferer.OutputView(cls_idx_[0]), inferer.OutputView(reg_idx_[0])}) {
-                if (t.dtype == DataType::kU8 || t.dtype == DataType::kI8) {
-                    const uint8_t* p = static_cast<const uint8_t*>(t.data);
-                    for (size_t i = 0; i < t.size_bytes; ++i) {
-                        if (p[i] < raw_min)
-                            raw_min = p[i];
-                        if (p[i] > raw_max)
-                            raw_max = p[i];
-                    }
-                }
-            }
-            ALG_LOGD("[det-diag] rtmdet cls/reg raw[min=%d max=%d] cand=%zu after_nms=%zu "
-                     "top_score=%.4f",
-                     raw_min, raw_max, props_.size(), filtered_.size(), filtered_.empty() ? -1.0f : filtered_[0].score);
-        }
-    }
-
-    /* 4. 反映射回原图：减去 pad 再除以 letterbox scale（与 yolox_det 一致）。 */
+    /* 2. 反映射回原图：减去 pad 再除以 letterbox scale（与 yolox_det 一致）。 */
     const DetectionBoxTransform box_transform(state);
 
     const bool emit_category = !category_.empty();
-    out->reserve(filtered_.size());
-    for (const Proposal& p : filtered_) {
+    out->reserve(props_.size());
+    for (const Proposal& p : props_) {
         Object o;
         o.field_mask = ALG_FIELD_BOX;
         o.box = box_transform.Apply(p);

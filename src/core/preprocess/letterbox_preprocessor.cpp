@@ -332,17 +332,13 @@ Status LetterboxPreprocessor::Apply(const AlgImage& image, TensorView& input, Pr
 }
 
 Status LetterboxPreprocessor::ApplyNv12Roi(const AlgImage& image,
-                                           const AlgBox& box,
+                                           const CropGeometry& geom,
                                            const CropConfig& crop_cfg,
                                            TensorView& input,
                                            PreprocessState& state,
                                            CropTransform* xf) {
     if (!configured_ || !xf)
         return ALG_E_NOT_INITIALIZED;
-
-    CropGeometry geom;
-    if (!ComputeNv12CropGeometry(image, box, crop_cfg, &geom))
-        return ALG_E_PREPROCESS;
 
     float scale = 1.0f;
     int new_w = 0, new_h = 0, pad_left = 0, pad_top = 0;
@@ -448,8 +444,6 @@ Status LetterboxPreprocessor::ApplyNv12Roi(const AlgImage& image,
     state.original_height = geom.crop_h;
     xf->offset_x = geom.offset_x;
     xf->offset_y = geom.offset_y;
-    xf->crop_w = geom.crop_w;
-    xf->crop_h = geom.crop_h;
     return ALG_OK;
 }
 

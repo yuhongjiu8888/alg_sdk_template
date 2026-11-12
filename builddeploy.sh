@@ -9,8 +9,6 @@
 #   ./builddeploy.sh arm ez                            # 仅编译打包 EZ826/JC371
 #   ./builddeploy.sh x86_64 mnn                         # 仅编译打包 x86_64-mnn
 #
-# （`svp_acl` 仍可用，等价于 `svp_acl_cv610`）
-#
 # 输出在 deploy/ 下，每个目标两个 zip（后缀带打包时间戳，便于区分新旧）：
 #   alg_sdk_<VERSION>_<TARGET>_<YYYYmmdd_HHMMSS>.zip        # SDK 发布包
 #   TEST_alg_sdk_<VERSION>_<TARGET>_<YYYYmmdd_HHMMSS>.zip   # 测试包
@@ -173,8 +171,7 @@ function package_artifacts() {
 # ==============================================================
 function build_and_pack() {
     local arch="$1"
-    local backend
-    backend=$(alg_normalize_backend "$2")
+    local backend="$2"
     local target_id="${arch}_${backend}"
 
     # 编译前先校验后端资源存在

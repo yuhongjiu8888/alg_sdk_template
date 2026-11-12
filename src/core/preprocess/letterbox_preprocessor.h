@@ -8,7 +8,7 @@
  * vld3/vst1 splits BGR-interleaved to planar BGR for NCHW.
  *
  * This implementation is chip-agnostic. The output buffer it writes
- * into may be MMZ (XMM), DMA-buf (RK), or plain malloc.
+ * into may be MMZ (XMM) or plain malloc.
  */
 
 #ifndef ALG_CORE_PREPROCESS_LETTERBOX_PREPROCESSOR_H
@@ -29,7 +29,7 @@ class LetterboxPreprocessor : public IPreprocessor {
      * 先在 NV12 域缩放到目标尺寸，再做一次小图转色，跳过“裁剪图转 BGR +
      * 大图 resize + BGR→RGB”两遍全尺寸处理。crop_cfg 决定 ROI 扩边/填充。 */
     Status ApplyNv12Roi(const AlgImage& image,
-                        const AlgBox& box,
+                        const CropGeometry& geom,
                         const CropConfig& crop_cfg,
                         TensorView& input,
                         PreprocessState& state,

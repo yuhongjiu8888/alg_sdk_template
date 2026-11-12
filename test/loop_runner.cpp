@@ -456,11 +456,9 @@ int main(int argc, char** argv) {
         if (do_scale) {
             gettimeofday(&t2, nullptr);
             if (scale_mode == "nearest") {
-                FastYuv420spResize(yuv_bytes.data(), src_w, src_h, scaled_bytes.data(), img.width, img.height,
-                                   img.format == ALG_PIX_NV21);
+                FastYuv420spResize(yuv_bytes.data(), src_w, src_h, scaled_bytes.data(), img.width, img.height);
             } else if (scale_mode == "box") {
-                FastYuv420spResizeBox(yuv_bytes.data(), src_w, src_h, scaled_bytes.data(), img.width, img.height,
-                                      img.format == ALG_PIX_NV21);
+                FastYuv420spResizeBox(yuv_bytes.data(), src_w, src_h, scaled_bytes.data(), img.width, img.height);
             } else if (scale_mode == "opencv") {
                 /* 分开计时，方便判断哪一部分慢（Y 占大头还是 UV 走了慢路径）。 */
                 gettimeofday(&t4, nullptr);

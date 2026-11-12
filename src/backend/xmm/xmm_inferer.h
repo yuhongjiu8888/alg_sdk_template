@@ -26,7 +26,6 @@ class XmmInferer : public IInferer {
     Status Forward() override;
 
   private:
-    Status AllocateTensorMem(xmedia_cl_tensor_info_inout* inout);
     void FreeAll();
     Status BuildViews();
 

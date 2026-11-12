@@ -29,6 +29,7 @@
 namespace alg {
 
 struct CropConfig;
+struct CropGeometry;
 struct CropTransform;
 
 /**
@@ -100,7 +101,7 @@ class IInferer {
     /** Optional hardware crop/resize directly from the original NV12/NV21 frame. */
     virtual bool SupportsNv12Roi() const { return false; }
     virtual Status PrepareNv12Roi(const AlgImage&,
-                                  const AlgBox&,
+                                  const CropGeometry&,
                                   const CropConfig&,
                                   const PreprocessConfig&,
                                   PreprocessState&,

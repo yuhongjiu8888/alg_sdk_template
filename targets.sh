@@ -9,17 +9,7 @@
 #   svp_acl_cv610 海思 Hi3516CV610，32 位 arm-musleabi
 #   svp_acl_dv500 海思 Hi3519DV500，aarch64
 #   ez            亿智 EZ826/JC371，arm 入口，32 位 arm-linux-gnueabihf
-#   rk            瑞芯微（接口桩）
 #   mnn           x86_64 本地推理
-# 旧值 svp_acl 等价于 svp_acl_cv610。
-
-# 把历史写法归一化成当前 token。
-alg_normalize_backend() {
-    case "$1" in
-        svp_acl) echo "svp_acl_cv610" ;;
-        *)       echo "$1" ;;
-    esac
-}
 
 # backend token -> 交叉编译工具链文件（相对仓库根目录）。
 alg_toolchain_file() {

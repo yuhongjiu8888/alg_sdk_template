@@ -17,7 +17,6 @@ option(LINUX_X86_64  "Build for x86_64 Linux (host, local MNN test)" OFF)
 # 后端选择。海思 SVP ACL 有两个芯片变体，由 backend 名字区分：
 #   svp_acl_cv610 : Hi3516CV610，32 位 arm-musleabi
 #   svp_acl_dv500 : Hi3519DV500，aarch64
-# 老写法 svp_acl 仍可用，等价于 svp_acl_cv610。
 #
 # 由它派生两个内部变量，后续平台配置只用这两个，不再比较 backend 字面量：
 #   ALG_SVP_BACKEND : 是否海思 SVP ACL（决定 ACL 头文件、link group 等共性）
@@ -25,7 +24,7 @@ option(LINUX_X86_64  "Build for x86_64 Linux (host, local MNN test)" OFF)
 # -----------------------------------------------------------------------------
 if(NOT DEFINED ALG_BACKEND)
     set(ALG_BACKEND "xmm" CACHE STRING
-        "Inference backend: xmm | svp_acl_cv610 | svp_acl_dv500 | ez | rk | mnn")
+        "Inference backend: xmm | svp_acl_cv610 | svp_acl_dv500 | ez | mnn")
 endif()
 set(ALG_SVP_BACKEND FALSE)
 set(ALG_SVP_CHIP "")
@@ -33,7 +32,7 @@ if(ALG_BACKEND MATCHES "^svp_acl")
     set(ALG_SVP_BACKEND TRUE)
     if(ALG_BACKEND STREQUAL "svp_acl_dv500")
         set(ALG_SVP_CHIP "dv500")
-    elseif(ALG_BACKEND STREQUAL "svp_acl_cv610" OR ALG_BACKEND STREQUAL "svp_acl")
+    elseif(ALG_BACKEND STREQUAL "svp_acl_cv610")
         set(ALG_SVP_CHIP "cv610")
     else()
         message(FATAL_ERROR

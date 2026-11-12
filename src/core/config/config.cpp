@@ -1,6 +1,5 @@
 #include "core/config/config.h"
 #include <fstream>
-#include <sstream>
 #include <unordered_set>
 #include "core/logger.h"
 
@@ -378,6 +377,11 @@ AlgStatus LoadSolutionConfig(const std::string& path, SolutionConfig* out, std::
         }
         if (s.output_kind != StageOutputKind::kCreateObjects && !seen_stage_names.count(s.output_target)) {
             SetErr(err_msg, "stage '" + s.name + "' outputs into unknown earlier stage '" + s.output_target + "'");
+            return ALG_E_CONFIG;
+        }
+        if (s.output_kind != StageOutputKind::kCreateObjects &&
+            (s.input_kind != StageInputKind::kObjectsFromStage || s.output_target != s.input_stage)) {
+            SetErr(err_msg, "stage '" + s.name + "': output target must match its objects_from stage");
             return ALG_E_CONFIG;
         }
         seen_stage_names.insert(s.name);

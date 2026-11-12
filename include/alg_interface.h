@@ -68,7 +68,7 @@ ALG_API AlgStatus AlgSetTargetFps(AlgHandle handle, int fps);
 /** "alg_sdk.v3.0.0+<backend>"，方便日志/崩溃定位。 */
 ALG_API const char* AlgVersion(void);
 
-/** 编译进来的后端名（"xmm" / "rk" / ...）。 */
+/** 编译进来的后端名（"xmm" / "svp_acl" / "ez" / "mnn"）。 */
 ALG_API const char* AlgBackendName(void);
 
 ALG_C_END

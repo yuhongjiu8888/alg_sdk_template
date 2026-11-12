@@ -69,19 +69,27 @@ void DecodeLevel(const LevelView& v,
             if (obj < obj_prefilter)
                 continue;
 
-            float best_cls = -1.f;
+            float best_logit = ReadElem(*v.t, FlatIndex(v, cls_offset, y, x));
             int best_idx = 0;
-            for (int c = 0; c < num_classes; ++c) {
-                float s = Sigmoid(ReadElem(*v.t, FlatIndex(v, cls_offset + c, y, x)));
-                if (s > best_cls) {
-                    best_cls = s;
+            for (int c = 1; c < num_classes; ++c) {
+                float logit = ReadElem(*v.t, FlatIndex(v, cls_offset + c, y, x));
+                if (logit > best_logit) {
+                    best_logit = logit;
                     best_idx = c;
                 }
             }
+            const float best_cls = Sigmoid(best_logit);
             float score = obj * best_cls;
             if (score < score_thresh)
                 continue;
 
+            /* sigmoid 舍入或饱和后可能并列，保持原先首个最大概率类别。 */
+            for (int c = 0; c < best_idx; ++c) {
+                if (Sigmoid(ReadElem(*v.t, FlatIndex(v, cls_offset + c, y, x))) == best_cls) {
+                    best_idx = c;
+                    break;
+                }
+            }
             float cx_off = ReadElem(*v.t, FlatIndex(v, 0, y, x));
             float cy_off = ReadElem(*v.t, FlatIndex(v, 1, y, x));
             float w_log = ReadElem(*v.t, FlatIndex(v, 2, y, x));

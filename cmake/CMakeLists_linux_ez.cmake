@@ -83,8 +83,6 @@ set(ALG_MODEL_SRCS
     src/models/yolov5_anchor_det/yolov5_anchor_det_register.cpp
     src/models/ocr_classifier/ocr_classifier_postprocessor.cpp
     src/models/ocr_classifier/ocr_classifier_register.cpp
-    src/models/dualhead_classifier/dualhead_classifier_postprocessor.cpp
-    src/models/dualhead_classifier/dualhead_classifier_register.cpp
     src/models/rtmdet_det/rtmdet_det_postprocessor.cpp
     src/models/rtmdet_det/rtmdet_det_register.cpp
     src/models/lprnet_rec/lprnet_rec_postprocessor.cpp

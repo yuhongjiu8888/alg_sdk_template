@@ -46,14 +46,11 @@ class ModelInstance {
 
     /** 直接从 NV12/NV21 原图 ROI 跑子模型；xf 输出 ROI 到原图的映射。 */
     Status RunNv12Roi(const AlgImage& image,
-                      const AlgBox& box,
+                      const CropGeometry& geometry,
                       const CropConfig& crop,
                       std::vector<Object>* out,
                       CropTransform* xf,
                       SharedInputStaging* shared_staging = nullptr);
-
-    const std::string& name() const { return cfg_.name; }
-    const PreprocessConfig& pre_cfg() const { return cfg_.pre; }
 
   private:
     ModelInstanceConfig cfg_;
@@ -63,7 +60,12 @@ class ModelInstance {
     std::unique_ptr<IPostprocessor> post_;
     bool initialized_ = false;
 
-    Status RunImpl(const AlgImage& image, std::vector<Object>* out, SharedInputStaging* shared_staging);
+    Status RunImpl(const AlgImage& image,
+                   std::vector<Object>* out,
+                   SharedInputStaging* shared_staging,
+                   const CropGeometry* geometry,
+                   const CropConfig* crop,
+                   CropTransform* xf);
 };
 
 }  // namespace alg

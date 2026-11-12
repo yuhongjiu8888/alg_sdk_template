@@ -40,7 +40,6 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
         }
         rs.model = it->second;
         rs.input_idx = -1;
-        rs.output_target = -1;
         if (sc.input_kind == StageInputKind::kObjectsFromStage) {
             auto jt = stage_idx.find(sc.input_stage);
             if (jt == stage_idx.end()) {
@@ -48,14 +47,6 @@ Status ChainSolution::Init(const SolutionConfig& cfg) {
                 return ALG_E_CONFIG;
             }
             rs.input_idx = jt->second;
-        }
-        if (sc.output_kind != StageOutputKind::kCreateObjects) {
-            auto jt = stage_idx.find(sc.output_target);
-            if (jt == stage_idx.end()) {
-                ALG_LOGE("stage '%s' output_target '%s' not found", sc.name.c_str(), sc.output_target.c_str());
-                return ALG_E_CONFIG;
-            }
-            rs.output_target = jt->second;
         }
         stage_idx[sc.name] = static_cast<int>(i);
         stages_.push_back(std::move(rs));
@@ -204,7 +195,10 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image) {
             CropConfig crop_cfg; /* expand_ratio=1, square=false：不做扩展 */
             Status r;
             if (fused_roi) {
-                r = mi->RunNv12Roi(image, roi_box, crop_cfg, &out_bucket, &xf, &shared_input_);
+                CropGeometry geometry;
+                if (!ComputeNv12CropGeometry(image, roi_box, crop_cfg, &geometry))
+                    return ALG_E_PREPROCESS;
+                r = mi->RunNv12Roi(image, geometry, crop_cfg, &out_bucket, &xf, &shared_input_);
             } else {
                 if (!Crop(roi_box, crop_cfg, &cropped, &xf)) {
                     ALG_LOGE("ChainSolution: stage '%s' roi crop failed", rs.cfg.name.c_str());
@@ -273,7 +267,7 @@ Status ChainSolution::RunStage(int stage_idx, const AlgImage& image) {
         sub.clear();
         Status r;
         if (fused_roi) {
-            r = mi->RunNv12Roi(image, src.box, rs.cfg.crop, &sub, &xf, &shared_input_);
+            r = mi->RunNv12Roi(image, roi_geometry, rs.cfg.crop, &sub, &xf, &shared_input_);
             if (r != ALG_OK)
                 return r;
         } else {

@@ -3,7 +3,7 @@
 #include <cmath>
 
 namespace alg {
-namespace {
+
 /* box + crop config → 期望扩边框（可能越界；square 时为正方）。BGR 与 NV12 共用。 */
 void ComputeCropRect(const AlgBox& box, const CropConfig& cfg, int* bx1, int* by1, int* bx2, int* by2) {
     float cx = (box.xmin + box.xmax) * 0.5f;
@@ -25,6 +25,8 @@ void ComputeCropRect(const AlgBox& box, const CropConfig& cfg, int* bx1, int* by
         *by2 = *by1 + 1;
 }
 
+namespace {
+
 inline int EvenFloor(int v) {
     return v & ~1;
 }
@@ -45,10 +47,6 @@ bool ComputeNv12CropGeometry(const AlgImage& src, const AlgBox& box, const CropC
     const int src_h = src.height;
     int bx1, by1, bx2, by2;
     ComputeCropRect(box, cfg, &bx1, &by1, &bx2, &by2);
-    geom->bx1 = bx1;
-    geom->by1 = by1;
-    geom->bx2 = bx2;
-    geom->by2 = by2;
 
     const bool inside = (bx1 >= 0 && by1 >= 0 && bx2 <= src_w && by2 <= src_h);
     if (cfg.pad_value < 0 || inside) {
@@ -72,7 +70,6 @@ bool ComputeNv12CropGeometry(const AlgImage& src, const AlgBox& box, const CropC
         geom->offset_y = y1;
         geom->crop_w = x2 - x1;
         geom->crop_h = y2 - y1;
-        geom->inside = true;
         geom->padded = false;
         return true;
     }
@@ -99,7 +96,6 @@ bool ComputeNv12CropGeometry(const AlgImage& src, const AlgBox& box, const CropC
         geom->ix1 = geom->ix2 = 0;
         geom->iy1 = geom->iy2 = 0;
     }
-    geom->inside = false;
     geom->padded = true;
     return true;
 }

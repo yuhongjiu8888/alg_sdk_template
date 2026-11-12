@@ -52,7 +52,7 @@ PARE 等由检测阶段确定的类别采用透传方式，跳过第二阶段 OC
 - `"attributes_into:<stage>"`：用首个子结果替换上游属性集合，不改变检测分。
 - `"keypoints_into:<stage>"` / `"mask_into:<stage>"`：写回内部预留字段，公共 C ABI 未定义对应输出。
 
-二阶段输入和写回目标应引用同一上游阶段，例如 `objects_from:detector` 与 `classify_into:detector`。模型引用须存在，阶段引用须指向此前的阶段。
+二阶段输入和写回目标必须引用同一上游阶段，例如 `objects_from:detector` 与 `classify_into:detector`；不匹配时加载配置返回 `ALG_E_CONFIG`。模型引用须存在，阶段引用须指向此前的阶段。
 
 ### 固定 ROI
 
@@ -203,26 +203,6 @@ XMM 使用单输出布局，以避免特定多输出模型被划分为 NPU / CPU
 | `gate_head_index` | int | `num_positions` | **仅多输出**：门控头备选索引（默认 = OCR 头之后） |
 | `nopark_category` | string | `""` | 门控判 no_parking 时产出的 `category`（如 `"no_parking"`，映射到 `signs[]`） |
 | `nopark_sign_value` | int | `0` | 门控判 no_parking 时写入 `value`（`AlgSignType`，`SIGN_NO_PARKING=1`） |
-
-### type: "dualhead_classifier"：双头 softmax 分类器
-
-该处理器用于双头模型兼容。随附限速牌配置使用 `ocr_classifier`，覆盖 10～120 km/h 的 12 类限速值。
-
-期望 2 个输出 tensor（head_a: 首位数字, head_b: 位数判断）。
-
-组装规则：`argmax(head_b) == is_3digit_class` 时 `cls_id = three_digit_class_index`，否则 `cls_id = argmax(head_a)`。
-
-| 字段 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `head_a_index` | int | `0` | 第一个输出 tensor 索引 |
-| `head_b_index` | int | `1` | 第二个输出 tensor 索引 |
-| `head_a_classes` | int | `8` | head_a 类别数（首位数字） |
-| `head_b_classes` | int | `2` | head_b 类别数（位数判断） |
-| `is_3digit_class` | int | `1` | head_b 中表示"三位数"的 argmax 索引 |
-| `three_digit_class_index` | int | `head_a_classes` | 三位数时的最终类别 ID |
-| `conf_threshold` | float | `0.7` | 联合置信度阈值 |
-| `class_names` | `[str]` | `[]` | 类名列表 |
-| `category` | string | `""` | 分类器类别标签 |
 
 ---
 

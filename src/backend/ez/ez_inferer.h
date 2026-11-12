@@ -25,7 +25,7 @@ class EzInferer : public IInferer {
                                 PreprocessState&,
                                 SharedInputStaging*) override;
     Status PrepareNv12Roi(const AlgImage&,
-                          const AlgBox&,
+                          const CropGeometry&,
                           const CropConfig&,
                           const PreprocessConfig&,
                           PreprocessState&,

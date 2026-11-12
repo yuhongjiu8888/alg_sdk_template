@@ -21,16 +21,4 @@ std::unique_ptr<IPostprocessor> PostprocessorRegistry::Create(const std::string&
     return it->second();
 }
 
-bool PostprocessorRegistry::Has(const std::string& type) const {
-    return builders_.count(type) > 0;
-}
-
-std::vector<std::string> PostprocessorRegistry::Types() const {
-    std::vector<std::string> out;
-    out.reserve(builders_.size());
-    for (auto& kv : builders_)
-        out.push_back(kv.first);
-    return out;
-}
-
 }  // namespace alg

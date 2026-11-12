@@ -194,22 +194,20 @@ class Logger {
         fill_slot(ring_[tail_], lvl, ts, msg, len);
         tail_ = (tail_ + 1) % ring_.size();
         ++count_;
+        ++submitted_;
         lk.unlock();
         if (was_empty)
             q_cv_.notify_one();
     }
 
     void flush() {
+        std::lock_guard<std::mutex> config_lock(cfg_mtx_);
         if (!async_)
             return;
-        // 等队列清空后再刷一次。
-        for (;;) {
-            {
-                std::lock_guard<std::mutex> lk(q_mtx_);
-                if (count_ == 0)
-                    break;
-            }
-            std::this_thread::yield();
+        {
+            std::unique_lock<std::mutex> lk(q_mtx_);
+            const uint64_t target = submitted_;
+            flushed_cv_.wait(lk, [this, target] { return completed_ >= target; });
         }
         std::lock_guard<std::mutex> lk(sink_mtx_);
         flush_sinks();
@@ -269,6 +267,7 @@ class Logger {
                 std::lock_guard<std::mutex> lk(q_mtx_);
                 ring_.assign(cap, Slot{});
                 head_ = tail_ = count_ = 0;
+                submitted_ = completed_ = 0;
             }
             start_worker_locked();  // 横幅由 worker 启动时打（见 worker_main）
         } else {
@@ -369,6 +368,11 @@ class Logger {
                     flush_sinks();
                 }
             }
+            {
+                std::lock_guard<std::mutex> lk(q_mtx_);
+                ++completed_;
+            }
+            flushed_cv_.notify_all();
         }
         std::lock_guard<std::mutex> sk(sink_mtx_);
         report_dropped_locked();
@@ -434,8 +438,10 @@ class Logger {
     // ---- 环形队列 ----
     std::mutex q_mtx_;
     std::condition_variable q_cv_;
+    std::condition_variable flushed_cv_;
     std::vector<Slot> ring_;
     std::size_t head_ = 0, tail_ = 0, count_ = 0;
+    uint64_t submitted_ = 0, completed_ = 0;
     std::atomic<bool> stop_{false};
     std::atomic<uint64_t> dropped_{0};
     uint64_t dropped_reported_ = 0;

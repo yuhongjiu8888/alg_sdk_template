@@ -6,7 +6,7 @@
 
 SDK 通过六个 C 函数完成实例管理、同步推理和日志控制，公共结果包含限速牌、禁令 / 停车牌和车牌。红绿灯模型及处理流程保留在工程内部，未纳入公共结果结构。
 
-应用接入需要准备目标架构、后端运行库、配套模型和业务配置。XMM、SVP ACL（Hi3516CV610 / Hi3519DV500）和 MNN 提供推理实现；RK 保留接口桩，不用于业务验证。
+应用接入需要准备目标架构、后端运行库、配套模型和业务配置。XMM、SVP ACL（Hi3516CV610 / Hi3519DV500）和 MNN 提供推理实现。
 
 ## 2. 构建和验证
 
@@ -14,7 +14,7 @@ SDK 通过六个 C 函数完成实例管理、同步推理和日志控制，公�
 
 ```bash
 ./build.sh linux aarch64 xmm
-./build.sh linux aarch64 svp_acl_cv610   # 旧写法 svp_acl 等价
+./build.sh linux aarch64 svp_acl_cv610
 ./build.sh linux aarch64 svp_acl_dv500
 ./build.sh linux x86_64 mnn
 ```

@@ -436,28 +436,22 @@ Status EzInferer::PrepareHardwareInput(const AlgImage& image,
     CropGeometry geometry;
     geometry.ix2 = geometry.crop_w = image.width;
     geometry.iy2 = geometry.crop_h = image.height;
-    geometry.inside = true;
     return Prepare(image, cfg, geometry, cfg.pad_value, state, shared);
 }
 
 Status EzInferer::PrepareNv12Roi(const AlgImage& image,
-                                 const AlgBox& box,
+                                 const CropGeometry& geometry,
                                  const CropConfig& crop,
                                  const PreprocessConfig& cfg,
                                  PreprocessState& state,
                                  CropTransform* transform,
                                  SharedInputStaging* shared) {
     prepared_ = false;
-    CropGeometry geometry;
-    if (!transform || !ComputeNv12CropGeometry(image, box, crop, &geometry))
-        return ALG_E_INVALID_ARG;
     Status status = Prepare(image, cfg, geometry, geometry.padded ? crop.pad_value : cfg.pad_value, state, shared);
     if (status != ALG_OK)
         return status;
     transform->offset_x = geometry.offset_x;
     transform->offset_y = geometry.offset_y;
-    transform->crop_w = geometry.crop_w;
-    transform->crop_h = geometry.crop_h;
     return ALG_OK;
 }
 

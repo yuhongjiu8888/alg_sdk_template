@@ -1,8 +1,7 @@
 #include "models/lprnet_rec/lprnet_rec_postprocessor.h"
-#include <algorithm>
 #include <cmath>
 #include "core/logger.h"
-#include "core/tensor_utils.h"
+#include "core/postprocess/math_utils.h"
 
 namespace alg {
 
@@ -80,64 +79,19 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
     std::string text;
     float score = 1.0f;
     int previous = blank_index_;
-    int dbg_max_t = -1, dbg_max_c = -1;
-    float dbg_max_logit = -1e30f;
     for (int ts = 0; ts < timesteps_; ++ts) {
         const uint8_t* row = base_ptr + static_cast<size_t>(ts) * row_bytes;
-        float m = ReadElemAt(t, row);
-        for (int c = 1; c < channels_; ++c) {
-            float v = ReadElemAt(t, row + static_cast<size_t>(c) * elem_bytes);
-            if (v > m)
-                m = v;
-        }
-        float sum = 0.0f;
-        int best = 0;
-        float best_logit = ReadElemAt(t, row);
-        for (int c = 0; c < channels_; ++c) {
-            const float v = ReadElemAt(t, row + static_cast<size_t>(c) * elem_bytes);
-            if (v > best_logit) {
-                best_logit = v;
-                best = c;
-            }
-            sum += std::exp(v - m);
-        }
-        if (best_logit > dbg_max_logit) {
-            dbg_max_logit = best_logit;
-            dbg_max_t = ts;
-            dbg_max_c = best;
-        }
-        const float best_prob = std::exp(best_logit - m) / (sum + 1e-9f);
+        int best;
+        float max_logit;
+        const float sum = SoftmaxSum(
+            [&](int c) { return ReadElemAt(t, row + static_cast<size_t>(c) * elem_bytes); },
+            channels_, &best, &max_logit);
+        const float best_prob = 1.0f / (sum + 1e-9f);
         if (best != previous && best != blank_index_ && best >= 0 && best < static_cast<int>(characters_.size())) {
             text += characters_[best];
             score *= best_prob;
         }
         previous = best;
-    }
-
-    /* —— 一次性诊断（前 8 个 ROI）：看 stage2 解出什么文本、置信度如何。 */
-    {
-        static int dbg_n = 0;
-        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && dbg_n < 8) {
-            ++dbg_n;
-            char shape[64] = {0};
-            int sn = 0;
-            for (int i = 0; i < t.shape.ndims && sn < 60; ++i)
-                sn += snprintf(shape + sn, sizeof(shape) - sn, "%s%d", i ? "x" : "", t.shape.dims[i]);
-            int raw_min = 0x7FFFFFFF, raw_max = 0;
-            if (t.dtype == DataType::kU8 || t.dtype == DataType::kI8) {
-                const uint8_t* p = static_cast<const uint8_t*>(t.data);
-                for (size_t i = 0; i < t.size_bytes; ++i) {
-                    if (p[i] < raw_min)
-                        raw_min = p[i];
-                    if (p[i] > raw_max)
-                        raw_max = p[i];
-                }
-            }
-            ALG_LOGD("[cls-diag] lprnet '%s' shape=%s numel=%d raw[min=%d max=%d] "
-                     "text='%s' rec_score=%.4f max_logit=%.2f@(t=%d,c=%d)",
-                     t.name.c_str(), shape, t.shape.Numel(), raw_min, raw_max, text.c_str(), score, dbg_max_logit,
-                     dbg_max_t, dbg_max_c);
-        }
     }
 
     /* 未解出任何字符时 score 仍保持初始值 1.0，不能让空文本绕过识别阈值；
