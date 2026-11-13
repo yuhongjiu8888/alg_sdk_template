@@ -2,48 +2,26 @@
 
 | 项目 | 版本 | 更新日期 |
 |------|------|----------|
-| 限速牌 / 禁令停车牌 / 车牌识别（alg_sdk） | Version-3.0.0 | 2026 年 09 月 10 日 |
+| 限速牌 / 禁令停车牌 / 车牌识别（alg_sdk） | Version-3.0.0 | 2026 年 11 月 13 日 |
 
-## 文档控制
-
-| | 姓名 | 职务 | 日期 |
-|------|------|------|------|
-| 作者 | 喻伟 | 算法工程师 | 2026.07.17 |
-| 审核 | | | |
-| 通过 | | | |
-
-## 文档发布
-
-| 版本 | 作者 | 日期 | 说明 |
-|------|------|------|------|
-| 1.0.0 | 喻伟 | 2026.07.17 | 初版接口文档：限速牌及停车牌识别 |
-| 1.0.0（文档修订） | 喻伟 | 2026.09.07 | 完善公共接口参数、返回值及数据结构说明 |
-| 2.0.0 | — | 2026.09.09 | 结果改为固定容量内联数组，移除 `AlgFreeResult` |
-| 2.1.0 | — | 2026.09.10 | 新增运行期日志等级控制接口 `AlgSetLogLevel` |
-| 3.0.0 | — | 2026.09.10 | `AlgImage` 新增独立图像平面，支持分地址 NV12/NV21 输入 |
-
-本文档说明 alg_sdk 3.0.0 的公共函数、枚举和结构体。接口声明见交付头文件 `alg_interface.h`，数据类型见 `alg_types.h`。应用应使用与动态库配套的头文件。
-
-## 目录
-
-- [一．接口说明](#一接口说明)
-- [二．数据类型与结构体](#二数据类型与结构体)
+本文档用于客户接入，说明公共接口、输入要求和结果含义。函数和类型定义以交付的 `alg_interface.h`、`alg_types.h` 为准，头文件须与动态库配套使用。
 
 ## 一．接口说明
 
-公共接口支持 C / C++ 调用，在 C++ 中采用 `extern "C"` 声明。返回 `AlgStatus` 的函数以 `ALG_OK`（0）表示成功，负数表示错误，错误码见 2.2。
+SDK 支持 C / C++ 调用。返回 `AlgStatus` 的接口以 `ALG_OK`（0）表示成功，负数表示失败，错误码见 2.2。
 
-除 `AlgSetLogLevel` 与 `AlgSetAippScaleMode` 外，SDK 不保证接口线程安全；应用应串行调用实例接口，并同步管理输入图像和结果结构的访问。这两个接口的内部状态读写使用原子操作，可独立动态调整。
+调用流程：`AlgCreate` 创建实例 → 循环调用 `AlgRun` 处理图像 → `AlgDestroy` 释放实例。应用应串行调用实例接口，输入图像在 `AlgRun` 返回前须保持有效且不被修改。
 
-| 接口 | 功能 | 返回类型 |
-|------|------|----------|
-| `AlgCreate` | 创建并初始化实例 | `AlgStatus` |
-| `AlgDestroy` | 销毁实例 | `AlgStatus` |
-| `AlgRun` | 同步处理一帧图像 | `AlgStatus` |
-| `AlgSetLogLevel` | 动态设置 SDK 全局日志等级 | `AlgStatus` |
-| `AlgSetAippScaleMode` | 设置动态 AIPP 缩放的执行方（DV500） | `AlgStatus` |
-| `AlgVersion` | 获取版本信息 | `const char*` |
-| `AlgBackendName` | 获取运行后端名称 | `const char*` |
+| 接口 | 功能 |
+|------|------|
+| `AlgCreate` | 创建并初始化实例 |
+| `AlgDestroy` | 释放实例 |
+| `AlgRun` | 同步处理一帧图像 |
+| `AlgSetLogLevel` | 设置全局日志等级 |
+| `AlgSetAippScaleMode` | 设置动态 AIPP 缩放模式（DV500） |
+| `AlgSetTargetFps` | 设置实例处理帧率上限 |
+| `AlgVersion` | 获取版本信息 |
+| `AlgBackendName` | 获取推理后端名称 |
 
 ### 1.1 AlgCreate
 
@@ -51,16 +29,14 @@
 AlgStatus AlgCreate(AlgHandle* handle, const char* config_json_path);
 ```
 
-创建算法实例，成功后通过 `handle` 返回句柄。
+创建并初始化实例，成功后通过 `handle` 返回句柄。
 
 | 参数 | 方向 | 说明 |
 |------|------|------|
-| `handle` | 输出 | 句柄变量的地址，不得为 `NULL`；调用前将句柄变量初始化为 `NULL` |
-| `config_json_path` | 输入 | 随 SDK 提供的初始化文件路径，不得为 `NULL` |
+| `handle` | 输出 | 句柄变量的地址，不得为 `NULL`；句柄变量初始化为 `NULL` |
+| `config_json_path` | 输入 | 配套 JSON 配置文件路径，不得为 `NULL` |
 
-返回 `ALG_OK` 表示创建成功；失败时返回对应错误码，不改写句柄变量。任一参数为 `NULL` 时返回 `ALG_E_INVALID_ARG`。
-
-创建成功的句柄可重复用于处理多帧图像。每个成功创建的实例须调用一次 `AlgDestroy`，不得用新句柄直接覆盖尚未销毁的句柄。
+返回 `ALG_OK` 表示创建成功；失败时返回错误码，不改写句柄变量。每个成功创建的实例须调用一次 `AlgDestroy`。
 
 ### 1.2 AlgDestroy
 
@@ -74,9 +50,7 @@ AlgStatus AlgDestroy(AlgHandle handle);
 |------|------|------|
 | `handle` | 输入 | 由 `AlgCreate` 成功创建且尚未销毁的句柄 |
 
-有效句柄返回 `ALG_OK`；`NULL` 返回 `ALG_E_INVALID_ARG`。销毁后，调用方应将句柄变量设为 `NULL`，不得再次销毁或继续用于推理。
-
-`AlgResult` 使用内联数组，不依赖实例内存；销毁句柄后，调用方持有的结果结构仍可读取。
+返回 `ALG_OK` 表示成功；传入 `NULL` 返回 `ALG_E_INVALID_ARG`。销毁后应将句柄变量设为 `NULL`，不得继续使用。
 
 ### 1.3 AlgRun
 
@@ -84,24 +58,15 @@ AlgStatus AlgDestroy(AlgHandle handle);
 AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 ```
 
-同步处理一帧图像，并返回限速牌、禁令 / 停车牌及车牌结果。
+同步处理一帧图像，返回限速牌、禁令 / 停车牌及车牌结果，具体业务由配套配置决定。
 
 | 参数 | 方向 | 说明 |
 |------|------|------|
-| `handle` | 输入 | 有效的算法实例句柄 |
-| `image` | 输入 | 图像描述指针，不得为 `NULL`；字段要求见 2.5 |
-| `result` | 输出 | 结果结构指针，不得为 `NULL`；建议在栈上零初始化，例如 `AlgResult result = {0};` |
+| `handle` | 输入 | 有效实例句柄 |
+| `image` | 输入 | 图像描述指针，不得为 `NULL`，字段要求见 2.5 |
+| `result` | 输出 | 调用方提供的结果结构指针，不得为 `NULL`，建议零初始化 |
 
-返回 `ALG_OK` 表示本帧处理完成，没有检出目标也返回成功。返回非零时，本次结果不得用于业务处理。
-
-调用要求：
-
-- 图像缓冲由调用方持有，在函数返回前须保持有效且不被修改。
-- 复用同一结果结构时，SDK 直接覆盖数量和本帧有效元素。
-- 若任一顶层参数指针为 `NULL`，返回 `ALG_E_INVALID_ARG`，原有结果不变。
-- 通过顶层指针检查后，后续处理若返回错误码，结果数组为空、数量为 0，`frame_id` 不更新。
-
-调用方负责像素指针、图像布局和缓冲长度的有效性；非法图像数据不保证以错误码返回。
+返回 `ALG_OK` 表示本帧处理完成，未检出目标也返回成功。失败时返回错误码，本次结果不可使用。成功时覆盖各类结果数量和有效元素；结果无需额外释放，可复用同一结构接收下一帧。
 
 ### 1.4 AlgSetLogLevel
 
@@ -109,21 +74,13 @@ AlgStatus AlgRun(AlgHandle handle, const AlgImage* image, AlgResult* result);
 AlgStatus AlgSetLogLevel(AlgLogLevel level);
 ```
 
-动态设置 SDK 全局日志过滤等级。无需创建实例，建议在 `AlgCreate` 前调用，以便同时控制模型加载和初始化日志；也可以在运行过程中调用，新的等级立即对后续日志生效。
+设置全局日志等级，对所有实例生效，可在创建实例前或运行期间调用。
 
 | 参数 | 方向 | 说明 |
 |------|------|------|
-| `level` | 输入 | `ALG_LOG_OFF`、`ALG_LOG_ERROR`、`ALG_LOG_WARN`、`ALG_LOG_INFO` 或 `ALG_LOG_DEBUG` |
+| `level` | 输入 | 日志等级，见 2.3；默认 `ALG_LOG_WARN` |
 
-合法等级返回 `ALG_OK`，其他数值返回 `ALG_E_INVALID_ARG` 且不修改当前等级。标准构建默认等级为 `ALG_LOG_WARN`；构建时可覆盖启动默认等级。等级越高，输出越详细；所选等级及更严重的日志会被输出。该设置作用于同一动态库中的所有算法实例，等级读写使用原子操作。
-
-异步日志模式下，修改等级前已经进入队列的消息仍可能完成输出。开启 `ALG_LOG_DEBUG` 会执行额外的张量诊断统计，只建议排查问题时短时使用。
-
-```c
-AlgSetLogLevel(ALG_LOG_INFO);  /* 输出 Error/Warn/Info */
-/* ... AlgCreate / AlgRun ... */
-AlgSetLogLevel(ALG_LOG_OFF);   /* 关闭全部 SDK 日志 */
-```
+合法取值返回 `ALG_OK`；其他值返回 `ALG_E_INVALID_ARG`，当前等级不变。
 
 ### 1.5 AlgSetAippScaleMode
 
@@ -131,30 +88,13 @@ AlgSetLogLevel(ALG_LOG_OFF);   /* 关闭全部 SDK 日志 */
 AlgStatus AlgSetAippScaleMode(AlgAippScaleMode mode);
 ```
 
-设置动态 AIPP 前处理中缩放的执行方。**仅对 Hi3519DV500 生效**，其他后端（含
-Hi3516CV610）忽略该设置。
-
-该芯片的 AIPP 只要参与缩放（`scf_switch=2`，BILINEAR 模式）就会每帧多出固定约
-128ms 的开销，与源图尺寸和缩放比例都无关；源图不缩放时只要 4.8ms。因此送进
-`AlgRun` 的帧必须已经是配置里 `preprocess.aipp_output_size` 的尺寸。
+设置动态 AIPP 缩放模式，对所有实例生效，可在创建实例前或运行期间调用。仅对 Hi3519DV500 生效，其他后端忽略该设置。
 
 | 参数 | 方向 | 说明 |
 |------|------|------|
-| `mode` | 输入 | `ALG_AIPP_SCALE_AUTO` 或 `ALG_AIPP_SCALE_EXTERNAL` |
+| `mode` | 输入 | 缩放模式，类型为 `AlgAippScaleMode`，取值见 2.11 |
 
-| 取值 | 含义 |
-|------|------|
-| `ALG_AIPP_SCALE_AUTO` | 默认。源尺寸不等于 `aipp_output_size` 时，由 SDK 内部用 libyuv 缩放到该尺寸后再交给 AIPP。调用方不必关心尺寸，代价约 11ms/帧 CPU。 |
-| `ALG_AIPP_SCALE_EXTERNAL` | 缩放由调用方完成（例如让 VPSS 直接输出该尺寸的通道）。SDK 不缩放，CPU 零开销；但若源尺寸不符会打印错误并返回 `ALG_E_PREPROCESS`，**不会降级**到 AIPP 缩放。 |
-
-可在 `AlgCreate` 前或运行期间调用，等级读写使用原子操作，便于按实机 CPU 余量动态切换。
-源图必须是 16:9（模型图内已固化 letterbox padding），否则前处理返回错误。
-
-```c
-AlgSetAippScaleMode(ALG_AIPP_SCALE_EXTERNAL);  /* VPSS 已按 aipp_output_size 出图 */
-/* ... AlgRun ... */
-AlgSetAippScaleMode(ALG_AIPP_SCALE_AUTO);      /* 交回 SDK 自己缩 */
-```
+合法取值返回 `ALG_OK`；其他值返回 `ALG_E_INVALID_ARG`，当前模式不变。配套 DV500 动态 AIPP 配置要求源图宽高比为 16:9。
 
 ### 1.6 AlgVersion
 
@@ -162,9 +102,7 @@ AlgSetAippScaleMode(ALG_AIPP_SCALE_AUTO);      /* 交回 SDK 自己缩 */
 const char* AlgVersion(void);
 ```
 
-返回版本字符串，格式为 `"alg_sdk.v3.0.0+<backend>"`，例如 `"alg_sdk.v3.0.0+svp_acl"`。3.0 扩展了 `AlgImage`，应用必须使用配套头文件重新编译。
-
-无需创建实例即可调用。字符串由 SDK 持有，调用方不可修改或释放；动态库卸载后不可继续访问该指针。
+无需输入参数或实例句柄。返回版本字符串，格式为 `"alg_sdk.v3.0.0+<backend>"`。字符串由 SDK 持有，不得修改或释放，动态库卸载后指针失效。
 
 ### 1.7 AlgBackendName
 
@@ -172,9 +110,22 @@ const char* AlgVersion(void);
 const char* AlgBackendName(void);
 ```
 
-返回 SDK 使用的后端名称字符串，例如 `"xmm"`、`"svp_acl"` 或 `"mnn"`，具体内容由交付版本决定。
+无需输入参数或实例句柄。返回后端名称：`"xmm"`、`"svp_acl"`、`"ez"` 或 `"mnn"`，以交付版本为准。字符串由 SDK 持有，不得修改或释放，动态库卸载后指针失效。
 
-无需创建实例即可调用。字符串由 SDK 持有，调用方不可修改或释放；动态库卸载后不可继续访问该指针。
+### 1.8 AlgSetTargetFps
+
+```c
+AlgStatus AlgSetTargetFps(AlgHandle handle, int fps);
+```
+
+设置指定实例的处理帧率上限，覆盖配置中的 `solution.target_fps`。
+
+| 参数 | 方向 | 说明 |
+|------|------|------|
+| `handle` | 输入 | 有效实例句柄 |
+| `fps` | 输入 | 帧率上限，单位为帧/秒，范围 `[0, 1000]`，`0` 表示不限速 |
+
+返回 `ALG_OK` 表示成功；空句柄或帧率超出范围返回 `ALG_E_INVALID_ARG`。未调用时沿用配置值，未配置时为 `0`。限速等待发生在 `AlgRun` 内；持有相机帧期间调用会延长帧的占用时间。
 
 ## 二．数据类型与结构体
 
@@ -184,208 +135,148 @@ const char* AlgBackendName(void);
 typedef struct AlgContext* AlgHandle;
 ```
 
-不透明句柄，由 `AlgCreate` 创建、`AlgDestroy` 销毁。调用方不得访问或修改句柄指向的内容。
+不透明句柄，由 `AlgCreate` 创建、`AlgDestroy` 释放。调用方不得访问或修改其内部内容。
 
 ### 2.2 AlgStatus：返回码
 
 ```c
 typedef enum AlgStatus_ {
-    ALG_OK                = 0,
-    ALG_E_INVALID_ARG     = -1,
+    ALG_OK = 0,
+    ALG_E_INVALID_ARG = -1,
     ALG_E_NOT_INITIALIZED = -2,
-    ALG_E_BACKEND         = -3,
+    ALG_E_BACKEND = -3,
     ALG_E_MODEL_NOT_FOUND = -4,
-    ALG_E_PREPROCESS      = -5,
-    ALG_E_POSTPROCESS     = -6,
-    ALG_E_OOM             = -7,
-    ALG_E_IO              = -8,
-    ALG_E_CONFIG          = -9,
-    ALG_E_UNKNOWN         = -99,
+    ALG_E_PREPROCESS = -5,
+    ALG_E_POSTPROCESS = -6,
+    ALG_E_OOM = -7,
+    ALG_E_IO = -8,
+    ALG_E_CONFIG = -9,
+    ALG_E_UNKNOWN = -99,
 } AlgStatus;
 ```
 
-| 返回码 | 含义 |
-|--------|------|
-| `ALG_OK` | 成功，包括处理完成但未检出目标 |
-| `ALG_E_INVALID_ARG` | 参数非法 |
-| `ALG_E_NOT_INITIALIZED` | 相关处理模块尚未初始化；传入空句柄时返回 `ALG_E_INVALID_ARG` |
-| `ALG_E_BACKEND` | 后端初始化、模型加载或推理失败 |
-| `ALG_E_MODEL_NOT_FOUND` | 所需后处理类型不可用，不是模型文件缺失的统一返回码 |
-| `ALG_E_PREPROCESS` | 图像前处理失败 |
-| `ALG_E_POSTPROCESS` | 模型输出处理失败 |
-| `ALG_E_OOM` | 检测到内存分配失败 |
-| `ALG_E_IO` | 初始化文件无法打开 |
-| `ALG_E_CONFIG` | 初始化文件格式或内容错误 |
-| `ALG_E_UNKNOWN` | 未知错误，保留值 |
+| 返回码 | 值 | 含义 |
+|--------|----|------|
+| `ALG_OK` | 0 | 成功，包含未检出目标的情况 |
+| `ALG_E_INVALID_ARG` | -1 | 参数非法 |
+| `ALG_E_NOT_INITIALIZED` | -2 | 相关处理模块尚未初始化 |
+| `ALG_E_BACKEND` | -3 | 后端初始化、模型加载或推理失败 |
+| `ALG_E_MODEL_NOT_FOUND` | -4 | 所需后处理类型未注册 |
+| `ALG_E_PREPROCESS` | -5 | 图像前处理失败 |
+| `ALG_E_POSTPROCESS` | -6 | 模型输出后处理失败 |
+| `ALG_E_OOM` | -7 | 内存分配失败 |
+| `ALG_E_IO` | -8 | 配置文件无法打开 |
+| `ALG_E_CONFIG` | -9 | 配置格式或内容错误 |
+| `ALG_E_UNKNOWN` | -99 | 未知错误，保留值 |
 
 ### 2.3 AlgLogLevel：日志等级
 
 ```c
 typedef enum AlgLogLevel_ {
-    ALG_LOG_OFF   = -1,
+    ALG_LOG_OFF = -1,
     ALG_LOG_ERROR = 0,
-    ALG_LOG_WARN  = 1,
-    ALG_LOG_INFO  = 2,
+    ALG_LOG_WARN = 1,
+    ALG_LOG_INFO = 2,
     ALG_LOG_DEBUG = 3,
 } AlgLogLevel;
 ```
 
-| 枚举 | 输出范围 |
-|------|----------|
-| `ALG_LOG_OFF` | 不输出 SDK 日志 |
-| `ALG_LOG_ERROR` | 仅错误 |
-| `ALG_LOG_WARN` | 错误和警告（默认） |
-| `ALG_LOG_INFO` | 错误、警告和运行信息，包括各阶段耗时 |
-| `ALG_LOG_DEBUG` | 全部日志，包括诊断信息 |
+| 枚举 | 值 | 输出范围 |
+|------|----|----------|
+| `ALG_LOG_OFF` | -1 | 关闭 SDK 日志 |
+| `ALG_LOG_ERROR` | 0 | 错误 |
+| `ALG_LOG_WARN` | 1 | 错误和警告（默认） |
+| `ALG_LOG_INFO` | 2 | 错误、警告和运行信息 |
+| `ALG_LOG_DEBUG` | 3 | 全部日志，建议排查问题时使用 |
 
 ### 2.4 AlgPixelFormat：像素格式
 
 ```c
 typedef enum AlgPixelFormat_ {
-    ALG_PIX_BGR  = 0,
-    ALG_PIX_RGB  = 1,
+    ALG_PIX_BGR = 0,
+    ALG_PIX_RGB = 1,
     ALG_PIX_GRAY = 2,
     ALG_PIX_NV12 = 3,
     ALG_PIX_NV21 = 4,
 } AlgPixelFormat;
 ```
 
-| 格式 | 像素排列 |
-|------|----------|
-| `ALG_PIX_BGR` | 每像素 3 字节，按 B、G、R 交错排列 |
-| `ALG_PIX_RGB` | 每像素 3 字节，按 R、G、B 交错排列 |
-| `ALG_PIX_GRAY` | 每像素 1 字节灰度值 |
-| `ALG_PIX_NV12` | YUV420 半平面格式，Y 平面后紧接交错 UV 平面 |
-| `ALG_PIX_NV21` | YUV420 半平面格式，Y 平面后紧接交错 VU 平面 |
+| 枚举 | 值 | 像素排列 |
+|------|----|----------|
+| `ALG_PIX_BGR` | 0 | 每像素 3 字节，B、G、R 交错排列 |
+| `ALG_PIX_RGB` | 1 | 每像素 3 字节，R、G、B 交错排列 |
+| `ALG_PIX_GRAY` | 2 | 每像素 1 字节灰度值 |
+| `ALG_PIX_NV12` | 3 | Y 平面和交错 UV 平面 |
+| `ALG_PIX_NV21` | 4 | Y 平面和交错 VU 平面 |
 
-输入均为原始 8 位像素。JPEG / PNG 等压缩数据须由调用方解码后再传入。
+输入均为原始 8 位像素，压缩图像须先解码。NV12/NV21 宽高须为偶数。格式支持范围以交付后端为准，亿智后端仅支持 NV12/NV21。
 
 ### 2.5 AlgImage：输入图像
 
 ```c
+#define ALG_MAX_IMAGE_PLANES 4
+
 typedef struct AlgImage_ {
     AlgPixelFormat format;
-    int            width;
-    int            height;
-    int            stride;
-    int            data_len;
-    const void*    data;
+    int width;
+    int height;
+    int stride;
+    int data_len;
+    const void* data;
 
-    const void*    plane_data[4];
-    int            plane_stride[4];
-    int            plane_data_len[4];
-    uint64_t       plane_phys_addr[4];
+    const void* plane_data[ALG_MAX_IMAGE_PLANES];
+    int plane_stride[ALG_MAX_IMAGE_PLANES];
+    int plane_data_len[ALG_MAX_IMAGE_PLANES];
+    uint64_t plane_phys_addr[ALG_MAX_IMAGE_PLANES];
 } AlgImage;
 ```
 
+使用前将结构体零初始化。`ALG_MAX_IMAGE_PLANES` 为 4；所有 stride 和长度均以字节为单位。
+
 | 字段 | 说明 |
 |------|------|
-| `format` | 像素格式，取值见 2.4 |
-| `width` | 图像宽度，单位为像素，须大于 0 |
-| `height` | 图像高度，单位为像素，须大于 0 |
-| `stride` | 连续模式的行跨度；分平面模式下可作为未单独填写平面 stride 时的公共回退值 |
-| `data_len` | 连续模式的完整缓冲长度；0 表示调用方不提供长度检查信息 |
-| `data` | 连续模式的起始地址；设为 `NULL` 时启用分平面模式 |
-| `plane_data[4]` | 分平面地址；NV12/NV21 中 `[0]=Y`、`[1]=UV/VU`，其余保留为 `NULL` |
-| `plane_stride[4]` | 各平面独立行跨度；0 表示回退到 `stride`，两者均为 0 时按紧凑宽度 |
-| `plane_data_len[4]` | 各平面可用长度；0 表示调用方不提供该平面的长度检查信息 |
-| `plane_phys_addr[4]` | 各平面 MMZ/VB 物理地址；海思分平面 IVE 路径中 `[0]=Y`、`[1]=UV/VU`，其他平台或普通内存填 0 |
+| `format` | 像素格式，见 2.4 |
+| `width` / `height` | 图像宽高（像素），均须大于 0 |
+| `stride` | 行跨度；`0` 表示按像素格式计算紧凑行跨度 |
+| `data_len` | 连续缓冲长度；`0` 表示不提供长度检查信息 |
+| `data` | 连续缓冲起始地址；为 `NULL` 时使用分平面输入 |
+| `plane_data[]` | 平面虚拟地址；NV12/NV21 的 `[0]` 为 Y，`[1]` 为 UV/VU |
+| `plane_stride[]` | 各平面行跨度；为 `0` 时沿用 `stride`，两者均为 `0` 时按紧凑宽度计算 |
+| `plane_data_len[]` | 各平面缓冲长度；`0` 表示不提供长度检查信息 |
+| `plane_phys_addr[]` | 硬件可访问的平面物理地址，须与虚拟地址对应；普通内存填 `0` |
 
-调用方必须先用 `{0}` 或 `memset` 将整个结构体清零，再填写字段。`data != NULL` 时 SDK 只读取兼容字段，不读取新增平面字段；`data == NULL` 时必须填写 `plane_data[0]`，NV12/NV21 还必须填写 `plane_data[1]`。
+连续输入时填写 `data`、`stride`、`data_len`；NV12/NV21 的色度平面紧接 Y 平面，两个平面共用行跨度。设实际行跨度为 `S`、图像宽高为 `W`、`H`：
 
-连续模式下，设 `W=width`、`H=height`、`S` 为实际行字节跨度，内存要求为：
+| 格式 | 行跨度要求 | 最小缓冲长度 |
+|------|------------|--------------|
+| BGR / RGB | `S >= W*3` | `S*H` |
+| GRAY | `S >= W` | `S*H` |
+| NV12 / NV21 | `S >= W` | `S*H*3/2` |
 
-| 格式 | `stride` 要求 | 完整帧缓冲要求 |
-|------|---------------|----------------|
-| BGR / RGB | `0` 表示 `S=W*3`；正数时须 `S>=W*3` | 至少 `S*H` 字节 |
-| GRAY | `0` 表示 `S=W`；正数时须 `S>=W` | 至少 `S*H` 字节 |
-| NV12 / NV21 | `0` 表示 `S=W`；正数为实际 Y/UV 共用行跨度 | 至少 `S*H*3/2` 字节 |
+分平面 NV12/NV21 输入时，`data` 设为 `NULL`，填写两个 `plane_data`。两平面行跨度均不得小于 `W`，Y 和 UV/VU 的缓冲分别至少覆盖 `H` 行和 `H/2` 行。未使用的平面字段保持为 `0`。
 
-分平面 NV12/NV21 模式下，宽高须为偶数。Y 平面至少包含 `plane_stride[0]*H` 字节，UV/VU 平面至少包含 `plane_stride[1]*(H/2)` 字节；两个 stride 都须不小于 `W`，可各自不同。NV12 的 `[1]` 为 UV 交错，NV21 的 `[1]` 为 VU 交错。
+调用方须保证缓冲长度和图像布局有效，并在 `AlgRun` 返回前保持输入不被释放或改写。硬件输入还需满足：
 
-长度字段大于 0 时 SDK 会检查其是否满足最小布局，等于 0 时跳过长度检查。无论是否填写长度，调用方均须保证实际内存有效，并在 `AlgRun` 返回前保持所有平面不被释放或改写。
-
-海思动态 AIPP 的连续 NV12/NV21 输入直接绑定 `data`，不复制、不执行 CPU cache flush，也不释放该地址。该模式要求：
-
-- Y 与 UV/VU 位于同一个 MMZ/VB 物理内存块，且 `phy_uv == phy_y + stride*height`；
-- Y 与 UV/VU 使用相同 stride；
-- `data` 是覆盖完整 Y+UV/VU 区域的非 cached 连续虚拟映射，例如 `ss_mpi_sys_mmap(phy_y, total_bytes)` 的返回地址；
-- `data_len` 填写映射长度，映射在 `AlgRun` 返回前保持有效。
-
-连续 NV21 接入示例：
-
-```c
-td_u32 y_bytes = stride * frame_height;
-td_u32 total_bytes = y_bytes + stride * (frame_height / 2);
-
-/* phy_vu 必须等于 phy_y + y_bytes，且整个范围属于同一个 MMZ/VB 块。 */
-void *frame_base = ss_mpi_sys_mmap(phy_y, total_bytes);
-if (frame_base == NULL) {
-    /* 映射失败处理 */
-}
-
-AlgImage image = {0};
-image.format = ALG_PIX_NV21;
-image.width = frame_width;
-image.height = frame_height;
-image.stride = stride;
-image.data = frame_base;
-image.data_len = (int)total_bytes;
-
-AlgStatus status = AlgRun(handle, &image, &result);
-ss_mpi_sys_munmap(frame_base, total_bytes);
-```
-
-同一 VB 缓冲重复使用时，可复用对应的连续映射，避免在帧循环内重复 mmap/munmap；释放或归还 VB 缓冲前再解除映射。普通堆内存中的 YUV 文件数据不满足海思动态 AIPP 连续输入约束，应使用下述分平面模式。
-
-分平面 NV21 接入示例（Y 与 VU 地址不要求连续）：
-
-```c
-AlgImage image = {0};
-image.format = ALG_PIX_NV21;
-image.width = frame_width;
-image.height = frame_height;
-image.data = NULL;
-image.plane_data[0] = y_virtual_address;
-image.plane_data[1] = vu_virtual_address;
-image.plane_phys_addr[0] = y_physical_address;
-image.plane_phys_addr[1] = vu_physical_address;
-image.plane_stride[0] = y_stride;
-image.plane_stride[1] = vu_stride;
-image.plane_data_len[0] = y_stride * frame_height;
-image.plane_data_len[1] = vu_stride * (frame_height / 2);
-
-AlgStatus status = AlgRun(handle, &image, &result);
-```
-
-当两个 `plane_phys_addr` 均非 0 时，海思后端将源 Y/VU 直接构造为 IVE 图像，
-由 `ss_mpi_ive_resize` 缩放到 `aipp_output_size`，输出到首次使用时分配、随后在
-模型实例生命周期内复用的一块非 cached 连续 MMZ（Y 在前、UV/VU 在后），再把该虚拟地址直接绑定为
-`svp_acl_data_buffer`。此路径无 CPU 像素复制、无需 cache flush；AIPP 继续完成
-CSC 和归一化，模型图完成常量 letterbox padding。源物理地址必须是有效的
-MMZ/VB 地址，两个 plane stride 必须 16 字节对齐，并在 `AlgRun` 返回前保持有效。
-SDK 假定 VPSS/其他硬件生产者已经完成写入；若源平面曾由 CPU 通过 cached 映射
-改写，调用方须在 `AlgRun` 前自行把 cache 刷到 DDR。
-
-若两个物理地址都为 0，则视为普通内存测试输入，兼容使用 libyuv 合并到 cached
-ACL staging；只填写其中一个物理地址属于参数错误。
+- 海思动态 AIPP 连续输入使用整帧非 cached MMZ/VB 连续虚拟映射，Y 和 UV/VU 属于同一物理内存块；普通内存测试图像使用分平面输入。
+- 硬件分平面输入的两个物理地址须同时有效；CV610 IVE 输入的行跨度须为 16 字节对齐，亿智硬件直接读取要求两平面行跨度相同且为 32 的倍数。
+- 调用前须确认图像生产完成；若通过 cached 映射写入外部设备内存，由调用方按平台要求完成缓存同步。
 
 ### 2.6 AlgBox：检测框
 
 ```c
 typedef struct AlgBox_ {
-    int   xmin, ymin, xmax, ymax;
+    int xmin, ymin, xmax, ymax;
     float score;
 } AlgBox;
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `xmin` / `ymin` | 检测框左上角坐标 |
-| `xmax` / `ymax` | 检测框右下角坐标 |
-| `score` | 检测或识别结果的置信度，含义见下表 |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `xmin` / `ymin` | `int` | 左上角坐标 |
+| `xmax` / `ymax` | `int` | 右下角坐标 |
+| `score` | `float` | 置信度，含义见下表 |
 
-坐标以传入 `AlgRun` 的原图左上角为原点，x 向右、y 向下，单位为像素。框宽高分别按 `xmax-xmin`、`ymax-ymin` 计算，调用方直接使用返回坐标。
+坐标以输入原图左上角为原点，x 向右、y 向下，单位为像素；框宽高为 `xmax-xmin`、`ymax-ymin`。
 
 | 结果类型 | `score` 含义 |
 |----------|--------------|
@@ -399,103 +290,119 @@ typedef struct AlgBox_ {
 ```c
 typedef enum AlgSpeedLimitValue_ {
     SLV_INVALID = 0,
-    SLV_10      = 1,
-    SLV_20      = 2,
-    SLV_30      = 3,
-    SLV_40      = 4,
-    SLV_50      = 5,
-    SLV_60      = 6,
-    SLV_70      = 7,
-    SLV_80      = 8,
-    SLV_90      = 9,
-    SLV_100     = 10,
-    SLV_110     = 11,
-    SLV_120     = 12,
+    SLV_10 = 1,
+    SLV_20 = 2,
+    SLV_30 = 3,
+    SLV_40 = 4,
+    SLV_50 = 5,
+    SLV_60 = 6,
+    SLV_70 = 7,
+    SLV_80 = 8,
+    SLV_90 = 9,
+    SLV_100 = 10,
+    SLV_110 = 11,
+    SLV_120 = 12,
 } AlgSpeedLimitValue;
 
 typedef struct AlgSpeedLimit_ {
-    AlgBox             box;
+    AlgBox box;
     AlgSpeedLimitValue value;
 } AlgSpeedLimit;
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `box` | 原图检测框及联合置信度 |
-| `value` | 限速类别；有效值乘 10 得到 km/h，例如 `SLV_60=6` 表示 60 km/h |
+`AlgSpeedLimitValue` 中，`SLV_INVALID=0` 表示无效值；`SLV_10` 至 `SLV_120` 的枚举值依次为 1 至 12，表示 10 至 120 km/h、间隔 10 的限速值。
 
-`SLV_INVALID` 表示无效限速值，不应作为有效限速结果使用。
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `box` | `AlgBox` | 原图检测框及置信度 |
+| `value` | `AlgSpeedLimitValue` | 有效枚举值乘 10 得到 km/h，例如 `SLV_60=6` 表示 60 km/h |
 
 ### 2.8 AlgSignType / AlgSign：禁令及停车牌
 
 ```c
 typedef enum AlgSignType_ {
-    SIGN_INVALID    = 0,
+    SIGN_INVALID = 0,
     SIGN_NO_PARKING = 1,
-    SIGN_PARE       = 2,
+    SIGN_PARE = 2,
 } AlgSignType;
 
 typedef struct AlgSign_ {
-    AlgBox      box;
+    AlgBox box;
     AlgSignType type;
 } AlgSign;
 ```
 
-| 牌种 | 含义 |
-|------|------|
-| `SIGN_INVALID` | 无效牌种 |
-| `SIGN_NO_PARKING` | 禁止停车牌 |
-| `SIGN_PARE` | PARE 停车让行牌，红色八边形 |
+| 枚举 | 值 | 含义 |
+|------|----|------|
+| `SIGN_INVALID` | 0 | 无效牌种 |
+| `SIGN_NO_PARKING` | 1 | 禁止停车牌 |
+| `SIGN_PARE` | 2 | PARE 停车让行牌，红色八边形 |
 
-`box` 为原图检测框及置信度，`type` 表示牌种。不同牌种的分数含义见 2.6。
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `box` | `AlgBox` | 原图检测框及置信度 |
+| `type` | `AlgSignType` | 牌种 |
 
 ### 2.9 AlgLicensePlate：车牌
 
 ```c
 typedef struct AlgLicensePlate_ {
     AlgBox box;
-    char   text[32];
-    float  rec_score;
+    char text[32];
+    float rec_score;
 } AlgLicensePlate;
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `box` | 原图检测框；`box.score` 为检测置信度与识别置信度的乘积 |
-| `text` | 以 `\0` 结尾的车牌文本，最多 31 字节有效内容；更长结果会截断 |
-| `rec_score` | 单独的识别置信度，为识别过程中保留字符概率的乘积 |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `box` | `AlgBox` | 原图检测框及置信度 |
+| `text` | `char[32]` | 以空字符结尾的车牌文本，最多 31 字节有效内容 |
+| `rec_score` | `float` | 单独的识别置信度 |
 
-车牌文本使用数字和大写英文字母，不含分隔符，例如 `ABC1D23`。未识别到任何字符的候选会在 SDK 内部丢弃，不进入 `license_plates`；调用方仍应按业务要求检查文本格式。
+车牌文本使用数字和大写英文字母，不含分隔符，例如 `ABC1D23`。调用方应按业务要求校验文本格式。
 
 ### 2.10 AlgResult：单帧结果
 
 ```c
+#define ALG_MAX_SPEED_LIMIT_RESULTS 5
+#define ALG_MAX_SIGN_RESULTS 5
+#define ALG_MAX_LICENSE_PLATE_RESULTS 2
+
 typedef struct AlgResult_ {
-    long long        frame_id;
+    long long frame_id;
 
-    int              speed_limit_count;
-    AlgSpeedLimit    speed_limits[ALG_MAX_SPEED_LIMIT_RESULTS];
+    int speed_limit_count;
+    AlgSpeedLimit speed_limits[ALG_MAX_SPEED_LIMIT_RESULTS];
 
-    int              sign_count;
-    AlgSign          signs[ALG_MAX_SIGN_RESULTS];
+    int sign_count;
+    AlgSign signs[ALG_MAX_SIGN_RESULTS];
 
-    int              license_plate_count;
-    AlgLicensePlate  license_plates[ALG_MAX_LICENSE_PLATE_RESULTS];
+    int license_plate_count;
+    AlgLicensePlate license_plates[ALG_MAX_LICENSE_PLATE_RESULTS];
 } AlgResult;
 ```
 
 | 字段 | 说明 |
 |------|------|
-| `frame_id` | `AlgRun` 成功调用序号 |
-| `speed_limit_count` | 限速牌结果数量 |
-| `speed_limits` | 限速牌数组，元素类型为 `AlgSpeedLimit` |
-| `sign_count` | 禁令 / 停车牌结果数量 |
-| `signs` | 禁令 / 停车牌数组，元素类型为 `AlgSign` |
-| `license_plate_count` | 车牌结果数量 |
-| `license_plates` | 车牌数组，元素类型为 `AlgLicensePlate` |
+| `frame_id` | SDK 内共享的成功处理帧编号 |
+| `speed_limit_count` / `speed_limits` | 限速牌数量及数组，容量 `ALG_MAX_SPEED_LIMIT_RESULTS=5` |
+| `sign_count` / `signs` | 禁令 / 停车牌数量及数组，容量 `ALG_MAX_SIGN_RESULTS=5` |
+| `license_plate_count` / `license_plates` | 车牌数量及数组，容量 `ALG_MAX_LICENSE_PLATE_RESULTS=2` |
 
-每个数组按对应数量遍历；未返回该类结果时数量为 0。固定容量分别为限速牌 5、禁令 / 停车牌 5、车牌 2；数组索引不表示跨帧跟踪 ID。
+每个数组仅前 `count` 个元素有效，未检出时数量为 `0`。数组索引不表示跨帧跟踪 ID。结果由调用方持有，无需额外释放，可直接复制整个结构体。
 
-`AlgRun` 的 `frame_id` 由同一 SDK 动态库的所有句柄共享，每次成功后递增，包括成功但没有检出目标的帧；该计数不随句柄销毁重建而重置，失败调用不更新该字段。
+### 2.11 AlgAippScaleMode：动态 AIPP 缩放模式
 
-结果数组内联在 `AlgResult` 中，不发生堆分配，也不需要释放。调用方可将结构放在栈上；结构体赋值会完整复制当前帧结果。
+```c
+typedef enum AlgAippScaleMode_ {
+    ALG_AIPP_SCALE_AUTO = 0,
+    ALG_AIPP_SCALE_EXTERNAL = 1,
+} AlgAippScaleMode;
+```
+
+用于 `AlgSetAippScaleMode`，仅对 Hi3519DV500 生效。
+
+| 枚举 | 值 | 含义 |
+|------|----|------|
+| `ALG_AIPP_SCALE_AUTO` | 0 | 默认，SDK 按配套配置完成缩放 |
+| `ALG_AIPP_SCALE_EXTERNAL` | 1 | 调用方将图像缩放到配置的 `aipp_output_size`；尺寸不符时 `AlgRun` 返回 `ALG_E_PREPROCESS` |

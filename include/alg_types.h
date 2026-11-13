@@ -33,31 +33,31 @@ ALG_C_BEGIN
 /*                          基础类型                                */
 /* ============================================================== */
 
-/* 不透明 SDK 句柄。 */
+/* 不透明 SDK 句柄，由 AlgCreate 创建、AlgDestroy 释放；调用方不得访问其内部内容。 */
 typedef struct AlgContext* AlgHandle;
 
 /* 返回码：0 = 成功，负数 = 错误。 */
 typedef enum AlgStatus_ {
-    ALG_OK = 0,
-    ALG_E_INVALID_ARG = -1,
-    ALG_E_NOT_INITIALIZED = -2,
-    ALG_E_BACKEND = -3,         /* 芯片后端错误 */
-    ALG_E_MODEL_NOT_FOUND = -4, /* 后处理类型未注册 */
-    ALG_E_PREPROCESS = -5,
-    ALG_E_POSTPROCESS = -6,
-    ALG_E_OOM = -7,
-    ALG_E_IO = -8,
-    ALG_E_CONFIG = -9, /* JSON 配置文件解析失败 */
-    ALG_E_UNKNOWN = -99,
+    ALG_OK = 0,                  /* 成功，包含处理完成但未检出目标 */
+    ALG_E_INVALID_ARG = -1,      /* 参数非法 */
+    ALG_E_NOT_INITIALIZED = -2,  /* 相关处理模块尚未初始化 */
+    ALG_E_BACKEND = -3,          /* 后端初始化、模型加载或推理失败 */
+    ALG_E_MODEL_NOT_FOUND = -4,  /* 所需后处理类型未注册 */
+    ALG_E_PREPROCESS = -5,       /* 图像前处理失败 */
+    ALG_E_POSTPROCESS = -6,      /* 模型输出后处理失败 */
+    ALG_E_OOM = -7,              /* 内存分配失败 */
+    ALG_E_IO = -8,               /* 配置文件无法打开 */
+    ALG_E_CONFIG = -9,           /* JSON 配置格式或内容错误 */
+    ALG_E_UNKNOWN = -99,         /* 未知错误，保留值 */
 } AlgStatus;
 
 /* SDK 全局日志等级。数值越大输出越详细；OFF 关闭全部 SDK 日志。 */
 typedef enum AlgLogLevel_ {
-    ALG_LOG_OFF = -1,
-    ALG_LOG_ERROR = 0,
-    ALG_LOG_WARN = 1,
-    ALG_LOG_INFO = 2,
-    ALG_LOG_DEBUG = 3,
+    ALG_LOG_OFF = -1,   /* 关闭全部日志 */
+    ALG_LOG_ERROR = 0,  /* 输出错误日志 */
+    ALG_LOG_WARN = 1,   /* 输出警告及错误日志，标准构建默认值 */
+    ALG_LOG_INFO = 2,   /* 输出信息、警告及错误日志 */
+    ALG_LOG_DEBUG = 3,  /* 输出全部日志，包含调试信息 */
 } AlgLogLevel;
 
 /* 动态 AIPP 前处理中，缩放由哪一方执行。
@@ -67,17 +67,17 @@ typedef enum AlgLogLevel_ {
  * 因此该芯片必须由调用方或 SDK 自己先把整帧缩到配置里的 aipp_output_size，
  * 让 AIPP 只做色域转换。 */
 typedef enum AlgAippScaleMode_ {
-    ALG_AIPP_SCALE_AUTO = 0, /* 默认：源尺寸不等于 aipp_output_size 时由 SDK 用 libyuv 预缩放 */
-    ALG_AIPP_SCALE_EXTERNAL = 1, /* 缩放由调用方（如 VPSS 通道）完成；源尺寸不符直接报错，不降级 */
+    ALG_AIPP_SCALE_AUTO = 0,      /* 默认：源尺寸不等于 aipp_output_size 时由 SDK 用 libyuv 预缩放 */
+    ALG_AIPP_SCALE_EXTERNAL = 1,  /* 缩放由调用方（如 VPSS 通道）完成；源尺寸不符直接报错，不降级 */
 } AlgAippScaleMode;
 
 /* 输入像素格式。 */
 typedef enum AlgPixelFormat_ {
-    ALG_PIX_BGR = 0,
-    ALG_PIX_RGB = 1,
-    ALG_PIX_GRAY = 2,
-    ALG_PIX_NV12 = 3,
-    ALG_PIX_NV21 = 4,
+    ALG_PIX_BGR = 0,   /* 8 位三通道，按 B、G、R 顺序交错存储 */
+    ALG_PIX_RGB = 1,   /* 8 位三通道，按 R、G、B 顺序交错存储 */
+    ALG_PIX_GRAY = 2,  /* 8 位单通道灰度图 */
+    ALG_PIX_NV12 = 3,  /* YUV420 半平面，Y 平面和交错 UV 平面；宽高须为偶数 */
+    ALG_PIX_NV21 = 4,  /* YUV420 半平面，Y 平面和交错 VU 平面；宽高须为偶数 */
 } AlgPixelFormat;
 
 /* 最多支持 4 个图像平面；当前 NV12/NV21 使用 plane 0/1。 */
@@ -102,17 +102,17 @@ typedef enum AlgPixelFormat_ {
  * SDK 逐行复制到复用的设备缓冲，缩放/转色仍由硬件完成。
  */
 typedef struct AlgImage_ {
-    AlgPixelFormat format;
-    int width;
-    int height;
-    int stride;       /* 每行像素跨度（字节）；0 表示按 width * bpp 推算 */
-    int data_len;     /* 像素数据字节数 */
-    const void* data; /* 像素数据缓冲区 */
+    AlgPixelFormat format;  /* 像素格式，取值见 AlgPixelFormat，具体支持范围由后端决定 */
+    int width;              /* 图像宽度（像素），须大于 0 */
+    int height;             /* 图像高度（像素），须大于 0 */
+    int stride;             /* 每行像素跨度（字节）；0 表示按 width * bpp 推算 */
+    int data_len;           /* 连续像素缓冲长度（字节）；0 表示不校验长度 */
+    const void* data;       /* 连续像素缓冲区；为 NULL 时使用 plane_data */
 
-    const void* plane_data[ALG_MAX_IMAGE_PLANES];
-    int plane_stride[ALG_MAX_IMAGE_PLANES];
-    int plane_data_len[ALG_MAX_IMAGE_PLANES];
-    uint64_t plane_phys_addr[ALG_MAX_IMAGE_PLANES];
+    const void* plane_data[ALG_MAX_IMAGE_PLANES];    /* 平面虚拟地址；NV12/NV21 的 0/1 分别为 Y 和 UV/VU */
+    int plane_stride[ALG_MAX_IMAGE_PLANES];          /* 各平面行跨度（字节）；0 时沿用 stride 或按格式推算 */
+    int plane_data_len[ALG_MAX_IMAGE_PLANES];        /* 各平面缓冲长度（字节）；0 表示不校验长度 */
+    uint64_t plane_phys_addr[ALG_MAX_IMAGE_PLANES];  /* 各平面物理地址，供支持的硬件前处理使用；0 表示未提供 */
 } AlgImage;
 
 /* 原图坐标系下的 2D 检测框。
@@ -122,8 +122,8 @@ typedef struct AlgImage_ {
  *   - 车牌：联合置信度 = 检测置信度 × 识别置信度
  * 应用统一只看这一个分数即可。 */
 typedef struct AlgBox_ {
-    int xmin, ymin, xmax, ymax;
-    float score;
+    int xmin, ymin, xmax, ymax;  /* 原图左上角 (xmin, ymin) 和右下角 (xmax, ymax) 坐标（像素） */
+    float score;                 /* 置信度，具体含义见上方各业务说明 */
 } AlgBox;
 
 /* ============================================================== */
@@ -137,25 +137,25 @@ typedef struct AlgBox_ {
  * 不依赖 class_names 的排列顺序（OCR 的 class_names 可能是"追加排序"而非数值序）。
  * 0 留作 INVALID。 */
 typedef enum AlgSpeedLimitValue_ {
-    SLV_INVALID = 0, /* 二阶段分类置信度 < 阈值 / 字符组合非法的框已由 SDK 内部 drop，正常不出现 */
-    SLV_10 = 1,
-    SLV_20 = 2,
-    SLV_30 = 3,
-    SLV_40 = 4,
-    SLV_50 = 5,
-    SLV_60 = 6,
-    SLV_70 = 7,
-    SLV_80 = 8,
-    SLV_90 = 9,
-    SLV_100 = 10,
-    SLV_110 = 11,
-    SLV_120 = 12,
+    SLV_INVALID = 0,  /* 无效或不支持的限速值 */
+    SLV_10 = 1,       /* 限速 10 km/h */
+    SLV_20 = 2,       /* 限速 20 km/h */
+    SLV_30 = 3,       /* 限速 30 km/h */
+    SLV_40 = 4,       /* 限速 40 km/h */
+    SLV_50 = 5,       /* 限速 50 km/h */
+    SLV_60 = 6,       /* 限速 60 km/h */
+    SLV_70 = 7,       /* 限速 70 km/h */
+    SLV_80 = 8,       /* 限速 80 km/h */
+    SLV_90 = 9,       /* 限速 90 km/h */
+    SLV_100 = 10,     /* 限速 100 km/h */
+    SLV_110 = 11,     /* 限速 110 km/h */
+    SLV_120 = 12,     /* 限速 120 km/h */
 } AlgSpeedLimitValue;
 
 /* 单个限速牌识别结果。 */
 typedef struct AlgSpeedLimit_ {
-    AlgBox box;               /* 原图坐标系下的框，box.score = det × cls 联合置信度 */
-    AlgSpeedLimitValue value; /* 限速值类别（enum），编号即隐含 km/h */
+    AlgBox box;                /* 原图坐标系下的框，box.score = det × cls 联合置信度 */
+    AlgSpeedLimitValue value;  /* 限速值类别，取值见 AlgSpeedLimitValue，value × 10 为 km/h */
 } AlgSpeedLimit;
 
 /* ============================================================== */
@@ -168,15 +168,15 @@ typedef struct AlgSpeedLimit_ {
  *   - NO_PARKING 红圈✕：Stage2 门控第 3 路（box.score = det × P(禁停) 联合置信度）
  * 0 留作 INVALID。扩展新牌种在尾部追加枚举即可，不影响限速 value 语义。 */
 typedef enum AlgSignType_ {
-    SIGN_INVALID = 0,
-    SIGN_NO_PARKING = 1, /* R-6c 禁止停车（红圈 + 黑 E + 红色 ✕） */
-    SIGN_PARE = 2,       /* 停车让行（巴西 R-1，红色八边形，等同 STOP） */
+    SIGN_INVALID = 0,     /* 无效或不支持的牌种 */
+    SIGN_NO_PARKING = 1,  /* R-6c 禁止停车（红圈 + 黑 E + 红色 ✕） */
+    SIGN_PARE = 2,        /* 停车让行（巴西 R-1，红色八边形，等同 STOP） */
 } AlgSignType;
 
 /* 单个禁令 / 停车牌识别结果。 */
 typedef struct AlgSign_ {
-    AlgBox box; /* 原图坐标系下的框，box.score = 联合置信度 */
-    AlgSignType type;
+    AlgBox box;        /* 原图坐标系下的框，box.score = 联合置信度 */
+    AlgSignType type;  /* 牌种，取值见 AlgSignType */
 } AlgSign;
 
 /* ============================================================== */
@@ -189,9 +189,9 @@ typedef struct AlgSign_ {
  *               未识别到内容的候选会在 SDK 内部丢弃）
  *   rec_score = 识别单独置信度（CTC greedy 被保留字符概率之积，排错/二次过滤用） */
 typedef struct AlgLicensePlate_ {
-    AlgBox box;
-    char text[32]; /* 理论最长 = LPRNet 时间步数(32) */
-    float rec_score;
+    AlgBox box;       /* 原图坐标系下的框，box.score = det × rec 联合置信度 */
+    char text[32];    /* 以 '\0' 结尾的车牌文本，最多存储 31 个字符 */
+    float rec_score;  /* 车牌识别单独置信度 */
 } AlgLicensePlate;
 
 /* 固定容量与检测阶段 max_det 保持一致；结果直接内联在 AlgResult 中，不做堆分配。 */
@@ -212,16 +212,16 @@ typedef struct AlgLicensePlate_ {
  * 数组内联在结构体中。调用方可把 AlgResult 放在栈上，无需额外释放；下一帧调用
  * 直接覆盖数量和有效元素。 */
 typedef struct AlgResult_ {
-    long long frame_id;
+    long long frame_id;  /* SDK 内成功处理帧的递增编号，从 0 开始，跨实例共享 */
 
-    int speed_limit_count;
-    AlgSpeedLimit speed_limits[ALG_MAX_SPEED_LIMIT_RESULTS];
+    int speed_limit_count;                                    /* 有效限速牌数量，0 表示未检出 */
+    AlgSpeedLimit speed_limits[ALG_MAX_SPEED_LIMIT_RESULTS];  /* 前 speed_limit_count 个元素有效 */
 
-    int sign_count; /* 禁令/停车牌（PARE / 禁止停车） */
-    AlgSign signs[ALG_MAX_SIGN_RESULTS];
+    int sign_count;                       /* 有效禁令/停车牌数量，0 表示未检出 */
+    AlgSign signs[ALG_MAX_SIGN_RESULTS];  /* 前 sign_count 个元素有效 */
 
-    int license_plate_count;
-    AlgLicensePlate license_plates[ALG_MAX_LICENSE_PLATE_RESULTS];
+    int license_plate_count;                                        /* 有效车牌数量，0 表示未检出 */
+    AlgLicensePlate license_plates[ALG_MAX_LICENSE_PLATE_RESULTS];  /* 前 license_plate_count 个元素有效 */
 } AlgResult;
 
 ALG_C_END

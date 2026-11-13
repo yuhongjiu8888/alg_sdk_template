@@ -196,3 +196,63 @@ DV500 目标没有 IVE，且它的 AIPP 不能负责缩放（大图缩放会固�
 无检测结果时，应分别检查检测阈值、识别阈值、联合分、ROI 和最小框过滤，并确认最终类别属于公共结果范围。模型成功加载不代表输入布局或模型配置正确。
 
 日志级别和文件输出见 [日志说明](src/core/log/README.md)。修改模型或配置后，应保留测试环境、输入数据、结果和耗时记录，作为版本比较和交付依据。
+
+## 8. 接口维护说明（内部）
+
+本节承接客户接口文档中的版本演进、实现行为和平台排查细节，供内部维护使用。客户接入以 [接口文档](alg_sdk_api_documentation_v3.0.0.md) 中的调用约定为准。
+
+### 8.1 历史版本记录
+
+以下为原接口文档保留的发布记录。
+
+| 版本 | 作者 | 日期 | 变更 |
+|------|------|------|------|
+| 1.0.0 | 喻伟 | 2026.07.17 | 初版接口文档：限速牌及停车牌识别 |
+| 1.0.0（文档修订） | 喻伟 | 2026.09.07 | 完善公共接口参数、返回值及数据结构说明 |
+| 2.0.0 | — | 2026.09.09 | 结果改为固定容量内联数组，移除 `AlgFreeResult` |
+| 2.1.0 | — | 2026.09.10 | 新增运行期日志等级控制接口 `AlgSetLogLevel` |
+| 3.0.0 | — | 2026.09.10 | `AlgImage` 新增独立图像平面，支持分地址 NV12/NV21 输入 |
+
+公共结构体布局变化后，交付时须同步更新头文件和动态库，调用方须重新编译。客户接口文档不再列出历史函数删除和内部整改过程。
+
+### 8.2 返回结果与日志实现
+
+`AlgRun` 先检查顶层指针，再调用 `ResolveImageView` 校验图像布局；这两个阶段失败时不改写结果。通过校验后才清零三个结果数量，再执行流水线。流水线失败时数量为 0，数组存储内容不保证清空，`frame_id` 不更新。客户统一按“失败时不使用本次结果”处理，避免依赖具体失败阶段。
+
+`frame_id` 使用动态库内共享的非原子计数器，从 0 开始，每次成功调用后递增，包含无目标帧；销毁或重建句柄不会重置。并发约束见第 3 节。
+
+`AlgSetLogLevel` 和 `AlgSetAippScaleMode` 的全局状态读写使用原子操作。日志启动等级可由构建选项覆盖；异步模式下，修改等级前已入队的消息仍可能完成输出。Debug 日志会执行额外的张量诊断统计。构建选项和队列行为见 [日志说明](src/core/log/README.md)。
+
+`ALG_E_MODEL_NOT_FOUND` 表示所需后处理类型未注册。模型文件缺失不统一返回此码，应结合实际后端错误和加载日志定位。车牌的 `rec_score` 是 CTC 解码保留字符概率的乘积；空文本候选在识别阶段丢弃，超过公共文本容量的内容在结果转换时截断。
+
+### 8.3 海思动态 AIPP 内存路径
+
+连续输入直接借用 `data` 绑定 ACL data buffer，不复制、不执行 CPU cache flush，也不释放调用方地址。需要确认：
+
+- Y 与 UV/VU 属于同一个 MMZ/VB 物理内存块，`phy_uv == phy_y + stride*height`，共用行跨度。
+- 使用 `ss_mpi_sys_mmap(phy_y, total_bytes)` 映射整帧非 cached 连续区域，其中 `total_bytes = stride*height*3/2`，并将映射长度填入 `data_len`。
+- 映射在 `AlgRun` 返回前有效。同一 VB 缓冲可复用映射，释放或归还缓冲前解除映射，避免帧循环中重复 mmap/munmap。
+- 普通堆内存中的 YUV 文件数据使用分平面输入。
+
+分平面 NV21 描述示例，所用地址、尺寸和行跨度由平台提供：
+
+```c
+AlgImage image = {0};
+image.format = ALG_PIX_NV21;
+image.width = frame_width;
+image.height = frame_height;
+image.plane_data[0] = y_virtual_address;
+image.plane_data[1] = vu_virtual_address;
+image.plane_phys_addr[0] = y_physical_address;
+image.plane_phys_addr[1] = vu_physical_address;
+image.plane_stride[0] = y_stride;
+image.plane_stride[1] = vu_stride;
+image.plane_data_len[0] = y_stride * frame_height;
+image.plane_data_len[1] = vu_stride * (frame_height / 2);
+```
+
+CV610 启用 IVE 且两个物理地址均有效时，直接构造源 IVE 图像，调用 `ss_mpi_ive_resize` 缩放到 `aipp_output_size`，写入模型实例复用的非 cached 连续 MMZ，再绑定为 `svp_acl_data_buffer`。源平面行跨度须为 16 字节对齐。AIPP 完成 CSC 和归一化，模型图完成常量 letterbox padding。
+
+未提供物理地址的分平面测试输入由 libyuv 合并到 ACL staging；只填写一个物理地址返回参数错误。SDK 假定 VPSS 等硬件生产者已完成写入；若 CPU 曾通过 cached 映射改写源平面，调用前须自行将 cache 刷到 DDR。
+
+DV500 不含 IVE，按 `AlgSetAippScaleMode` 选择 SDK 预缩放或调用方缩放。原接口文档中的 AIPP 缩放约 128ms、无缩放约 4.8ms、CPU 预缩放约 11ms/帧属于特定模型和设备的测量记录，不作为接口性能承诺；测量条件、根因分析及后续优化见 [DV500 配置与性能说明](resources/config/svp_acl/dv500/README.md)。
