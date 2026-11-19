@@ -29,11 +29,12 @@ class SvpAclInferer : public IInferer {
 
     Status Load(const std::string& model_path) override;
     Status Forward() override;
-    bool SupportsDynamicAipp() const override;
-    Status PrepareDynamicAipp(const AlgImage& image,
-                              const PreprocessConfig& cfg,
-                              PreprocessState& state,
-                              SharedInputStaging* shared_staging) override;
+    Status ValidatePreprocessConfig(const PreprocessConfig& cfg) const override;
+    bool SupportsHardwarePreprocess() const override;
+    Status PrepareHardwareInput(const AlgImage& image,
+                                const PreprocessConfig& cfg,
+                                PreprocessState& state,
+                                SharedInputStaging* shared_staging) override;
 
   private:
     Status BuildViews();

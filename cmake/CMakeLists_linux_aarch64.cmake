@@ -88,12 +88,12 @@ set(ALG_CORE_SRCS
     src/core/object.cpp
     src/core/config/config.cpp
     src/core/log/alg_log.cpp
-    src/core/infer/aipp_scale.cpp
     src/core/registry/postprocessor_registry.cpp
     src/core/instance/model_instance.cpp
     src/core/preprocess/letterbox_preprocessor.cpp
     src/core/postprocess/nms.cpp
     src/core/solution/crop_util.cpp
+    src/core/solution/crop_geometry.cpp
     src/core/solution/chain_solution.cpp
 )
 
@@ -104,7 +104,6 @@ set(ALG_CORE_SRCS
 #   - yolox_det           : mmyolo YOLOXHead 多尺度（红绿灯 4 类，stride 8/16/32）
 #   - yolov5_anchor_det   : 单尺度 anchor 解码（SpeedSignNet 1 类 stride=8 anchor=(36,36)）
 #   - ocr_classifier      : 三头逐位数字 OCR + class_names 驱动解码 + 置信度过滤（限速牌 12 类）
-#   - dualhead_classifier : 旧双头数字识别（限速牌 9 类）；保留向后兼容，新配置走 ocr_classifier
 #   - rtmdet_det          : RTMDet 多尺度单类检测（车牌，cls/bbox × stride 8/16/32）
 #   - lprnet_rec          : LPRNet CTC 车牌识别（32 时间步 × 37 类字符）
 # -----------------------------------------------------------------------------
@@ -115,8 +114,6 @@ set(ALG_MODEL_SRCS
     src/models/yolov5_anchor_det/yolov5_anchor_det_register.cpp
     src/models/ocr_classifier/ocr_classifier_postprocessor.cpp
     src/models/ocr_classifier/ocr_classifier_register.cpp
-    src/models/dualhead_classifier/dualhead_classifier_postprocessor.cpp
-    src/models/dualhead_classifier/dualhead_classifier_register.cpp
     src/models/rtmdet_det/rtmdet_det_postprocessor.cpp
     src/models/rtmdet_det/rtmdet_det_register.cpp
     src/models/lprnet_rec/lprnet_rec_postprocessor.cpp
@@ -146,15 +143,11 @@ if(ALG_BACKEND STREQUAL "xmm")
         libxmedia_common.a
         libxmedia_flatcc.a
     )
-elseif(ALG_BACKEND STREQUAL "rk")
-    set(ALG_BACKEND_SRCS
-        src/backend/rk/rk_inferer.cpp
-        src/backend/rk/rk_backend.cpp
-    )
 elseif(ALG_SVP_BACKEND)
     set(ALG_BACKEND_SRCS
         src/backend/svp_acl/svp_acl_inferer.cpp
         src/backend/svp_acl/svp_acl_backend.cpp
+        src/backend/svp_acl/aipp_scale.cpp
     )
     if(ALG_SVP_CHIP STREQUAL "dv500")
         set(SVP_ACL_ROOT
@@ -232,7 +225,7 @@ elseif(ALG_SVP_BACKEND)
 else()
     message(FATAL_ERROR
         "Unknown ALG_BACKEND: ${ALG_BACKEND} "
-        "(expected xmm, svp_acl_cv610, svp_acl_dv500 or rk)")
+        "(expected xmm, svp_acl_cv610, svp_acl_dv500)")
 endif()
 
 # -----------------------------------------------------------------------------

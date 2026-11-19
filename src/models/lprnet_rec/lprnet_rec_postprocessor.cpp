@@ -1,81 +1,9 @@
 #include "models/lprnet_rec/lprnet_rec_postprocessor.h"
-#include <algorithm>
 #include <cmath>
-#include <cstring>
 #include "core/logger.h"
+#include "core/postprocess/math_utils.h"
 
 namespace alg {
-
-namespace {
-
-/* 反量化辅助：读取 t.data 在 byte_ptr 处的一个元素（按 dtype 解包，
- * 支持 FLOAT / FLOAT16 / 量化整型）。与其它后处理器 ReadElem 等价，
- * 只是按字节指针定位 —— 便于支撑 ATC 输出按行对齐（row_stride）的张量。 */
-inline float ReadElemAt(const TensorView& t, const uint8_t* p) {
-    switch (t.dtype) {
-        case DataType::kF32: {
-            float v;
-            std::memcpy(&v, p, sizeof(v));
-            return v;
-        }
-        case DataType::kI8: {
-            int8_t raw;
-            std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<int>(raw) - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kU8: {
-            uint8_t raw;
-            std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<int>(raw) - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kI16: {
-            int16_t raw;
-            std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<int>(raw) - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kU16: {
-            uint16_t raw;
-            std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<int>(raw) - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kI32: {
-            int32_t raw;
-            std::memcpy(&raw, p, sizeof(raw));
-            return (static_cast<float>(raw) - static_cast<float>(t.quant.zero_point)) * t.quant.scale;
-        }
-        case DataType::kF16: {
-            uint16_t h;
-            std::memcpy(&h, p, sizeof(h));
-            uint32_t sign = (h & 0x8000u) << 16;
-            uint32_t exp = (h & 0x7C00u) >> 10;
-            uint32_t mant = (h & 0x03FFu);
-            uint32_t f;
-            if (exp == 0) {
-                if (mant == 0) {
-                    f = sign;
-                } else {
-                    exp = 1;
-                    while ((mant & 0x0400u) == 0) {
-                        mant <<= 1;
-                        exp--;
-                    }
-                    mant &= 0x03FFu;
-                    f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-                }
-            } else if (exp == 0x1F) {
-                f = sign | 0x7F800000u | (mant << 13);
-            } else {
-                f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-            }
-            float out;
-            std::memcpy(&out, &f, sizeof(out));
-            return out;
-        }
-    }
-    return 0.0f;
-}
-
-}  // namespace
 
 Status LprnetRecPostprocessor::Configure(const IInferer& inferer, const Json::Value& params) {
     characters_ = params.get("characters", "").asString();
@@ -151,64 +79,19 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
     std::string text;
     float score = 1.0f;
     int previous = blank_index_;
-    int dbg_max_t = -1, dbg_max_c = -1;
-    float dbg_max_logit = -1e30f;
     for (int ts = 0; ts < timesteps_; ++ts) {
         const uint8_t* row = base_ptr + static_cast<size_t>(ts) * row_bytes;
-        float m = ReadElemAt(t, row);
-        for (int c = 1; c < channels_; ++c) {
-            float v = ReadElemAt(t, row + static_cast<size_t>(c) * elem_bytes);
-            if (v > m)
-                m = v;
-        }
-        float sum = 0.0f;
-        int best = 0;
-        float best_logit = ReadElemAt(t, row);
-        for (int c = 0; c < channels_; ++c) {
-            const float v = ReadElemAt(t, row + static_cast<size_t>(c) * elem_bytes);
-            if (v > best_logit) {
-                best_logit = v;
-                best = c;
-            }
-            sum += std::exp(v - m);
-        }
-        if (best_logit > dbg_max_logit) {
-            dbg_max_logit = best_logit;
-            dbg_max_t = ts;
-            dbg_max_c = best;
-        }
-        const float best_prob = std::exp(best_logit - m) / (sum + 1e-9f);
+        int best;
+        float max_logit;
+        const float sum = SoftmaxSum(
+            [&](int c) { return ReadElemAt(t, row + static_cast<size_t>(c) * elem_bytes); },
+            channels_, &best, &max_logit);
+        const float best_prob = 1.0f / (sum + 1e-9f);
         if (best != previous && best != blank_index_ && best >= 0 && best < static_cast<int>(characters_.size())) {
             text += characters_[best];
             score *= best_prob;
         }
         previous = best;
-    }
-
-    /* —— 一次性诊断（前 8 个 ROI）：看 stage2 解出什么文本、置信度如何。 */
-    {
-        static int dbg_n = 0;
-        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && dbg_n < 8) {
-            ++dbg_n;
-            char shape[64] = {0};
-            int sn = 0;
-            for (int i = 0; i < t.shape.ndims && sn < 60; ++i)
-                sn += snprintf(shape + sn, sizeof(shape) - sn, "%s%d", i ? "x" : "", t.shape.dims[i]);
-            int raw_min = 0x7FFFFFFF, raw_max = 0;
-            if (t.dtype == DataType::kU8 || t.dtype == DataType::kI8) {
-                const uint8_t* p = static_cast<const uint8_t*>(t.data);
-                for (size_t i = 0; i < t.size_bytes; ++i) {
-                    if (p[i] < raw_min)
-                        raw_min = p[i];
-                    if (p[i] > raw_max)
-                        raw_max = p[i];
-                }
-            }
-            ALG_LOGD("[cls-diag] lprnet '%s' shape=%s numel=%d raw[min=%d max=%d] "
-                     "text='%s' rec_score=%.4f max_logit=%.2f@(t=%d,c=%d)",
-                     t.name.c_str(), shape, t.shape.Numel(), raw_min, raw_max, text.c_str(), score, dbg_max_logit,
-                     dbg_max_t, dbg_max_c);
-        }
     }
 
     /* 未解出任何字符时 score 仍保持初始值 1.0，不能让空文本绕过识别阈值；

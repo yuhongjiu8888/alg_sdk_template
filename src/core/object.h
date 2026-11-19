@@ -69,8 +69,6 @@ struct Object {
 
     bool has_box() const { return field_mask & ALG_FIELD_BOX; }
     bool has_attributes() const { return field_mask & ALG_FIELD_ATTRIBUTES; }
-    bool has_keypoints() const { return field_mask & ALG_FIELD_KEYPOINTS; }
-    bool has_mask() const { return field_mask & ALG_FIELD_MASK; }
 };
 
 /**

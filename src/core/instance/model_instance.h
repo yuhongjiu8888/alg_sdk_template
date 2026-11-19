@@ -19,7 +19,7 @@
 #include "core/object.h"
 #include "core/postprocess/postprocessor.h"
 #include "core/preprocess/preprocessor.h"
-#include "core/solution/crop_util.h"
+#include "core/solution/crop_geometry.h"
 #include "core/status.h"
 
 namespace alg {
@@ -39,18 +39,18 @@ class ModelInstance {
 
     /** 子模型是否支持 NV12 ROI 融合前处理（不走 BGR 中间图）。 */
     bool SupportsNv12Roi() const {
-        return lb_pre_ != nullptr && cfg_.pre.engine != PreprocessEngine::kAipp;
+        return (inferer_ && inferer_->SupportsNv12Roi()) ||
+            (lb_pre_ != nullptr && cfg_.pre.engine != PreprocessEngine::kAipp &&
+             cfg_.pre.engine != PreprocessEngine::kHardware);
     }
 
     /** 直接从 NV12/NV21 原图 ROI 跑子模型；xf 输出 ROI 到原图的映射。 */
     Status RunNv12Roi(const AlgImage& image,
-                      const AlgBox& box,
+                      const CropGeometry& geometry,
                       const CropConfig& crop,
                       std::vector<Object>* out,
-                      CropTransform* xf);
-
-    const std::string& name() const { return cfg_.name; }
-    const PreprocessConfig& pre_cfg() const { return cfg_.pre; }
+                      CropTransform* xf,
+                      SharedInputStaging* shared_staging = nullptr);
 
   private:
     ModelInstanceConfig cfg_;
@@ -60,7 +60,12 @@ class ModelInstance {
     std::unique_ptr<IPostprocessor> post_;
     bool initialized_ = false;
 
-    Status RunImpl(const AlgImage& image, std::vector<Object>* out, SharedInputStaging* shared_staging);
+    Status RunImpl(const AlgImage& image,
+                   std::vector<Object>* out,
+                   SharedInputStaging* shared_staging,
+                   const CropGeometry* geometry,
+                   const CropConfig* crop,
+                   CropTransform* xf);
 };
 
 }  // namespace alg

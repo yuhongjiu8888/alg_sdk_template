@@ -57,12 +57,12 @@ set(ALG_CORE_SRCS
     src/core/object.cpp
     src/core/config/config.cpp
     src/core/log/alg_log.cpp
-    src/core/infer/aipp_scale.cpp
     src/core/registry/postprocessor_registry.cpp
     src/core/instance/model_instance.cpp
     src/core/preprocess/letterbox_preprocessor.cpp
     src/core/postprocess/nms.cpp
     src/core/solution/crop_util.cpp
+    src/core/solution/crop_geometry.cpp
     src/core/solution/chain_solution.cpp
 )
 
@@ -76,8 +76,6 @@ set(ALG_MODEL_SRCS
     src/models/yolov5_anchor_det/yolov5_anchor_det_register.cpp
     src/models/ocr_classifier/ocr_classifier_postprocessor.cpp
     src/models/ocr_classifier/ocr_classifier_register.cpp
-    src/models/dualhead_classifier/dualhead_classifier_postprocessor.cpp
-    src/models/dualhead_classifier/dualhead_classifier_register.cpp
     src/models/rtmdet_det/rtmdet_det_postprocessor.cpp
     src/models/rtmdet_det/rtmdet_det_register.cpp
     src/models/lprnet_rec/lprnet_rec_postprocessor.cpp

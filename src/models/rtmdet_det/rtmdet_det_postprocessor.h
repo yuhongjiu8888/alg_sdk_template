@@ -60,7 +60,6 @@ class RtmdetDetPostprocessor : public IPostprocessor {
     std::vector<int> reg_idx_; /* level → reg 输出张量索引 */
 
     std::vector<Proposal> props_;
-    std::vector<Proposal> filtered_;
     NmsScratch nms_scratch_;
 };
 

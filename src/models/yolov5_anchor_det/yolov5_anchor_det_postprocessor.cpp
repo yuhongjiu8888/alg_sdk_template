@@ -1,84 +1,12 @@
 #include "models/yolov5_anchor_det/yolov5_anchor_det_postprocessor.h"
 #include <algorithm>
 #include <cmath>
-#include <cstring>
-#include <limits>
 #include "core/logger.h"
+#include "core/postprocess/box_transform.h"
+#include "core/postprocess/math_utils.h"
 #include "core/postprocess/nms.h"
 
 namespace alg {
-
-namespace {
-
-inline float Sigmoid(float x) {
-    return 1.0f / (1.0f + std::exp(-x));
-}
-
-inline float Logit(float p) {
-    if (p <= 0.0f)
-        return -std::numeric_limits<float>::infinity();
-    if (p >= 1.0f)
-        return std::numeric_limits<float>::infinity();
-    /* 略向低侧放宽，避免 log/sigmoid 浮点舍入在阈值边界误剪。 */
-    return std::log(p / (1.0f - p)) - 1e-6f;
-}
-
-inline float ReadElem(const TensorView& t, int idx) {
-    switch (t.dtype) {
-        case DataType::kF32:
-            return static_cast<const float*>(t.data)[idx];
-        case DataType::kI8: {
-            int raw = static_cast<int>(static_cast<const int8_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kU8: {
-            int raw = static_cast<int>(static_cast<const uint8_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kI16: {
-            int raw = static_cast<int>(static_cast<const int16_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kU16: {
-            int raw = static_cast<int>(static_cast<const uint16_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kI32: {
-            int raw = static_cast<const int32_t*>(t.data)[idx];
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kF16: {
-            uint16_t h = static_cast<const uint16_t*>(t.data)[idx];
-            uint32_t sign = (h & 0x8000u) << 16;
-            uint32_t exp = (h & 0x7C00u) >> 10;
-            uint32_t mant = (h & 0x03FFu);
-            uint32_t f;
-            if (exp == 0) {
-                if (mant == 0) {
-                    f = sign;
-                } else {
-                    exp = 1;
-                    while ((mant & 0x0400u) == 0) {
-                        mant <<= 1;
-                        exp--;
-                    }
-                    mant &= 0x03FFu;
-                    f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-                }
-            } else if (exp == 0x1F) {
-                f = sign | 0x7F800000u | (mant << 13);
-            } else {
-                f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-            }
-            float out;
-            std::memcpy(&out, &f, sizeof(out));
-            return out;
-        }
-    }
-    return 0.0f;
-}
-
-}  // namespace
 
 Status Yolov5AnchorDetPostprocessor::Configure(const IInferer& inferer, const Json::Value& params) {
     num_classes_ = params.get("num_classes", 1).asInt();
@@ -89,7 +17,7 @@ Status Yolov5AnchorDetPostprocessor::Configure(const IInferer& inferer, const Js
     nms_threshold_ = params.get("nms_threshold", 0.45f).asFloat();
     max_det_ = params.get("max_det", 5).asInt();
     obj_prefilter_ = params.get("obj_prefilter", 0.05f).asFloat();
-    obj_logit_threshold_ = Logit(std::max(obj_prefilter_, conf_threshold_));
+    obj_logit_threshold_ = LogitThreshold(std::max(obj_prefilter_, conf_threshold_));
 
     if (params.isMember("anchor") && params["anchor"].isArray() && params["anchor"].size() == 2) {
         anchor_w_ = params["anchor"][0].asFloat();
@@ -159,71 +87,6 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer,
     if (props_.capacity() < 256)
         props_.reserve(256);
 
-    /* —— 一次性诊断：板端 0 检出时，先确认检测头到底有没有响应 ——
-     * 全网格扫一遍（不卡阈值），看 max obj / max score 落在哪、有多少格子
-     * 过 prefilter / conf；再看输出原始字节 min/max（判断是不是常数死值）。
-     * 确认后删除。 */
-    {
-        static bool dumped = false;
-        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && !dumped) {
-            dumped = true;
-            float max_obj = -1.f, max_score = -1.f;
-            int mx = -1, my = -1, n_pre = 0, n_conf = 0;
-            int raw_min = 255, raw_max = 0;
-            const int total = channels * H * W;
-            for (int i = 0; i < total; ++i) {
-                int rv = (t.dtype == DataType::kU8)
-                    ? static_cast<const uint8_t*>(t.data)[i]
-                    : (t.dtype == DataType::kI8 ? static_cast<const int8_t*>(t.data)[i] + 128 : 0);
-                if (rv < raw_min)
-                    raw_min = rv;
-                if (rv > raw_max)
-                    raw_max = rv;
-            }
-            for (int y = 0; y < H; ++y)
-                for (int x = 0; x < W; ++x) {
-                    float o = Sigmoid(ReadElem(t, idx_at(bbox_channels_, y, x)));
-                    float ml = ReadElem(t, idx_at(cls_offset_, y, x));
-                    for (int c = 1; c < num_classes_; ++c) {
-                        float l = ReadElem(t, idx_at(cls_offset_ + c, y, x));
-                        if (l > ml)
-                            ml = l;
-                    }
-                    float se = 0.f;
-                    for (int c = 0; c < num_classes_; ++c)
-                        se += std::exp(ReadElem(t, idx_at(cls_offset_ + c, y, x)) - ml);
-                    float sc = o * (1.0f / se);
-                    if (o >= obj_prefilter_)
-                        ++n_pre;
-                    if (sc >= conf_threshold_)
-                        ++n_conf;
-                    if (o > max_obj) {
-                        max_obj = o;
-                        mx = x;
-                        my = y;
-                    }
-                    if (sc > max_score)
-                        max_score = sc;
-                }
-            /* v3.5：在最强检测点 dump 每个 cls 通道的读值 —— 板端 pare(cls>=1) 判别失效时，
-             * 对比 xmm_quantize 仿真的 [NPU dets] cls=1：若这里 pare 那路恒低/异常，说明板端
-             * 把该 cls 通道读错了（per-channel 量化单 scale 读不对 / pch!=dims 对齐错位）。 */
-            char clsbuf[160] = {0};
-            int cn = 0;
-            if (mx >= 0)
-                for (int c = 0; c < num_classes_ && cn < 140; ++c)
-                    cn += snprintf(clsbuf + cn, sizeof(clsbuf) - cn, "cls%d=%.3f ", c,
-                                   ReadElem(t, idx_at(cls_offset_ + c, my, mx)));
-            ALG_LOGD("[det-diag] raw[min=%d max=%d] scale=%g zp=%d | max_obj=%.4f @(%d,%d) "
-                     "max_score=%.4f | n_pre(>=%.2f)=%d n_conf(>=%.2f)=%d / %d cells | "
-                     "@max_obj: %s(dims=%d,%d,%d,%d layout=%d)",
-                     raw_min, raw_max, t.quant.scale, t.quant.zero_point, max_obj, mx, my, max_score, obj_prefilter_,
-                     n_pre, conf_threshold_, n_conf, H * W, clsbuf, t.shape.ndims > 0 ? t.shape.dims[0] : 0,
-                     t.shape.ndims > 1 ? t.shape.dims[1] : 0, t.shape.ndims > 2 ? t.shape.dims[2] : 0,
-                     t.shape.ndims > 3 ? t.shape.dims[3] : 0, (int)t.layout);
-        }
-    }
-
     const float fs = static_cast<float>(stride_);
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
@@ -280,39 +143,15 @@ Status Yolov5AnchorDetPostprocessor::Apply(const IInferer& inferer,
 
     Nms(props_, nms_threshold_, &nms_scratch_, max_det_);
 
-    {
-        static bool dumped2 = false;
-        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && !dumped2) {
-            dumped2 = true;
-            /* 打每个最终框的 label（0=round_sign 1=pare）：全是 0 = 板端 pare 判别失效
-             * （pare 框被判成 round → passthrough 不触发 → 进 OCR 被丢）。对比仿真应有 label=1。 */
-            char lbls[256] = {0};
-            int ln = 0;
-            for (size_t k = 0; k < props_.size() && ln < 240; ++k)
-                ln += snprintf(lbls + ln, sizeof(lbls) - ln, "%d(%.2f) ", props_[k].label, props_[k].score);
-            ALG_LOGD("[det-diag] NMS 后最终框数=%zu labels=[%s]（0=round 1=pare；全 0 则 pare 判别在板端失效）",
-                     props_.size(), lbls);
-        }
-    }
-
-    const float inv_s = state.scale_ratio > 0 ? 1.0f / state.scale_ratio : 1.0f;
-    const int max_x = state.original_width - 1;
-    const int max_y = state.original_height - 1;
+    const DetectionBoxTransform box_transform(state);
 
     out->reserve(props_.size());
     for (const auto& p : props_) {
         Object o;
         o.field_mask = ALG_FIELD_BOX;
-        o.box.score = p.score;
+        o.box = box_transform.Apply(p);
         o.label = p.label;
-        int x1 = static_cast<int>((p.x1 - state.pad_left) * inv_s + 0.5f);
-        int y1 = static_cast<int>((p.y1 - state.pad_top) * inv_s + 0.5f);
-        int x2 = static_cast<int>((p.x2 - state.pad_left) * inv_s + 0.5f);
-        int y2 = static_cast<int>((p.y2 - state.pad_top) * inv_s + 0.5f);
-        o.box.xmin = x1 < 0 ? 0 : (x1 > max_x ? max_x : x1);
-        o.box.ymin = y1 < 0 ? 0 : (y1 > max_y ? max_y : y1);
-        o.box.xmax = x2 < 0 ? 0 : (x2 > max_x ? max_x : x2);
-        o.box.ymax = y2 < 0 ? 0 : (y2 > max_y ? max_y : y2);
+
         out->push_back(std::move(o));
     }
     return ALG_OK;

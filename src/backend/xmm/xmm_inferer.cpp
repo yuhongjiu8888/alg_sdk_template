@@ -7,15 +7,6 @@
 #define ALIGN_BYTES 8
 #define ALIGN_UP(A, B) ((((A) % (B)) == 0) ? (A) : ((A) + (B) - ((A) % (B))))
 
-#define XMM_TRY(call, msg)                                                                                             \
-    do {                                                                                                               \
-        xmedia_cl_s32 _r = (call);                                                                                     \
-        if (_r != XMEDIA_CL_SUCCESS) {                                                                                 \
-            ALG_LOGE("%s failed, ret=%d", msg, _r);                                                                    \
-            return ALG_E_BACKEND;                                                                                      \
-        }                                                                                                              \
-    } while (0)
-
 namespace alg {
 
 namespace {
@@ -341,31 +332,6 @@ Status XmmInferer::BuildViews() {
     for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i)
         output_views_.push_back(fill(cl_output_.tensor[i]));
 
-    /* —— 一次性诊断：板端检不出框时先确认 NPU tensor 元数据 ——
-     * 重点看 output：
-     *   type=4 → FP16（之前 MapDtype 漏了会当 U8 解，全是垃圾值）；
-     *   dims 与 pch 不一致 → NPU 对维度做了对齐补位（pitch != dims），
-     *     后处理按密排 idx 取数会错位 → 也读出垃圾。
-     * 确认后可删掉这段。 */
-    if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug)) {
-        auto dump = [](const char* tag, const xmedia_cl_tensor_info_inout& io) {
-            for (xmedia_cl_u32 i = 0; i < io.num; ++i) {
-                const xmedia_cl_tensor& t = io.tensor[i];
-                char dims[64] = {0}, pch[64] = {0};
-                int dn = 0, pn = 0;
-                for (xmedia_cl_u32 d = 0; d < t.shape.ndims && dn < 56; ++d)
-                    dn += snprintf(dims + dn, sizeof(dims) - dn, "%u,", t.shape.dims[d]);
-                for (xmedia_cl_u32 d = 0; d < t.shape.ndims && pn < 56; ++d)
-                    pn += snprintf(pch + pn, sizeof(pch) - pn, "%u,", t.shape.pch[d]);
-                ALG_LOGD("[xmm-diag] %s[%u] tid=%u name=%s type=%d ndims=%u dims=[%s] pch=[%s] "
-                         "scale=%g zp=%d size=%u addr=%p",
-                         tag, i, t.tensor_id, t.name ? (const char*)t.name : "", (int)t.shape.type, t.shape.ndims, dims,
-                         pch, t.quant.scale, (int)t.quant.zp, t.size, t.addr);
-            }
-        };
-        dump("in", cl_input_);
-        dump("out", cl_output_);
-    }
     return ALG_OK;
 }
 
@@ -374,30 +340,6 @@ Status XmmInferer::Forward() {
         return ALG_E_NOT_INITIALIZED;
 
     xmedia_mmz_flush_cache(phy_input_, vir_input_, input_total_size_);
-
-    /* —— 一次性诊断：确认预处理真把图像写进了 NPU 输入 buffer ——
-     * 全 0 或常数 → 预处理没写进来；正常图像应是 0..255 大范围分布。
-     * 首个 Forward 是 stage1 检测器，正好对应检测输入。确认后删除。 */
-    {
-        static int dumped = 0;
-        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && dumped < 3) {
-            ++dumped;
-            const uint8_t* p = static_cast<const uint8_t*>(vir_input_);
-            int mn = 255, mx = 0;
-            unsigned long sum = 0;
-            for (xmedia_u32 i = 0; i < input_total_size_; ++i) {
-                int v = p[i];
-                if (v < mn)
-                    mn = v;
-                if (v > mx)
-                    mx = v;
-                sum += v;
-            }
-            ALG_LOGD("[in-diag] input bytes: size=%u min=%d max=%d mean=%.1f first8=%d,%d,%d,%d,%d,%d,%d,%d",
-                     input_total_size_, mn, mx, input_total_size_ ? (double)sum / input_total_size_ : 0.0, p[0], p[1],
-                     p[2], p[3], p[4], p[5], p[6], p[7]);
-        }
-    }
 
     xmedia_cl_s32 ret = xmedia_cl_graph_process(graph_);
     if (ret != XMEDIA_CL_SUCCESS) {
@@ -410,34 +352,6 @@ Status XmmInferer::Forward() {
      * 不 invalidate 会三次读到同一份没刷新的数据（== 之前三头读到同值的根因）。
      * 对齐 vendor model_process.cpp::Run 的输出 flush_cache。 */
     xmedia_mmz_flush_cache(phy_output_, vir_output_, output_total_size_);
-
-    /* —— 一次性诊断：process 后按物理顺序打印每个输出的 tid+addr+原始字节 ——
-     * 验证多输出绑定/顺序：若三块 tid 不同但字节相同 → NPU 把同一份写进了三块；
-     * 若 addr 跟 Load 时不同 → NPU 动态改了输出地址（非拷贝模式）。确认后删除。 */
-    {
-        static int dumped_out = 0;
-        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && dumped_out < 3 && cl_output_.num > 1) {
-            ++dumped_out;
-            for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
-                const xmedia_cl_tensor& t = cl_output_.tensor[i];
-                const uint8_t* b = static_cast<const uint8_t*>(t.addr);
-                ALG_LOGD("[out-diag] out[%u] tid=%u addr=%p size=%u raw8=%d,%d,%d,%d,%d,%d,%d,%d", i, t.tensor_id,
-                         t.addr, t.size, b ? b[0] : -1, b ? b[1] : -1, b ? b[2] : -1, b ? b[3] : -1, b ? b[4] : -1,
-                         b ? b[5] : -1, b ? b[6] : -1, b ? b[7] : -1);
-            }
-            /* dump out[0] 那一页开头 48 字节：若 head1/head2 的真实数据紧挨 head0
-             * 之后 → NPU 从 base 连续写（SDK 可按偏移读）；若后面是 padding/常数
-             * → NPU 只产出 head0（export 裁了另两路）。 */
-            const uint8_t* p0 = static_cast<const uint8_t*>(cl_output_.tensor[0].addr);
-            if (p0) {
-                char hex[256];
-                int n = 0;
-                for (int k = 0; k < 48; ++k)
-                    n += snprintf(hex + n, sizeof(hex) - n, "%d,", p0[k]);
-                ALG_LOGD("[out-diag] out[0] page first48 = %s", hex);
-            }
-        }
-    }
 
     for (xmedia_cl_u32 i = 0; i < cl_output_.num; ++i) {
         output_views_[i].data = cl_output_.tensor[i].addr;

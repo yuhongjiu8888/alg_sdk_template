@@ -1,4 +1,4 @@
-#include "core/infer/aipp_scale.h"
+#include "backend/svp_acl/aipp_scale.h"
 #include <atomic>
 
 namespace alg {

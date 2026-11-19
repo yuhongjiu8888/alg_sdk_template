@@ -2,13 +2,17 @@
 #include <cerrno>
 #include <ctime>
 #include <new>
+#ifndef ALG_NO_OPENCV
 #include <opencv2/core.hpp>
+#endif
 #include <string>
 #include <vector>
 #include "backend/backend_factory.h"
 #include "core/config/config.h"
 #include "core/image_view.h"
-#include "core/infer/aipp_scale.h"
+#ifdef ALG_BACKEND_SVP_ACL
+#include "backend/svp_acl/aipp_scale.h"
+#endif
 #include "core/logger.h"
 #include "core/object.h"
 #include "core/solution/chain_solution.h"
@@ -20,8 +24,8 @@ namespace {
 struct Context {
     alg::ChainSolution solution;
     std::vector<alg::Object> objects_scratch;
-    int target_fps = 0;            /* 0 = 不限速 */
-    timespec next_start{};         /* 下一帧允许开始处理的单调时钟时间点 */
+    int target_fps = 0;    /* 0 = 不限速 */
+    timespec next_start{}; /* 下一帧允许开始处理的单调时钟时间点 */
     bool has_next_start = false;
 };
 
@@ -83,11 +87,13 @@ AlgStatus AlgCreate(AlgHandle* handle, const char* config_json_path) {
     if (!handle || !config_json_path)
         return ALG_E_INVALID_ARG;
 
-    /* 端侧 OpenCV 只处理小图（96x96、256x64、ROI）。OpenCV 的 pthread 并行
-     * 会在首帧创建线程池并做并行同步，开销往往大于收益，还会和其它线程抢 CPU。
-     * SDK 本身按串行调用设计，这里固定单线程；集成方若另有并行需求，可在
-     * AlgCreate 之后自行调用 cv::setNumThreads 恢复。 */
+        /* 端侧 OpenCV 只处理小图（96x96、256x64、ROI）。OpenCV 的 pthread 并行
+         * 会在首帧创建线程池并做并行同步，开销往往大于收益，还会和其它线程抢 CPU。
+         * SDK 本身按串行调用设计，这里固定单线程；集成方若另有并行需求，可在
+         * AlgCreate 之后自行调用 cv::setNumThreads 恢复。 */
+#ifndef ALG_NO_OPENCV
     cv::setNumThreads(1);
+#endif
 
     alg::SolutionConfig cfg;
     std::string err;
@@ -165,8 +171,10 @@ AlgStatus AlgSetTargetFps(AlgHandle handle, int fps) {
 AlgStatus AlgSetAippScaleMode(AlgAippScaleMode mode) {
     if (mode < ALG_AIPP_SCALE_AUTO || mode > ALG_AIPP_SCALE_EXTERNAL)
         return ALG_E_INVALID_ARG;
+#ifdef ALG_BACKEND_SVP_ACL
     alg::aipp_scale::set_mode(mode == ALG_AIPP_SCALE_EXTERNAL ? alg::aipp_scale::Mode::kExternal
                                                               : alg::aipp_scale::Mode::kAuto);
+#endif
     return ALG_OK;
 }
 

@@ -1,6 +1,5 @@
 #include "backend/mnn/mnn_inferer.h"
 #include <algorithm>
-#include <cstring>
 #include <vector>
 #include "core/logger.h"
 
@@ -187,14 +186,14 @@ Status MnnInferer::Forward() {
         return ALG_E_BACKEND;
     }
 
-    /* Output tensor host pointers may change after runSession (MNN may
-     * swap internal buffers). Re-collect and match by name to preserve
-     * the sorted order established in BuildViews. */
-    auto fresh = CollectOutputs(interpreter_, session_);
-    for (size_t i = 0; i < output_views_.size() && i < fresh.size(); ++i) {
-        if (output_views_[i].name == fresh[i].name) {
-            output_views_[i].data = fresh[i].data;
+    /* MNN may swap host buffers; preserve the output order resolved at load time. */
+    for (auto& view : output_views_) {
+        MNN::Tensor* tensor = interpreter_->getSessionOutput(session_, view.name.c_str());
+        if (!tensor || !tensor->host<void>()) {
+            ALG_LOGE("MNN: output '%s' is unavailable after runSession", view.name.c_str());
+            return ALG_E_BACKEND;
         }
+        view.data = tensor->host<void>();
     }
     return ALG_OK;
 }

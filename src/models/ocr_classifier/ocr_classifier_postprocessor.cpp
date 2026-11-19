@@ -3,115 +3,20 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
-#include <cstring>
 #include <limits>
 #include "core/logger.h"
+#include "core/postprocess/math_utils.h"
 
 namespace alg {
 
 namespace {
 
-inline float ReadElem(const TensorView& t, int idx) {
-    switch (t.dtype) {
-        case DataType::kF32:
-            return static_cast<const float*>(t.data)[idx];
-        case DataType::kI8: {
-            int raw = static_cast<int>(static_cast<const int8_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kU8: {
-            int raw = static_cast<int>(static_cast<const uint8_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kI16: {
-            int raw = static_cast<int>(static_cast<const int16_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kU16: {
-            int raw = static_cast<int>(static_cast<const uint16_t*>(t.data)[idx]);
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kI32: {
-            int raw = static_cast<const int32_t*>(t.data)[idx];
-            return (raw - t.quant.zero_point) * t.quant.scale;
-        }
-        case DataType::kF16: {
-            uint16_t h = static_cast<const uint16_t*>(t.data)[idx];
-            uint32_t sign = (h & 0x8000u) << 16;
-            uint32_t exp = (h & 0x7C00u) >> 10;
-            uint32_t mant = (h & 0x03FFu);
-            uint32_t f;
-            if (exp == 0) {
-                if (mant == 0) {
-                    f = sign;
-                } else {
-                    exp = 1;
-                    while ((mant & 0x0400u) == 0) {
-                        mant <<= 1;
-                        exp--;
-                    }
-                    mant &= 0x03FFu;
-                    f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-                }
-            } else if (exp == 0x1F) {
-                f = sign | 0x7F800000u | (mant << 13);
-            } else {
-                f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-            }
-            float out;
-            std::memcpy(&out, &f, sizeof(out));
-            return out;
-        }
-    }
-    return 0.0f;
-}
-
-/* 数值稳定 softmax，返回 (argmax_idx, max_prob)。base 为该位在张量内的起始元素偏移
- * （多输出头模式 base=0；单输出模式 base=p*num_chars）。 */
-void SoftmaxArgmax(const TensorView& t, int base, int n, int* arg, float* max_prob) {
-    float m = ReadElem(t, base);
-    for (int i = 1; i < n; ++i) {
-        float v = ReadElem(t, base + i);
-        if (v > m)
-            m = v;
-    }
-    float sum = 0.f;
-    int best = 0;
-    float best_logit = ReadElem(t, base);
-    for (int i = 0; i < n; ++i) {
-        float v = ReadElem(t, base + i);
-        sum += std::exp(v - m);
-        if (v > best_logit) {
-            best_logit = v;
-            best = i;
-        }
-    }
-    *arg = best;
-    *max_prob = std::exp(best_logit - m) / sum;
-}
-
 /* 门控向量 softmax：返回 argmax、P(限速)、P(禁停)。base=门控在张量内的起始偏移。 */
 void GateProbs(
     const TensorView& t, int base, int n, int speed_idx, int nopark_idx, int* arg, float* p_speed, float* p_nopark) {
-    float m = ReadElem(t, base);
-    for (int i = 1; i < n; ++i) {
-        float v = ReadElem(t, base + i);
-        if (v > m)
-            m = v;
-    }
-    float sum = 0.f;
-    int best = 0;
-    float best_logit = ReadElem(t, base);
-    for (int i = 0; i < n; ++i) {
-        float v = ReadElem(t, base + i);
-        sum += std::exp(v - m);
-        if (v > best_logit) {
-            best_logit = v;
-            best = i;
-        }
-    }
+    float m;
+    const float sum = SoftmaxSum([&](int i) { return ReadElem(t, base + i); }, n, arg, &m);
     const float inv = 1.0f / (sum + 1e-9f);
-    *arg = best;
     *p_speed = std::exp(ReadElem(t, base + speed_idx) - m) * inv;
     *p_nopark = std::exp(ReadElem(t, base + nopark_idx) - m) * inv;
 }
@@ -323,50 +228,6 @@ Status OcrClassifierPostprocessor::Apply(const IInferer& inferer,
         return ALG_E_INVALID_ARG;
     out->clear();
 
-    /* 逐位 softmax+argmax，装配扁平索引，min-prob 作联合置信度。 */
-    long flat = 0;
-    float min_prob = std::numeric_limits<float>::max();
-    int dbg_arg[8] = {0};
-    float dbg_prob[8] = {0};
-    for (int p = 0; p < num_positions_; ++p) {
-        int arg = 0;
-        float prob = 0.f;
-        /* 单输出：同一张量内偏移 p*num_chars；多头：各自张量偏移 0。 */
-        const int base = single_output_ ? p * num_chars_ : 0;
-        SoftmaxArgmax(inferer.OutputView(resolved_head_idx_[p]), base, num_chars_, &arg, &prob);
-        flat = flat * num_chars_ + arg;
-        min_prob = std::min(min_prob, prob);
-        if (p < 8) {
-            dbg_arg[p] = arg;
-            dbg_prob[p] = prob;
-        }
-    }
-
-    int cls_id = decode_lut_[static_cast<size_t>(flat)];
-
-    /* —— 一次性诊断（前若干个 ROI）：看 stage2 到底解出了什么、为何丢弃 ——
-     * 关注：三头 argmax 是否合理(百位∈{1,blank=10}、个位应=0)、min_prob 是否过阈、
-     * cls_id 是否 -1(非法组合，多半是三头顺序错位)。确认后删除。 */
-    {
-        static int dbg_n = 0;
-        if (ALG_LOG_IS_ENABLED(alg::log::Level::Debug) && dbg_n < 8) {
-            ++dbg_n;
-            const TensorView& h0 = inferer.OutputView(resolved_head_idx_[0]);
-            const TensorView& h1 = inferer.OutputView(resolved_head_idx_[1]);
-            const TensorView& h2 = inferer.OutputView(resolved_head_idx_[2]);
-            ALG_LOGD("[cls-diag] idx=[%d,%d,%d] arg=[%d,%d,%d] prob=[%.3f,%.3f,%.3f] "
-                     "min_prob=%.3f thr=%.2f cls_id=%d name='%s' | "
-                     "addr h0=%p h1=%p h2=%p | "
-                     "h0.raw=[%.2f,%.2f,%.2f,%.2f] h1.raw=[%.2f,%.2f,%.2f,%.2f] h2.raw=[%.2f,%.2f,%.2f,%.2f]",
-                     resolved_head_idx_[0], resolved_head_idx_[1], resolved_head_idx_[2], dbg_arg[0], dbg_arg[1],
-                     dbg_arg[2], dbg_prob[0], dbg_prob[1], dbg_prob[2], min_prob, conf_threshold_, cls_id,
-                     (cls_id >= 0 && cls_id < (int)class_names_.size()) ? class_names_[cls_id].c_str() : "-", h0.data,
-                     h1.data, h2.data, ReadElem(h0, 0), ReadElem(h0, 1), ReadElem(h0, 2), ReadElem(h0, 3),
-                     ReadElem(h1, 0), ReadElem(h1, 1), ReadElem(h1, 2), ReadElem(h1, 3), ReadElem(h2, 0),
-                     ReadElem(h2, 1), ReadElem(h2, 2), ReadElem(h2, 3));
-        }
-    }
-
     /* v3.5 门控 3 路分拣（对齐 infer_onnx.py / deploy_src）：
      *   argmax==no_parking → 直接产出禁停正类（category=nopark_category，跳过 OCR）；
      *   argmax==speed 且 P(限速)≥gate_thr → 走下面 OCR；
@@ -394,6 +255,21 @@ Status OcrClassifierPostprocessor::Apply(const IInferer& inferer,
         if (gate_id != gate_speed_index_ || p_speed < gate_threshold_)
             return ALG_OK; /* other / 非限速 → 拒识 */
     }
+
+    /* 逐位 softmax+argmax，装配扁平索引，min-prob 作联合置信度。 */
+    long flat = 0;
+    float min_prob = std::numeric_limits<float>::max();
+    for (int p = 0; p < num_positions_; ++p) {
+        int arg = 0;
+        float prob = 0.f;
+        /* 单输出：同一张量内偏移 p*num_chars；多头：各自张量偏移 0。 */
+        const int base = single_output_ ? p * num_chars_ : 0;
+        SoftmaxArgmax(inferer.OutputView(resolved_head_idx_[p]), base, num_chars_, &arg, &prob);
+        flat = flat * num_chars_ + arg;
+        min_prob = std::min(min_prob, prob);
+    }
+
+    int cls_id = decode_lut_[static_cast<size_t>(flat)];
 
     /* 非法字符组合（含个位非 '0'）→ 拒识；空产出 → ChainSolution drop 掉 src 框。 */
     if (cls_id < 0)

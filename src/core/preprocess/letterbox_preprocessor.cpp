@@ -332,17 +332,13 @@ Status LetterboxPreprocessor::Apply(const AlgImage& image, TensorView& input, Pr
 }
 
 Status LetterboxPreprocessor::ApplyNv12Roi(const AlgImage& image,
-                                           const AlgBox& box,
+                                           const CropGeometry& geom,
                                            const CropConfig& crop_cfg,
                                            TensorView& input,
                                            PreprocessState& state,
                                            CropTransform* xf) {
     if (!configured_ || !xf)
         return ALG_E_NOT_INITIALIZED;
-
-    CropGeometry geom;
-    if (!ComputeNv12CropGeometry(image, box, crop_cfg, &geom))
-        return ALG_E_PREPROCESS;
 
     float scale = 1.0f;
     int new_w = 0, new_h = 0, pad_left = 0, pad_top = 0;
@@ -406,10 +402,8 @@ Status LetterboxPreprocessor::ApplyNv12Roi(const AlgImage& image,
             return rs;
         const int vw = geom.ix2 - geom.ix1;
         const int vh = geom.iy2 - geom.iy1;
-        const uint8_t* src_y =
-            source.plane[0] + static_cast<size_t>(geom.iy1) * source.stride[0] + geom.ix1;
-        const uint8_t* src_uv =
-            source.plane[1] + static_cast<size_t>(geom.iy1 / 2) * source.stride[1] + geom.ix1;
+        const uint8_t* src_y = source.plane[0] + static_cast<size_t>(geom.iy1) * source.stride[0] + geom.ix1;
+        const uint8_t* src_uv = source.plane[1] + static_cast<size_t>(geom.iy1 / 2) * source.stride[1] + geom.ix1;
         cv::Mat y_src(vh, vw, CV_8UC1, const_cast<uint8_t*>(src_y), source.stride[0]);
         cv::Mat uv_src(vh / 2, vw / 2, CV_8UC2, const_cast<uint8_t*>(src_uv), source.stride[1]);
 
@@ -450,8 +444,6 @@ Status LetterboxPreprocessor::ApplyNv12Roi(const AlgImage& image,
     state.original_height = geom.crop_h;
     xf->offset_x = geom.offset_x;
     xf->offset_y = geom.offset_y;
-    xf->crop_w = geom.crop_w;
-    xf->crop_h = geom.crop_h;
     return ALG_OK;
 }
 

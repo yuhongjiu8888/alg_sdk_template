@@ -36,7 +36,7 @@ flowchart TD
 | 业务编排 | `src/core/solution/` | 顺序执行阶段、ROI 裁剪、结果写回与过滤 |
 | 模型实例 | `src/core/instance/` | 组合单模型的前处理、推理和后处理 |
 | 前处理 | `src/core/preprocess/` | 颜色转换、缩放、填充、归一化和张量写入 |
-| 后端适配 | `src/backend/` | 封装 XMM、SVP ACL、MNN；保留 RK 桩实现 |
+| 后端适配 | `src/backend/` | 封装 XMM、SVP ACL、EZ、MNN |
 | 后处理与注册 | `src/models/`、`src/core/registry/` | 按模型类型解析输出并创建处理器 |
 | 公共结果转换 | `src/core/object.cpp` | 将内部对象映射为强类型数组 |
 | 日志 | `src/core/log/` | 日志级别、异步输出与文件管理 |
@@ -100,12 +100,20 @@ BGR、RGB 和 GRAY 使用图像行跨度。NV12/NV21 支持连续缓冲，也支
 
 检测框先从网络坐标恢复到本次模型输入图像的坐标；模型输入若来自裁剪，编排层再恢复到原帧坐标。分类结果写回时保留上游检测框，采用分类分和业务属性更新对象。
 
+模型后处理复用以下公共工具，新增模型时应优先使用这些实现：
+
+- `core/tensor_utils.h`：`HalfToFloat`、按物理元素下标读取的 `ReadElem` 和按字节地址读取的 `ReadElemAt`，支持浮点解码及整型反量化。调用方负责缓冲边界和行跨度；两种读取入口保留各自原有的 I32 舍入顺序。
+- `core/postprocess/math_utils.h`：`Sigmoid`、带边界容差的 `LogitThreshold`、支持起始偏移的稳定 `SoftmaxArgmax`。
+- `core/postprocess/box_transform.h`：`DetectionBoxTransform` 每帧缓存反缩放系数，统一检测框反映射、取整和裁边，支持独立的横纵缩放比例。
+- `core/postprocess/nms.h`：检测候选框及通用 NMS。
+
+公共工具可独立测试，无需芯片 SDK、模型和 OpenCV：`cmake -S test -B build_unit -DCMAKE_BUILD_TYPE=Debug`、`cmake --build build_unit`、`ctest --test-dir build_unit --output-on-failure`。
+
 | 注册名 | 用途 |
 |--------|------|
 | `yolox_det` | 多尺度 YOLOX 检测，保留红绿灯内部流程 |
 | `yolov5_anchor_det` | SpeedSignNet 单尺度锚框检测，分数为 `sigmoid(obj) × softmax(cls)` |
 | `ocr_classifier` | 逐位 OCR、门控分类及数字组合过滤 |
-| `dualhead_classifier` | 双头分类模型兼容处理 |
 | `rtmdet_det` | RTMDet 车牌检测 |
 | `lprnet_rec` | LPRNet CTC 车牌识别 |
 

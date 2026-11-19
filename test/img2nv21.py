@@ -23,7 +23,6 @@ loop_runner 逐张跑、记录每张 LP 分数对比即可。
   并生成 <out>/nv21_file_list.txt 便于拷板后逐个跑。
 """
 import argparse
-import os
 import sys
 from pathlib import Path
 

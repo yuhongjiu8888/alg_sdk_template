@@ -1,0 +1,93 @@
+{
+  "solution": {
+    "type": "chain",
+    "stages": [
+      {
+        "name": "detector",
+        "model": "det_cfg",
+        "input": "image",
+        "produces": "objects"
+      },
+      {
+        "name": "recognizer",
+        "model": "rec_cfg",
+        "input": "objects_from:detector",
+        "crop": {
+          "expand_ratio": 1.0,
+          "square": false
+        },
+        "score_threshold": 0.7,
+        "produces": "classify_into:detector"
+      }
+    ]
+  },
+  "models": {
+    "det_cfg": {
+      "model_path": "../resources/model/ez/license_detection.ezb",
+      "preprocess": {
+        "input_size": [
+          640,
+          448
+        ],
+        "engine": "hardware",
+        "input_format": "NV21",
+        "max_input_size": [
+          1920,
+          1080
+        ],
+        "color": "BGR",
+        "resize": "letterbox_tl_fit",
+        "layout": "NCHW",
+        "pad_value": 114
+      },
+      "postprocess": {
+        "type": "rtmdet_det",
+        "num_classes": 1,
+        "bbox_channels": 4,
+        "strides": [
+          8,
+          16,
+          32
+        ],
+        "input_size": [
+          640,
+          448
+        ],
+        "conf_threshold": 0.6,
+        "nms_threshold": 0.45,
+        "min_bbox_size": 4.0,
+        "max_det": 2
+      }
+    },
+    "rec_cfg": {
+      "model_path": "../resources/model/ez/license_recognizer.ezb",
+      "preprocess": {
+        "input_size": [
+          256,
+          64
+        ],
+        "engine": "hardware",
+        "color": "BGR",
+        "resize": "letterbox_center",
+        "layout": "NCHW",
+        "pad_value": 0,
+        "input_format": "NV21",
+        "max_input_size": [
+          1920,
+          1080
+        ]
+      },
+      "postprocess": {
+        "type": "lprnet_rec",
+        "category": "license_plate",
+        "characters": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "blank_index": 36,
+        "timesteps": 32,
+        "channels": 37,
+        "conf_threshold": 0.5,
+        "min_text_length": 7,
+        "max_text_length": 7
+      }
+    }
+  }
+}

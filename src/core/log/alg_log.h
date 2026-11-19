@@ -121,7 +121,7 @@ ALG_LOG_API void set_level(Level lvl);
 // 热路径轻量判断：只做一次原子读取，不会触发日志模块初始化。
 ALG_LOG_API bool is_enabled(Level lvl);
 
-// 强制把队列里残留的日志刷到各 sink。
+// 等待调用前已入队的日志完成输出，并刷到各 sink。
 ALG_LOG_API void flush();
 
 // printf 风格入口（ALG_LOG* 宏最终调到这里）。fmt 必须是字面量以便编译器做格式校验。

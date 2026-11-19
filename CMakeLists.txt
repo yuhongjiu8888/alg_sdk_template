@@ -10,13 +10,13 @@ project(alg_sdk LANGUAGES C CXX)
 # Adding a new model = drop in src/models/<model>/ + ModelFactory picks it up.
 #
 option(LINUX_AARCH64 "Build for aarch64 Linux (cross-compile)" OFF)
+option(LINUX_ARM     "Build for 32-bit ARM Linux (EZ826/JC371)" OFF)
 option(LINUX_X86_64  "Build for x86_64 Linux (host, local MNN test)" OFF)
 
 # -----------------------------------------------------------------------------
 # 后端选择。海思 SVP ACL 有两个芯片变体，由 backend 名字区分：
 #   svp_acl_cv610 : Hi3516CV610，32 位 arm-musleabi
 #   svp_acl_dv500 : Hi3519DV500，aarch64
-# 老写法 svp_acl 仍可用，等价于 svp_acl_cv610。
 #
 # 由它派生两个内部变量，后续平台配置只用这两个，不再比较 backend 字面量：
 #   ALG_SVP_BACKEND : 是否海思 SVP ACL（决定 ACL 头文件、link group 等共性）
@@ -24,7 +24,7 @@ option(LINUX_X86_64  "Build for x86_64 Linux (host, local MNN test)" OFF)
 # -----------------------------------------------------------------------------
 if(NOT DEFINED ALG_BACKEND)
     set(ALG_BACKEND "xmm" CACHE STRING
-        "Inference backend: xmm | svp_acl_cv610 | svp_acl_dv500 | rk | mnn")
+        "Inference backend: xmm | svp_acl_cv610 | svp_acl_dv500 | ez | mnn")
 endif()
 set(ALG_SVP_BACKEND FALSE)
 set(ALG_SVP_CHIP "")
@@ -32,7 +32,7 @@ if(ALG_BACKEND MATCHES "^svp_acl")
     set(ALG_SVP_BACKEND TRUE)
     if(ALG_BACKEND STREQUAL "svp_acl_dv500")
         set(ALG_SVP_CHIP "dv500")
-    elseif(ALG_BACKEND STREQUAL "svp_acl_cv610" OR ALG_BACKEND STREQUAL "svp_acl")
+    elseif(ALG_BACKEND STREQUAL "svp_acl_cv610")
         set(ALG_SVP_CHIP "cv610")
     else()
         message(FATAL_ERROR
@@ -47,25 +47,27 @@ endif()
 #   cmake .. -DALG_LOG_INFO=ON    # 默认 Info
 option(ALG_LOG_INFO  "Use Info as the default runtime log level"  OFF)
 option(ALG_LOG_DEBUG "Use Debug as the default runtime log level" OFF)
-# 海思前处理开关，默认值按芯片能力取（仍可用 -D 显式覆盖）：
-#   DV500 未随 acllib 发布 SVP/IVE（无 ss_mpi_ive.h、libss_mpi_ive.a），
-#   因此默认关闭 IVE，只保留连续 NV12/NV21 的 AIPP 零拷贝路径；
-#   分平面/无物理地址的输入仍由 libyuv 合并（third_party/libyuv/3519dv500）。
-if(ALG_SVP_CHIP STREQUAL "dv500")
-    set(_svp_aipp_default  ON)
-    set(_svp_ive_default   OFF)
-    set(_svp_libyuv_default ON)
-else()
-    set(_svp_aipp_default  ON)
-    set(_svp_ive_default   ON)
-    set(_svp_libyuv_default ON)
+if(ALG_SVP_BACKEND)
+    # 海思前处理开关，默认值按芯片能力取（仍可用 -D 显式覆盖）：
+    #   DV500 未随 acllib 发布 SVP/IVE（无 ss_mpi_ive.h、libss_mpi_ive.a），
+    #   因此默认关闭 IVE，只保留连续 NV12/NV21 的 AIPP 零拷贝路径；
+    #   分平面/无物理地址的输入仍由 libyuv 合并（third_party/libyuv/3519dv500）。
+    if(ALG_SVP_CHIP STREQUAL "dv500")
+        set(_svp_aipp_default  ON)
+        set(_svp_ive_default   OFF)
+        set(_svp_libyuv_default ON)
+    else()
+        set(_svp_aipp_default  ON)
+        set(_svp_ive_default   ON)
+        set(_svp_libyuv_default ON)
+    endif()
+    option(ALG_SVP_DYNAMIC_AIPP "Enable HiSilicon dynamic AIPP integration" ${_svp_aipp_default})
+    option(ALG_SVP_IVE_PREPROCESS
+           "Use HiSilicon IVE resize for split-plane physical YUV input" ${_svp_ive_default})
+    option(ALG_SVP_LIBYUV_FALLBACK
+           "Use libyuv to merge split-plane input into AIPP staging (no physical address)"
+           ${_svp_libyuv_default})
 endif()
-option(ALG_SVP_DYNAMIC_AIPP "Enable HiSilicon dynamic AIPP integration" ${_svp_aipp_default})
-option(ALG_SVP_IVE_PREPROCESS
-       "Use HiSilicon IVE resize for split-plane physical YUV input" ${_svp_ive_default})
-option(ALG_SVP_LIBYUV_FALLBACK
-       "Use libyuv to merge split-plane input into AIPP staging (no physical address)"
-       ${_svp_libyuv_default})
 if(ALG_LOG_INFO)
     add_compile_definitions(ALG_ENABLE_LOG_INFO)
     message(STATUS "Default runtime log level: Info")
@@ -107,7 +109,7 @@ if(ALG_SVP_BACKEND)
                    "libyuv_fallback=${ALG_SVP_LIBYUV_FALLBACK})")
 endif()
 if(ALG_SVP_BACKEND)
-    add_compile_definitions(ALG_SVP_CHIP="${ALG_SVP_CHIP}")
+    add_compile_definitions(ALG_BACKEND_SVP_ACL=1 ALG_SVP_CHIP="${ALG_SVP_CHIP}")
     if(ALG_SVP_CHIP STREQUAL "dv500")
         # 数值宏，供 C++ 做条件编译（ALG_SVP_CHIP 是字符串，不方便 #ifdef）。
         add_compile_definitions(ALG_SVP_CHIP_DV500=1)
@@ -123,12 +125,20 @@ if(ALG_SVP_BACKEND)
     endif()
 endif()
 
-if(LINUX_AARCH64)
+if(ALG_BACKEND STREQUAL "ez")
+    if(NOT LINUX_ARM OR LINUX_AARCH64 OR LINUX_X86_64)
+        message(FATAL_ERROR "EZ826/JC371 requires -DLINUX_ARM=ON with the 32-bit ARM toolchain")
+    endif()
+    message(STATUS "Loading EZ826/JC371 ARM Linux configuration")
+    include(cmake/CMakeLists_linux_ez.cmake)
+elseif(LINUX_ARM)
+    message(FATAL_ERROR "LINUX_ARM currently supports ALG_BACKEND=ez only")
+elseif(LINUX_AARCH64)
     message(STATUS "Loading Linux aarch64 configuration")
     include(cmake/CMakeLists_linux_aarch64.cmake)
 elseif(LINUX_X86_64)
     message(STATUS "Loading Linux x86_64 configuration")
     include(cmake/CMakeLists_linux_x86_64.cmake)
 else()
-    message(FATAL_ERROR "No platform selected. Pass -DLINUX_AARCH64=ON or -DLINUX_X86_64=ON.")
+    message(FATAL_ERROR "No platform selected. Pass -DLINUX_ARM=ON, -DLINUX_AARCH64=ON or -DLINUX_X86_64=ON.")
 endif()

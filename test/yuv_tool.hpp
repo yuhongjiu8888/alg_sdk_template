@@ -1,5 +1,4 @@
-#include <cstring>
-#include <iostream>
+#include <cstddef>
 
 /**
  * @brief 高性能 YUV420SP (NV12/NV21) 纯软跨步长下采样接口
@@ -10,15 +9,13 @@
  * @param pDst        输出模型尺寸图像的内存指针（需提前分配好空间）
  * @param dstWidth    目标图像宽度 (如 640)
  * @param dstHeight   目标图像高度 (如 360)
- * @param isNV21      如果是 NV21 传 true，如果是 NV12 传 false (仅影响 UV 顺序，不影响速度)
  */
 inline void FastYuv420spResize(const unsigned char* pSrc,
                                int srcWidth,
                                int srcHeight,
                                unsigned char* pDst,
                                int dstWidth,
-                               int dstHeight,
-                               bool isNV21 = false) {
+                               int dstHeight) {
     // 1. 计算缩放步长 (Stride)
     float scaleX = (float)srcWidth / dstWidth;
     float scaleY = (float)srcHeight / dstHeight;
@@ -86,7 +83,7 @@ inline void FastYuv420spResize(const unsigned char* pSrc,
  * 最近邻在 3 倍下采样时每 9 个像素只保留 1 个，车牌这类细笔画会被抽稀掉，
  * 导致识别置信度掉到阈值以下；区域平均不会有这个问题。
  *
- * 参数含义与 FastYuv420spResize 一致（isNV21 只影响 UV 顺序）。
+ * 参数含义与 FastYuv420spResize 一致，UV 对保持原顺序。
  * 内层用整数累加，无浮点运算；3 倍下采样时每目标像素 3 次加法（UV 为 9 次）。
  */
 inline void FastYuv420spResizeBox(const unsigned char* pSrc,
@@ -94,9 +91,7 @@ inline void FastYuv420spResizeBox(const unsigned char* pSrc,
                                   int srcHeight,
                                   unsigned char* pDst,
                                   int dstWidth,
-                                  int dstHeight,
-                                  bool isNV21 = false) {
-    (void)isNV21;
+                                  int dstHeight) {
     const float scaleX = (float)srcWidth / dstWidth;
     const float scaleY = (float)srcHeight / dstHeight;
 
