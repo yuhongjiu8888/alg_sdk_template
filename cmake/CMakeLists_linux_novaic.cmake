@@ -4,7 +4,8 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4 OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
     message(FATAL_ERROR "NT98332 requires the 32-bit ARM hard-float toolchain")
 endif()
 
-set(_nt98332 "${CMAKE_SOURCE_DIR}/third_party/NT98332")
+# set(_nt98332 "${CMAKE_SOURCE_DIR}/third_party/NT98332")
+set(_nt98332 "/home/yuwei/alg_sdk/chip_sdk/NT98332")
 add_library(alg_sdk SHARED
     src/backend/novaic/novaic_backend.cpp
     src/backend/novaic/novaic_inferer.cpp

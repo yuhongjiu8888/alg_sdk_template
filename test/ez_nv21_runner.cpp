@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    AlgSetLogLevel(ALG_LOG_INFO);
+    AlgSetLogLevel(ALG_LOG_WARN);
     AlgHandle handle = nullptr;
     AlgStatus status = AlgCreate(&handle, argv[1]);
     if (status != ALG_OK) {
