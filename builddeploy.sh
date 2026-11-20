@@ -6,6 +6,7 @@
 #   ./builddeploy.sh aarch64 xmm                        # 仅编译打包 aarch64-xmm
 #   ./builddeploy.sh aarch64 svp_acl_cv610              # 仅编译打包 Hi3516CV610
 #   ./builddeploy.sh aarch64 svp_acl_dv500              # 仅编译打包 Hi3519DV500
+#   ./builddeploy.sh arm novaic                         # 仅编译打包 NT98332
 #   ./builddeploy.sh arm ez                            # 仅编译打包 EZ826/JC371
 #   ./builddeploy.sh x86_64 mnn                         # 仅编译打包 x86_64-mnn
 #
@@ -150,6 +151,9 @@ function package_artifacts() {
             fi
             cp -L "${ez_runtime_lib}" "${pkg_dir}/lib/"
         done < "${ez_runtime_manifest}"
+    elif [[ "$backend" == "novaic" ]]; then
+        mkdir -p "${pkg_dir}/lib"
+        cp -a third_party/NT98332/lib/. "${pkg_dir}/lib/"
     fi
 
     # ---- 模型目录原样拷贝（不查找、筛选或校验模型配对）----

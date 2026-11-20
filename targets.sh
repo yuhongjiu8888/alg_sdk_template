@@ -16,6 +16,7 @@ alg_toolchain_file() {
     case "$1" in
         svp_acl_cv610) echo "./toolchain/hisi_v610_linux.toolchain.cmake" ;;
         svp_acl_dv500) echo "./toolchain/hisi_d500_linux.toolchain.cmake" ;;
+        novaic)        echo "./toolchain/novaic_linux.toolchain.cmake" ;;
         ez)            echo "./toolchain/ez_linux.toolchain.cmake" ;;
         *)             echo "./toolchain/sgk_linux.toolchain.cmake" ;;
     esac

@@ -79,6 +79,7 @@ struct PreprocessState {
     int pad_top = 0;
     int original_width = 0;
     int original_height = 0;
+    bool skip_roi = false;  /* ROI exceeds hardware scaler limits. */
 
 #ifdef ALG_BACKEND_SVP_ACL
     /* 仅在 Info 日志开启且使用海思动态 AIPP 时填写，用于板端拆分前处理耗时。 */
