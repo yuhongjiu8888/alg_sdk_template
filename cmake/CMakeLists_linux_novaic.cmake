@@ -7,6 +7,7 @@ endif()
 set(_nt98332 "${CMAKE_SOURCE_DIR}/third_party/NT98332")
 add_library(alg_sdk SHARED
     src/backend/novaic/novaic_backend.cpp
+    src/backend/novaic/novaic_inferer.cpp
     src/core/config/config.cpp
     src/core/instance/model_instance.cpp
     src/core/log/alg_log.cpp

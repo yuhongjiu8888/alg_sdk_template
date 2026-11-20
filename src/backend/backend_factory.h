@@ -12,7 +12,7 @@
 namespace alg {
 
 /* Implemented in src/backend/<chip>/<chip>_backend.cpp. CMake links exactly one. */
-std::unique_ptr<IInferer> MakeInferer(const PreprocessConfig& cfg);
+std::unique_ptr<IInferer> MakeInferer();
 const char* BackendName();
 
 }  // namespace alg

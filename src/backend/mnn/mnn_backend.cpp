@@ -3,7 +3,7 @@
 
 namespace alg {
 
-std::unique_ptr<IInferer> MakeInferer(const PreprocessConfig&) {
+std::unique_ptr<IInferer> MakeInferer() {
     return std::unique_ptr<IInferer>(new MnnInferer());
 }
 const char* BackendName() {

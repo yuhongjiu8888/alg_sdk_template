@@ -30,7 +30,7 @@ ModelInstance::~ModelInstance() = default;
 Status ModelInstance::Init(const ModelInstanceConfig& cfg) {
     cfg_ = cfg;
 
-    inferer_ = MakeInferer(cfg.pre);
+    inferer_ = MakeInferer();
     if (!inferer_)
         return ALG_E_BACKEND;
     Status s = inferer_->Load(cfg.model_path);
@@ -144,8 +144,6 @@ Status ModelInstance::RunImpl(const AlgImage& image,
     }
     if (s != ALG_OK)
         return s;
-    if (geometry && state.skip_roi)
-        return ALG_OK;
     if (profile) {
         gettimeofday(&t1, nullptr);
         c1 = ThreadCpuMs();

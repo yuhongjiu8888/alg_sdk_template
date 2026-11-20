@@ -51,7 +51,6 @@ struct SharedInputStaging {
     int source_data_len[2] = {};
     bool source_uses_separate_planes = false;
 
-    AlgPixelFormat staged_format = ALG_PIX_BGR;
     int staged_width = 0;
     int staged_height = 0;
 
@@ -60,7 +59,7 @@ struct SharedInputStaging {
     size_t data_size = 0;
     size_t row_stride = 0;
     bool flushed = false;
-    /* Hardware image staging; zero for backends without physical device buffers. */
+    /* EZ image-engine staging; zero for backends without physical device buffers. */
     uint64_t device_phys_addr = 0;
 
     /* DV500 CPU 预缩放的 1/2 折半中间帧（如 1080p 的 960x540）。第一个全图
