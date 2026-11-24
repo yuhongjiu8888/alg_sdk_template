@@ -1,0 +1,93 @@
+{
+  "solution": {
+    "type": "chain",
+    "stages": [
+      {
+        "name": "license_det",
+        "model": "license_det_cfg",
+        "input": "image",
+        "produces": "objects"
+      },
+      {
+        "name": "license_rec",
+        "model": "license_rec_cfg",
+        "input": "objects_from:license_det",
+        "crop": {
+          "expand_ratio": 1.0,
+          "square": false
+        },
+        "score_threshold": 0.5,
+        "produces": "classify_into:license_det"
+      }
+    ]
+  },
+  "models": {
+    "license_det_cfg": {
+      "model_path": "resources/model/novaic/license_detection.bin",
+      "preprocess": {
+        "input_size": [
+          640,
+          448
+        ],
+        "engine": "hardware",
+        "input_format": "auto",
+        "color": "RGB",
+        "resize": "letterbox_tl_fit",
+        "layout": "NCHW",
+        "pad_value": 114,
+        "max_input_size": [
+          4096,
+          4096
+        ]
+      },
+      "postprocess": {
+        "type": "rtmdet_det",
+        "num_classes": 1,
+        "bbox_channels": 4,
+        "strides": [
+          8,
+          16,
+          32
+        ],
+        "input_size": [
+          640,
+          448
+        ],
+        "conf_threshold": 0.25,
+        "nms_threshold": 0.45,
+        "min_bbox_size": 4.0,
+        "max_det": 2
+      }
+    },
+    "license_rec_cfg": {
+      "model_path": "resources/model/novaic/license_recognizer.bin",
+      "preprocess": {
+        "input_size": [
+          256,
+          64
+        ],
+        "engine": "hardware",
+        "color": "RGB",
+        "resize": "letterbox_center",
+        "layout": "NCHW",
+        "pad_value": 0,
+        "input_format": "auto",
+        "max_input_size": [
+          4096,
+          4096
+        ]
+      },
+      "postprocess": {
+        "type": "lprnet_rec",
+        "category": "license_plate",
+        "characters": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "blank_index": 36,
+        "timesteps": 32,
+        "channels": 37,
+        "conf_threshold": 0.5,
+        "min_text_length": 7,
+        "max_text_length": 7
+      }
+    }
+  }
+}

@@ -10,7 +10,7 @@ project(alg_sdk LANGUAGES C CXX)
 # Adding a new model = drop in src/models/<model>/ + ModelFactory picks it up.
 #
 option(LINUX_AARCH64 "Build for aarch64 Linux (cross-compile)" OFF)
-option(LINUX_ARM     "Build for 32-bit ARM Linux (EZ826/JC371)" OFF)
+option(LINUX_ARM     "Build for 32-bit ARM Linux (EZ826/JC371, NT98332)" OFF)
 option(LINUX_X86_64  "Build for x86_64 Linux (host, local MNN test)" OFF)
 
 # -----------------------------------------------------------------------------
@@ -24,7 +24,7 @@ option(LINUX_X86_64  "Build for x86_64 Linux (host, local MNN test)" OFF)
 # -----------------------------------------------------------------------------
 if(NOT DEFINED ALG_BACKEND)
     set(ALG_BACKEND "xmm" CACHE STRING
-        "Inference backend: xmm | svp_acl_cv610 | svp_acl_dv500 | ez | mnn")
+        "Inference backend: xmm | svp_acl_cv610 | svp_acl_dv500 | ez | novaic | mnn")
 endif()
 set(ALG_SVP_BACKEND FALSE)
 set(ALG_SVP_CHIP "")
@@ -125,14 +125,14 @@ if(ALG_SVP_BACKEND)
     endif()
 endif()
 
-if(ALG_BACKEND STREQUAL "ez")
+if(ALG_BACKEND STREQUAL "ez" OR ALG_BACKEND STREQUAL "novaic")
     if(NOT LINUX_ARM OR LINUX_AARCH64 OR LINUX_X86_64)
-        message(FATAL_ERROR "EZ826/JC371 requires -DLINUX_ARM=ON with the 32-bit ARM toolchain")
+        message(FATAL_ERROR "${ALG_BACKEND} requires -DLINUX_ARM=ON with the 32-bit ARM toolchain")
     endif()
-    message(STATUS "Loading EZ826/JC371 ARM Linux configuration")
-    include(cmake/CMakeLists_linux_ez.cmake)
+    message(STATUS "Loading ${ALG_BACKEND} ARM Linux configuration")
+    include(cmake/CMakeLists_linux_${ALG_BACKEND}.cmake)
 elseif(LINUX_ARM)
-    message(FATAL_ERROR "LINUX_ARM currently supports ALG_BACKEND=ez only")
+    message(FATAL_ERROR "LINUX_ARM currently supports ALG_BACKEND=ez or novaic")
 elseif(LINUX_AARCH64)
     message(STATUS "Loading Linux aarch64 configuration")
     include(cmake/CMakeLists_linux_aarch64.cmake)

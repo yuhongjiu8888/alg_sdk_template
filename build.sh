@@ -5,6 +5,7 @@
 #   ./build.sh linux aarch64 xmm           # XMM chip on aarch64 Linux (cross-compile)
 #   ./build.sh linux aarch64 svp_acl_cv610 # HiSilicon Hi3516CV610 (32-bit arm-musleabi)
 #   ./build.sh linux aarch64 svp_acl_dv500 # HiSilicon Hi3519DV500 (aarch64)
+#   ./build.sh linux arm novaic            # Novatek NT98332 (32-bit ARM)
 #   ./build.sh linux arm ez               # EEasyTech EZ826/JC371 (32-bit ARM)
 #   ./build.sh linux x86_64 mnn            # MNN backend for local x86_64 CPU inference
 #
@@ -24,7 +25,7 @@ show_usage() {
 Usage: $0 <platform> <arch> <backend>
   platform = linux
   arch     = arm | aarch64 | x86_64
-  backend  = ez (arm) | xmm | svp_acl_cv610 | svp_acl_dv500 (aarch64) | mnn (x86_64)
+  backend  = ez | novaic (arm) | xmm | svp_acl_cv610 | svp_acl_dv500 (aarch64) | mnn (x86_64)
 
 Configure SDK paths in the corresponding cmake/CMakeLists_linux_*.cmake
 and compiler paths in toolchain/*.toolchain.cmake before building.
@@ -41,7 +42,7 @@ arch=$2
 backend=$3
 
 case "${platform}-${arch}-${backend}" in
-    linux-arm-ez|linux-aarch64-xmm|linux-aarch64-svp_acl_cv610|linux-aarch64-svp_acl_dv500|linux-x86_64-mnn) ;;
+    linux-arm-novaic|linux-arm-ez|linux-aarch64-xmm|linux-aarch64-svp_acl_cv610|linux-aarch64-svp_acl_dv500|linux-x86_64-mnn) ;;
     *) echo "Unsupported platform-arch-backend: ${platform}-${arch}-${backend}" >&2; show_usage ;;
 esac
 

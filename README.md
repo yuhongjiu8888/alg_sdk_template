@@ -21,7 +21,12 @@ alg_sdk 是面向车载及嵌入式设备的视觉推理 SDK，负责将检测�
 | `svp_acl_cv610` | 海思 Hi3516CV610（32 位 arm-musleabi） | `.om` | 提供模型加载、推理及辅助缓冲管理实现 |
 | `svp_acl_dv500` | 海思 Hi3519DV500（aarch64） | `.om` | 同上；无 IVE，且 **AIPP 不可做大图缩放**（见下） |
 | `ez` | 亿智 EZ826 / JC371（32 位 arm-linux-gnueabihf） | `.ezb` + `.bin` / `.eezb` | NV21 / NV12 硬件裁剪、缩放与推理；无 OpenCV 依赖，业务模型需另行转换 |
+| `novaic` | 联咏 NT98332（32 位 ARM hard-float） | `.bin` | GFX 对 NV12 / NV21 整帧和 ROI 裁剪缩放，AI2 执行限速牌与车牌检测识别 |
 | `mnn` | x86_64 / MNN | `.mnn` | 提供本地推理实现 |
+
+宿主机准备好 CMake 和 GNU Make 后，联咏构建打包命令为 `./builddeploy.sh arm novaic`。交叉编译器路径在 `toolchain/novaic_linux.toolchain.cmake`，配套厂商库在 `third_party/NT98332`。随包的 `libstdc++.so.6` 引用了 `hypot@GLIBC_2.35`，板端需提供 glibc 2.35 或更高版本。
+
+在联咏板端测试包根目录运行 `LD_LIBRARY_PATH=./lib ./test_runner resources/config/novaic/all.json frame.nv21 1920 1080`，宽高按实际帧填写。也可选择同目录的 `speed_limit.json` 或 `license_plate.json`。
 
 两个海思变体运行时的 `AlgBackendName()` 都返回 `svp_acl`，靠包名和资源目录区分。
 
@@ -47,7 +52,7 @@ src/
     log/                  日志输出与文件管理
     tensor.h              跨后端张量描述
     object.h / object.cpp 内部对象及公共结果转换
-  backend/                XMM、SVP ACL、EZ 和 MNN 适配
+  backend/                XMM、SVP ACL、EZ、联咏和 MNN 适配
   models/                 检测及识别后处理器
 cmake/                    平台构建配置
 toolchain/                交叉编译工具链
