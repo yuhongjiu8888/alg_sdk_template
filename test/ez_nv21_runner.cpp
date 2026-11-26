@@ -139,8 +139,14 @@ int main(int argc, char** argv) {
             std::printf("  sign=%s score=%.4f box=(%d,%d)-(%d,%d)\n", SignName(sign.type), sign.box.score,
                         sign.box.xmin, sign.box.ymin, sign.box.xmax, sign.box.ymax);
         }
-        for (int j = 0; j < result.license_plate_count; ++j)
-            std::printf("  plate=%s score=%.4f\n", result.license_plates[j].text, result.license_plates[j].box.score);
+        for (int j = 0; j < result.license_plate_count; ++j) {
+            const AlgLicensePlate& plate = result.license_plates[j];
+            std::printf("  plate='%s' det=%.4f box=(%d,%d)-(%d,%d) chars=", plate.text, plate.box.score, plate.box.xmin,
+                        plate.box.ymin, plate.box.xmax, plate.box.ymax);
+            for (size_t k = 0; plate.text[k] != '\0'; ++k)
+                std::printf(" %c:%.4f", plate.text[k], plate.char_scores[k]);
+            std::printf("\n");
+        }
     }
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_end);
     clock_gettime(CLOCK_MONOTONIC, &end);
