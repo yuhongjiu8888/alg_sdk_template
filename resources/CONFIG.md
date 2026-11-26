@@ -210,17 +210,11 @@ XMM 使用单输出布局，以避免特定多输出模型被划分为 NPU / CPU
 
 `rtmdet_det` 与 `lprnet_rec` 分别用于车牌检测和 CTC 识别。配套参数见 [车牌配置](config/svp_acl/cv610/license_plate.json)，包括检测阈值、NMS、字符集、时间步和 blank 索引。
 
-车牌链路提供三个相互独立的置信度阈值：
+检测阶段保留 `conf_threshold`、`min_bbox_size`、NMS 和 `max_det`。检测器设置 `category="license_plate"`，识别 stage 使用 `attributes_into:<检测stage>` 写回文本和字符分数，不改变检测分，也不计算联合分数。
 
-| 配置位置 | 参数 | 作用对象 | 默认值 |
-|----------|------|----------|--------|
-| 检测模型 `rtmdet_det.postprocess` | `conf_threshold` | 第一阶段车牌检测分 `det_score` | `0.25` |
-| 识别模型 `lprnet_rec.postprocess` | `conf_threshold` | 第二阶段文字识别分 `rec_score` | `0.5` |
-| 识别 stage（`classify_into`） | `score_threshold` | 最终联合分 `det_score × rec_score` | `0.5` |
+`lprnet_rec` 不再按识别分数、文本长度或空文本过滤。CTC greedy 解码保留每个字符时，记录该时间步的 softmax 概率；连续重复时间步合并时保留首次分数。公共结果的 `text[8]` 最多返回 7 个字符，`char_scores[7]` 与文本逐位对应，有效数量为文本长度，其余为 0；超出容量时同步截断。
 
-三个阈值分别判断，互不替代。车牌识别分为 CTC greedy 解码后保留字符概率的乘积。未解出任何字符时识别分会保持乘积初始值 `1.0`，SDK 会单独判空并丢弃该检测框，避免空文本绕过阈值；应用仍需检查业务要求的文本格式。公共字段定义见 [接口文档](../alg_sdk_api_documentation_v3.0.0.md)。
-
-`lprnet_rec` 还支持可选的文本长度过滤：`min_text_length` / `max_text_length`（默认 `0` = 不限制）。解码文本长度不在范围内时返回空，`classify_into` 会丢弃对应检测框。CTC 识别分是逐字符概率的乘积，短文本也可能得到较高分数，建议按业务车牌格式设置下限（例如普通车牌 6/7 位）；应用侧仍应做最终格式校验。
+上层业务负责车牌有效性判断和低分字符的问号替换。公共字段定义见 [接口文档](../alg_sdk_api_documentation_v3.0.0.md)。
 
 ## 完整示例
 

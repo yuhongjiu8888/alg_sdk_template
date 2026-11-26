@@ -119,8 +119,7 @@ typedef struct AlgImage_ {
  * score 含义：
  *   - 限速牌：联合置信度 = 检测置信度 × OCR 分类置信度
  *   - 停车/禁令牌：联合置信度
- *   - 车牌：联合置信度 = 检测置信度 × 识别置信度
- * 应用统一只看这一个分数即可。 */
+ *   - 车牌：检测置信度，字符识别置信度单独返回 */
 typedef struct AlgBox_ {
     int xmin, ymin, xmax, ymax;  /* 原图左上角 (xmin, ymin) 和右下角 (xmax, ymax) 坐标（像素） */
     float score;                 /* 置信度，具体含义见上方各业务说明 */
@@ -184,14 +183,14 @@ typedef struct AlgSign_ {
 /* ============================================================== */
 
 /* 单个车牌识别结果。
- *   box.score = det × rec 联合置信度（与限速牌一致，应用统一只看这一个分数）
- *   text      = 识别文本（字符集 '0'-'9','A'-'Z'，无分隔符，如 "ABC1D23"；
- *               未识别到内容的候选会在 SDK 内部丢弃）
- *   rec_score = 识别单独置信度（CTC greedy 被保留字符概率之积，排错/二次过滤用） */
+ *   box.score   = 车牌检测置信度
+ *   text        = 识别文本（字符集 '0'-'9','A'-'Z'，无分隔符，如 "ABC1D23"）
+ *   char_scores = 与 text 逐位对应的字符置信度，有效数量为文本长度，其余为 0。
+ *   识别文本为空、长度不足或字符分数低时仍返回，由上层业务过滤。 */
 typedef struct AlgLicensePlate_ {
-    AlgBox box;       /* 原图坐标系下的框，box.score = det × rec 联合置信度 */
-    char text[32];    /* 以 '\0' 结尾的车牌文本，最多存储 31 个字符 */
-    float rec_score;  /* 车牌识别单独置信度 */
+    AlgBox box;           /* 原图坐标系下的框，box.score = 检测置信度 */
+    char text[8];         /* 以 '\0' 结尾的车牌文本，超过 7 个字符时截断 */
+    float char_scores[7]; /* CTC greedy 保留字符所在时间步的 softmax 概率 */
 } AlgLicensePlate;
 
 /* 固定容量与检测阶段 max_det 保持一致；结果直接内联在 AlgResult 中，不做堆分配。 */

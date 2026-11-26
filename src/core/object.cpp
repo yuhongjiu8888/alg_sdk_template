@@ -1,5 +1,7 @@
 #include "core/object.h"
+#include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include "alg_interface.h"
 #include "core/logger.h"
@@ -64,7 +66,7 @@ void FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
             dst.value =
                 (o.value >= SLV_10 && o.value <= SLV_120) ? static_cast<AlgSpeedLimitValue>(o.value) : SLV_INVALID;
         } else if (cat->value_str == "license_plate") {
-            /* 识别文本 / 单独识别分由 lprnet_rec 后处理器以 attribute 透出。 */
+            /* 文本和字符分数同步截断，保证逐位对应。 */
             if (result->license_plate_count >= ALG_MAX_LICENSE_PLATE_RESULTS) {
                 ALG_LOGW("FillAlgResult: 车牌结果超过容量 %d，截断", ALG_MAX_LICENSE_PLATE_RESULTS);
                 continue;
@@ -75,8 +77,9 @@ void FillAlgResult(const std::vector<Object>& objs, AlgResult* result) {
             const Attribute* text = FindAttr(o.attributes, "text");
             if (text && !text->value_str.empty())
                 std::snprintf(dst.text, sizeof(dst.text), "%s", text->value_str.c_str());
-            const Attribute* rec = FindAttr(o.attributes, "rec_score");
-            dst.rec_score = rec ? rec->value_float : 0.0f;
+            const Attribute* scores = FindAttr(o.attributes, "char_scores");
+            if (scores)
+                std::copy_n(scores->value_floats.begin(), std::strlen(dst.text), dst.char_scores);
         } else {
             AlgSignType st = sign_type_of(cat->value_str);
             if (st == SIGN_INVALID) {

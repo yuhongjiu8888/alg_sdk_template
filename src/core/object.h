@@ -27,6 +27,7 @@ struct Attribute {
     int value_int = 0;
     float value_float = 0.0f;
     std::string value_str;
+    std::vector<float> value_floats;
 };
 
 /* 关键点：每个点 (x, y, visibility)。

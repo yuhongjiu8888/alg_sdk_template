@@ -117,7 +117,7 @@ AlgStatus RunImage(const char* config_path, const AlgImage* image)
 | PARE 分数 | 第一阶段检测分 |
 | 禁停分数 | 检测分乘门控概率 |
 | 限速分数 | 检测分乘 OCR 分类分 |
-| 车牌分数 | 检测分乘 `rec_score`；有效车牌还需检查文本和业务格式 |
+| 车牌分数 | `box.score` 为检测分，`char_scores[7]` 为逐字符分；有效性由上层业务判断 |
 | `frame_id` | `AlgRun` 为动态库内共享计数 |
 
 图片文件应先解码为像素再传入。JSON 的 `preprocess.color` 定义模型输入颜色顺序，`AlgImage.format` 定义源图像格式，两者不要求相同。
@@ -223,7 +223,7 @@ DV500 目标没有 IVE，且它的 AIPP 不能负责缩放（大图缩放会固�
 
 `AlgSetLogLevel` 和 `AlgSetAippScaleMode` 的全局状态读写使用原子操作。日志启动等级可由构建选项覆盖；异步模式下，修改等级前已入队的消息仍可能完成输出。Debug 日志会执行额外的张量诊断统计。构建选项和队列行为见 [日志说明](src/core/log/README.md)。
 
-`ALG_E_MODEL_NOT_FOUND` 表示所需后处理类型未注册。模型文件缺失不统一返回此码，应结合实际后端错误和加载日志定位。车牌的 `rec_score` 是 CTC 解码保留字符概率的乘积；空文本候选在识别阶段丢弃，超过公共文本容量的内容在结果转换时截断。
+`ALG_E_MODEL_NOT_FOUND` 表示所需后处理类型未注册。模型文件缺失不统一返回此码，应结合实际后端错误和加载日志定位。车牌保留原始检测分，CTC 解码返回逐字符概率；空文本也返回，文本和分数在结果转换时同步截断至最多 7 位。
 
 ### 8.3 海思动态 AIPP 内存路径
 

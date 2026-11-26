@@ -16,8 +16,7 @@
           "expand_ratio": 1.0,
           "square": false
         },
-        "score_threshold": 0.7,
-        "produces": "classify_into:detector"
+        "produces": "attributes_into:detector"
       }
     ]
   },
@@ -42,6 +41,7 @@
       },
       "postprocess": {
         "type": "rtmdet_det",
+        "category": "license_plate",
         "num_classes": 1,
         "bbox_channels": 4,
         "strides": [
@@ -83,10 +83,7 @@
         "characters": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "blank_index": 36,
         "timesteps": 32,
-        "channels": 37,
-        "conf_threshold": 0.5,
-        "min_text_length": 7,
-        "max_text_length": 7
+        "channels": 37
       }
     }
   }

@@ -153,10 +153,10 @@ BGR、RGB 和 GRAY 使用图像行跨度。NV12/NV21 支持连续缓冲，也支
 |------------|----------|----------|
 | `speed_limit` | `AlgSpeedLimit[]` | `Object.value`，有效值为 `SLV_10`～`SLV_120` |
 | `no_parking` / `pare` | `AlgSign[]` | 根据类别名称确定牌种 |
-| `license_plate` | `AlgLicensePlate[]` | `text` 与 `rec_score` 属性 |
+| `license_plate` | `AlgLicensePlate[]` | `text` 与 `char_scores` 属性 |
 | `traffic_light` | 不输出 | 保留内部检测能力 |
 
-公共 `AlgResult` 使用三个独立的强类型数组，应用无需访问内部属性或 `field_mask`。车牌文本最多输出 31 字节并以空字符结束；空文本候选由识别后处理丢弃，应用仍应另行判断业务有效性。
+公共 `AlgResult` 使用三个独立的强类型数组，应用无需访问内部属性或 `field_mask`。车牌通过 `attributes_into` 保留检测分，文本和字符分数同步截断至最多 7 位；空文本也返回，业务有效性由应用判断。
 
 ## 4. 执行流程与资源管理
 

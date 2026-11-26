@@ -283,7 +283,7 @@ typedef struct AlgBox_ {
 | 限速牌 | 检测置信度 × 数字识别置信度 |
 | 禁止停车牌 | 检测置信度 × 禁停分类置信度 |
 | PARE 停车让行牌 | 检测置信度 |
-| 车牌 | 检测置信度 × `rec_score` |
+| 车牌 | 检测置信度，字符识别分数单独返回 |
 
 ### 2.7 AlgSpeedLimitValue / AlgSpeedLimit：限速牌
 
@@ -348,18 +348,22 @@ typedef struct AlgSign_ {
 ```c
 typedef struct AlgLicensePlate_ {
     AlgBox box;
-    char text[32];
-    float rec_score;
+    char text[8];
+    float char_scores[7];
 } AlgLicensePlate;
 ```
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `box` | `AlgBox` | 原图检测框及置信度 |
-| `text` | `char[32]` | 以空字符结尾的车牌文本，最多 31 字节有效内容 |
-| `rec_score` | `float` | 单独的识别置信度 |
+| `box` | `AlgBox` | 原图检测框及原始检测置信度，不与字符分数相乘 |
+| `text` | `char[8]` | 以空字符结尾的车牌文本，最多 7 个字符，超出时截断 |
+| `char_scores` | `float[7]` | 与 `text` 逐位对应的字符分数，有效数量为文本长度，其余为 0 |
 
-车牌文本使用数字和大写英文字母，不含分隔符，例如 `ABC1D23`。调用方应按业务要求校验文本格式。
+车牌文本使用数字和大写英文字母，不含分隔符，例如 `ABC1D23`。字符分数为 CTC greedy 解码保留该字符时的时间步 softmax 概率；连续重复时间步合并时，取首次保留的分数。
+
+SDK 保留检测阈值、最小框限制、NMS 和结果容量限制；不按识别分数、文本长度或空文本丢弃车牌，也不计算联合分数。调用方按业务要求过滤结果，或将低分字符替换为 `?`。
+
+此结构体布局已变更，调用方需与 SDK 使用同一版头文件重新编译。
 
 ### 2.10 AlgResult：单帧结果
 

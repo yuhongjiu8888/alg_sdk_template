@@ -181,8 +181,11 @@ int RunOne(AlgHandle h, const std::string& image_path, const std::string& out_pa
     }
     for (int i = 0; i < r.license_plate_count; ++i) {
         const AlgLicensePlate& lp = r.license_plates[i];
-        std::printf("  LP[%d] plate='%s' score=%.3f rec=%.3f  box=(%d,%d)-(%d,%d)\n", i, lp.text, lp.box.score,
-                    lp.rec_score, lp.box.xmin, lp.box.ymin, lp.box.xmax, lp.box.ymax);
+        std::printf("  LP[%d] plate='%s' det=%.3f box=(%d,%d)-(%d,%d) chars=", i, lp.text, lp.box.score, lp.box.xmin,
+                    lp.box.ymin, lp.box.xmax, lp.box.ymax);
+        for (size_t j = 0; j < std::strlen(lp.text); ++j)
+            std::printf(" %c:%.3f", lp.text[j], lp.char_scores[j]);
+        std::printf("\n");
     }
 
     DrawResult(bgr, r);

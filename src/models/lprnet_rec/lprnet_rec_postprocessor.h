@@ -6,17 +6,13 @@
  * 内存按时间步主序 [t][c] 连续（与 license demo 的 unpack_to_float(rows=32, cols=37)
  * 读取一致）。输出通常是 FP16（INT8 量化模型 ATC 映射后 head 为 FP16 计算）。
  *
- * 解码（与 license demo 的 ctc_greedy_decode 严格一致）：
- *   逐时间步 softmax → argmax → 合并连续重复、去 blank，识别分数为被保留字符的
- *   softmax 概率之积。
+ * 解码：逐时间步 softmax → argmax → 合并连续重复、去 blank。
+ * 字符分数取保留该字符时的时间步概率，不合并后续重复时间步的分数。
  *
- * Object 输出（识别成功时）：
- *   - field_mask = ALG_FIELD_BOX | ALG_FIELD_ATTRIBUTES
- *   - box.score = rec_score（classify_into 阶段会再乘 det 作联合置信度）
- *   - attributes = [{category=category}, {text=识别文本}, {rec_score=...}]
- *   FillAlgResult 按 category=="license_plate" 分桶，读 text / rec_score 属性。
- *   空文本始终返回空；conf_threshold > 0 时识别分低于阈值也返回空
- *   （ChainSolution classify_into 触发 drop）。
+ * Object 输出：
+ *   - field_mask = ALG_FIELD_ATTRIBUTES
+ *   - attributes = [{category=category}, {text=识别文本}, {char_scores=字符分数}]
+ *   使用 attributes_into 保留检测分数；空文本、长度和字符分数由上层业务过滤。
  *
  * JSON 参数：
  *   { "type": "lprnet_rec",
@@ -24,10 +20,7 @@
  *     "characters":    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
  *     "blank_index":   36,
  *     "timesteps":     32,
- *     "channels":      37,     // 可选，默认 = characters.size() + 1
- *     "conf_threshold": 0.0,   // >0：识别分低于此值 drop；0（默认）= 不过滤（对齐 demo）
- *     "min_text_length": 0,    // >0：解码文本短于该长度则拒识（0 = 不限制）
- *     "max_text_length": 0 }   // >0：长于该长度则拒识（0 = 不限制）
+ *     "channels":      37 }   // 可选，默认 = characters.size() + 1
  */
 
 #ifndef ALG_MODELS_LPRNET_REC_LPRNET_REC_POSTPROCESSOR_H
@@ -49,9 +42,6 @@ class LprnetRecPostprocessor : public IPostprocessor {
     int blank_index_ = 36;
     int timesteps_ = 32;
     int channels_ = 37; /* 类别数（含 blank） */
-    float conf_threshold_ = 0.0f;
-    int min_text_length_ = 0; /* >0：解码文本短于该长度则拒识 */
-    int max_text_length_ = 0; /* >0：解码文本长于该长度则拒识 */
     std::string category_;
     bool configured_ = false;
 };

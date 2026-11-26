@@ -1,5 +1,4 @@
 #include "models/lprnet_rec/lprnet_rec_postprocessor.h"
-#include <cmath>
 #include "core/logger.h"
 #include "core/postprocess/math_utils.h"
 
@@ -10,16 +9,7 @@ Status LprnetRecPostprocessor::Configure(const IInferer& inferer, const Json::Va
     blank_index_ = params.get("blank_index", 36).asInt();
     timesteps_ = params.get("timesteps", 32).asInt();
     channels_ = params.get("channels", 0).asInt();
-    conf_threshold_ = params.get("conf_threshold", 0.0f).asFloat();
-    min_text_length_ = params.get("min_text_length", 0).asInt();
-    max_text_length_ = params.get("max_text_length", 0).asInt();
     category_ = params.get("category", "").asString();
-
-    if (min_text_length_ < 0 || max_text_length_ < 0 ||
-        (min_text_length_ > 0 && max_text_length_ > 0 && min_text_length_ > max_text_length_)) {
-        ALG_LOGE("lprnet_rec: min/max_text_length 非法 min=%d max=%d", min_text_length_, max_text_length_);
-        return ALG_E_POSTPROCESS;
-    }
 
     if (characters_.empty()) {
         ALG_LOGE("lprnet_rec: characters 不能为空");
@@ -51,9 +41,8 @@ Status LprnetRecPostprocessor::Configure(const IInferer& inferer, const Json::Va
         }
     }
 
-    ALG_LOGI("lprnet_rec: ready, chars=%zu timesteps=%d channels=%d blank=%d thr=%.2f len=[%d,%d] cat='%s'",
-             characters_.size(), timesteps_, channels_, blank_index_, conf_threshold_, min_text_length_,
-             max_text_length_, category_.c_str());
+    ALG_LOGI("lprnet_rec: ready, chars=%zu timesteps=%d channels=%d blank=%d cat='%s'", characters_.size(), timesteps_,
+             channels_, blank_index_, category_.c_str());
     configured_ = true;
     return ALG_OK;
 }
@@ -77,7 +66,7 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
     const size_t row_bytes = t.row_stride ? t.row_stride : channels_ * elem_bytes;
     const uint8_t* base_ptr = static_cast<const uint8_t*>(t.data);
     std::string text;
-    float score = 1.0f;
+    std::vector<float> char_scores;
     int previous = blank_index_;
     for (int ts = 0; ts < timesteps_; ++ts) {
         const uint8_t* row = base_ptr + static_cast<size_t>(ts) * row_bytes;
@@ -89,36 +78,13 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
         const float best_prob = 1.0f / (sum + 1e-9f);
         if (best != previous && best != blank_index_ && best >= 0 && best < static_cast<int>(characters_.size())) {
             text += characters_[best];
-            score *= best_prob;
+            char_scores.push_back(best_prob);
         }
         previous = best;
     }
 
-    /* 未解出任何字符时 score 仍保持初始值 1.0，不能让空文本绕过识别阈值；
-     * classify_into 收到空结果后会丢弃对应检测框。 */
-    if (text.empty())
-        return ALG_OK;
-
-    /* 文本长度过滤（可选）：CTC 解码出很短的串时识别分可能依然很高
-     * （分数是逐字符概率的乘积），不能只靠 conf_threshold。返回空后
-     * classify_into 会 drop 掉对应检测框。
-     * 0 = 不按长度限制，保持原行为。 */
-    const int text_len = static_cast<int>(text.size());
-    if (min_text_length_ > 0 && text_len < min_text_length_)
-        return ALG_OK;
-    if (max_text_length_ > 0 && text_len > max_text_length_)
-        return ALG_OK;
-
-    /* 置信度过滤（可选）：低于阈值 → 返回空 → classify_into drop 掉该检测框。
-     * 0 = 不按识别分过滤，但仍拒绝空文本。 */
-    if (conf_threshold_ > 0.0f && score < conf_threshold_)
-        return ALG_OK;
-
     Object o;
-    o.field_mask = ALG_FIELD_BOX | ALG_FIELD_ATTRIBUTES;
-    o.label = -1;                                          /* 非检测类，label 不用 */
-    o.box.score = score;                                   /* 识别置信度；classify_into 再乘 det */
-    o.box.xmin = o.box.ymin = o.box.xmax = o.box.ymax = 0; /* ROI 内坐标，ChainSolution 不用 */
+    o.field_mask = ALG_FIELD_ATTRIBUTES;
 
     Attribute cat;
     cat.name = "category";
@@ -130,10 +96,10 @@ Status LprnetRecPostprocessor::Apply(const IInferer& inferer,
     txt.value_str = text;
     o.attributes.push_back(std::move(txt));
 
-    Attribute rec;
-    rec.name = "rec_score";
-    rec.value_float = score;
-    o.attributes.push_back(std::move(rec));
+    Attribute scores;
+    scores.name = "char_scores";
+    scores.value_floats = std::move(char_scores);
+    o.attributes.push_back(std::move(scores));
 
     out->push_back(std::move(o));
     return ALG_OK;
